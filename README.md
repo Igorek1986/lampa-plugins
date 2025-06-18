@@ -1,1 +1,1 @@
-# Lampa-plagins
+# Lampa-plugins
