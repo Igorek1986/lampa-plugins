@@ -1,5 +1,5 @@
 (function () {
-    var SOURCE_NAME = 'NUMParser test';
+    var SOURCE_NAME = 'NUMParser';
     var BASE_URL = 'https://numparser.igorek1986.ru/releases';
 
     var CATEGORIES = {
@@ -19,147 +19,6 @@
         var self = this;
         self.network = new Lampa.Reguest();
         self.discovery = false;
-  
-        // function normalizeData(json) {
-        //     return {
-        //         results: (json.results || []).map(function (item) {
-        //             var dataItem = {
-        //                 id: item.id,
-        //                 poster_path: item.poster_path || item.poster || '',
-        //                 img: item.img,
-        //                 overview: item.overview || item.description || '',
-        //                 vote_average: item.vote_average || 0,
-        //                 backdrop_path: item.backdrop_path || item.backdrop || '',
-        //                 background_image: item.background_image,
-        //                 source: SOURCE_NAME
-        //             };
-
-        //             if (!!item.release_quality) dataItem.release_quality = item.release_quality;
-
-        //             if (!!item.name) dataItem.name = item.name;
-        //             if (!!item.title) dataItem.title = item.title;
-        //             if (!!item.original_name) dataItem.original_name = item.original_name;
-        //             if (!!item.original_title) dataItem.original_title = item.original_title;
-
-        //             if (!!item.release_date) dataItem.release_date = item.release_date;
-        //             if (!!item.first_air_date) dataItem.first_air_date = item.first_air_date;
-        //             if (!!item.number_of_seasons) dataItem.number_of_seasons = item.number_of_seasons;
-        //             if (!!item.last_air_date) dataItem.last_air_date = item.last_air_date;
-        //             if (!!item.last_episode_to_air) dataItem.last_episode_to_air = item.last_episode_to_air;
-
-        //             dataItem.promo_title = dataItem.name || dataItem.title || dataItem.original_name || dataItem.original_title;
-        //             dataItem.promo = dataItem.overview;
-
-        //             return dataItem;
-        //         }),
-        //         page: json.page || 1,
-        //         total_pages: json.total_pages || json.pagesCount || 1,
-        //         total_results: json.total_results || json.total || 0
-        //     };
-        // }
-
-        // self.get = function (url, params, onComplete, onError) {
-        //     self.network.silent(url, function (json) {
-        //         if (!json) {
-        //             onError(new Error('Empty response from server'));
-        //             return;
-        //         }
-
-        //         var isArray = Array.isArray(json);
-        //         var rawResults = isArray ? json : (json.results || []);
-        //         var normalizedResults = rawResults.map(function (item) {
-        //             return {
-        //                 id: item.id,
-        //                 name: item.name || item.title,
-        //                 number_of_seasons: item.number_of_seasons,
-        //                 last_episode_to_air: item.last_episode_to_air,
-        //                 seasons: item.seasons,
-        //                 first_air_date: item.first_air_date,
-        //                 release_date: item.release_date,
-        //                 poster_path: item.poster_path || item.poster || item.img || '',
-        //                 overview: item.overview || item.description || '',
-        //                 vote_average: item.vote_average || 0,
-        //                 vote_count: item.vote_count || 0,
-        //                 backdrop_path: item.backdrop_path || item.backdrop || '',
-        //                 still_path: item.still_path || '',
-        //                 source: SOURCE_NAME,
-        //                 release_quality: item.release_quality || '',
-        //                 original_language: item.original_language || 'en',
-        //                 update_date: item.update_date || ''
-        //             };
-        //         });
-
-        //         onComplete({
-        //             results: normalizedResults,
-        //             page: json.page || 1,
-        //             total_pages: json.total_pages || json.pagesCount || 1,
-        //             total_results: json.total_results || json.total || normalizedResults.length
-        //         });
-        //     }, function (error) {
-        //         onError(error);
-        //     });
-        // };
-
-        // self.list = function (params, onComplete, onError) {
-        //     params = params || {};
-        //     const page = params.page || 1;
-        //     const perPage = params.per_page || 20;
-
-        //     const url = BASE_URL + '/' + (params.url || CATEGORIES.movies_new);
-
-        //     self.network.silent(url, function(response) {
-        //         if (!response) {
-        //             onError(new Error('Empty response'));
-        //             return;
-        //         }
-
-        //         // Определяем, где находятся данные
-        //         let items = [];
-        //         if (Array.isArray(response)) {
-        //             // Если ответ - массив (старый формат)
-        //             items = response;
-        //         } else if (response.results && Array.isArray(response.results)) {
-        //             // Если ответ - объект с полем results (новый формат)
-        //             items = response.results;
-        //         } else {
-        //             onError(new Error('Invalid data format'));
-        //             return;
-        //         }
-
-        //         // Применяем пагинацию
-        //         const total = items.length;
-        //         const totalPages = Math.ceil(total / perPage);
-        //         const startIndex = (page - 1) * perPage;
-        //         const endIndex = Math.min(startIndex + perPage, total);
-        //         const paginatedItems = items.slice(startIndex, endIndex);
-
-        //         // Формируем ответ
-        //         const result = {
-        //             results: paginatedItems,
-        //             page: page,
-        //             per_page: perPage,
-        //             total_pages: totalPages,
-        //             total_results: total
-        //         };
-
-        //         // Сохраняем дополнительные поля из оригинального ответа
-        //         if (typeof response === 'object' && !Array.isArray(response)) {
-        //             Object.keys(response).forEach(key => {
-        //                 if (!['results', 'page', 'per_page', 'total_pages', 'total_results'].includes(key)) {
-        //                     result[key] = response[key];
-        //                 }
-        //             });
-        //         }
-
-        //         onComplete(result);
-        //     }, onError);
-        // };
-
-        // self.full = function (params, onSuccess, onError) {
-        //     var card = params.card;
-        //     params.method = !!(card.number_of_seasons || card.seasons || card.first_air_date) ? 'tv' : 'movie';
-        //     Lampa.Api.sources.tmdb.full(params, onSuccess, onError);
-        // }
 
         self.category = function (params, onSuccess, onError) {
             params = params || {};
@@ -277,7 +136,7 @@
             }
         });
 
-        var menuItem = $('<li data-action="numparser" class="menu__item selector"><div class="menu__ico"><svg version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" x="0px" y="0px" viewBox="0 0 512 512" style="enable-background:new 0 0 512 512;" xml:space="preserve"><g><g><path fill="currentColor" d="M482.909,67.2H29.091C13.05,67.2,0,80.25,0,96.291v319.418C0,431.75,13.05,444.8,29.091,444.8h453.818c16.041,0,29.091-13.05,29.091-29.091V96.291C512,80.25,498.95,67.2,482.909,67.2z M477.091,409.891H34.909V102.109h442.182V409.891z"/></g></g><g><g><rect fill="currentColor" x="126.836" y="84.655" width="34.909" height="342.109"/></g></g><g><g><rect fill="currentColor" x="350.255" y="84.655" width="34.909" height="342.109"/></g></g><g><g><rect fill="currentColor" x="367.709" y="184.145" width="126.836" height="34.909"/></g></g><g><g><rect fill="currentColor" x="17.455" y="184.145" width="126.836" height="34.909"/></g></g><g><g><rect fill="currentColor" x="367.709" y="292.364" width="126.836" height="34.909"/></g></g><g><g><rect fill="currentColor" x="17.455" y="292.364" width="126.836" height="34.909"/></g></g></svg></div><div class="menu__text">NUMParser test</div></li>');
+        var menuItem = $('<li data-action="numparser" class="menu__item selector"><div class="menu__ico"><svg version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" x="0px" y="0px" viewBox="0 0 512 512" style="enable-background:new 0 0 512 512;" xml:space="preserve"><g><g><path fill="currentColor" d="M482.909,67.2H29.091C13.05,67.2,0,80.25,0,96.291v319.418C0,431.75,13.05,444.8,29.091,444.8h453.818c16.041,0,29.091-13.05,29.091-29.091V96.291C512,80.25,498.95,67.2,482.909,67.2z M477.091,409.891H34.909V102.109h442.182V409.891z"/></g></g><g><g><rect fill="currentColor" x="126.836" y="84.655" width="34.909" height="342.109"/></g></g><g><g><rect fill="currentColor" x="350.255" y="84.655" width="34.909" height="342.109"/></g></g><g><g><rect fill="currentColor" x="367.709" y="184.145" width="126.836" height="34.909"/></g></g><g><g><rect fill="currentColor" x="17.455" y="184.145" width="126.836" height="34.909"/></g></g><g><g><rect fill="currentColor" x="367.709" y="292.364" width="126.836" height="34.909"/></g></g><g><g><rect fill="currentColor" x="17.455" y="292.364" width="126.836" height="34.909"/></g></g></svg></div><div class="menu__text">NUMParser</div></li>');
         $('.menu .menu__list').eq(0).append(menuItem);
 
         menuItem.on('hover:enter', function () {
