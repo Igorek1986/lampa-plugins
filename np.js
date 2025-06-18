@@ -20,12 +20,63 @@
         self.network = new Lampa.Reguest();
         self.discovery = false;
 
+        self.get = function (url, params, onComplete, onError) {
+            self.network.silent(url, function (json) {
+                if (!json) {
+                    onError(new Error('Empty response from server'));
+                    return;
+                }
+
+                var isArray = Array.isArray(json);
+                var rawResults = isArray ? json : (json.results || []);
+                var normalizedResults = rawResults.map(function (item) {
+                    return {
+                        id: item.id,
+                        name: item.name || item.title,
+                        number_of_seasons: item.number_of_seasons,
+                        last_episode_to_air: item.last_episode_to_air,
+                        seasons: item.seasons,
+                        first_air_date: item.first_air_date,
+                        release_date: item.release_date,
+                        poster_path: item.poster_path || item.poster || item.img || '',
+                        overview: item.overview || item.description || '',
+                        vote_average: item.vote_average || 0,
+                        vote_count: item.vote_count || 0,
+                        backdrop_path: item.backdrop_path || item.backdrop || '',
+                        still_path: item.still_path || '',
+                        source: SOURCE_NAME,
+                        release_quality: item.release_quality || '',
+                        original_language: item.original_language || 'en',
+                        update_date: item.update_date || ''
+                    };
+                });
+
+                onComplete({
+                    results: normalizedResults,
+                    page: json.page || 1,
+                    total_pages: json.total_pages || json.pagesCount || 1,
+                    total_results: json.total_results || json.total || normalizedResults.length
+                });
+            }, function (error) {
+                onError(error);
+            });
+        };
+
         self.list = function (params, onComplete, onError) {
             params = params || {};
             const page = params.page || 1;
             const perPage = params.per_page || 20;
 
             const url = BASE_URL + '/' + (params.url || CATEGORIES.movies_new);
+
+            self.get(url, params, function(json) {
+                onComplete({
+                    results: json.results || [],
+                    page: json.page || page,
+                    total_pages: json.total_pages || 1,
+                    total_results: json.total_results || 0
+                });
+            }, onError);
 
             self.network.silent(url, function(response) {
                 if (!response) {
@@ -75,6 +126,12 @@
             }, onError);
         };
 
+        self.full = function (params, onSuccess, onError) {
+            var card = params.card;
+            params.method = !!(card.number_of_seasons || card.seasons || card.first_air_date) ? 'tv' : 'movie';
+            Lampa.Api.sources.tmdb.full(params, onSuccess, onError);
+        }
+
         self.category = function (params, onSuccess, onError) {
             params = params || {};
 
@@ -113,26 +170,37 @@
 
             function makeRequest(category, title, callback) {
                 var page = params.page || 1;
-                var perPage = params.per_page || 20; // Добавляем параметр количества элементов на странице
+                var perPage = params.per_page || 20;
                 var url = BASE_URL + '/' + category + '?language=' + Lampa.Storage.get('tmdb_lang', 'ru');
 
-                self.network.silent(url, function(response) {
-                    if (!response) {
+                // Используем self.get вместо прямого вызова network.silent
+                self.get(url, params, function(json) {
+                    if (!json) {
                         callback({ error: 'Empty response' });
                         return;
                     }
 
-                    // Определяем, где находятся данные (массив или объект с results)
-                    let items = Array.isArray(response) ? response : (response.results || []);
-                    const total = items.length;
-                    const totalPages = Math.ceil(total / perPage);
+                    // Определяем тип контента (movie или tv)
+                    const isTvCategory = [
+                        CATEGORIES.all_tv, 
+                        CATEGORIES.russian_tv, 
+                        CATEGORIES.cartoons_tv
+                    ].includes(category);
+
+                    // Добавляем media_type к каждому элементу
+                    const resultsWithType = (json.results || []).map(item => ({
+                        ...item,
+                        media_type: item.media_type || (isTvCategory ? 'tv' : 'movie')
+                    }));
 
                     // Применяем пагинацию
+                    const total = json.total_results || resultsWithType.length;
+                    const totalPages = json.total_pages || Math.ceil(total / perPage);
                     const startIndex = (page - 1) * perPage;
                     const endIndex = Math.min(startIndex + perPage, total);
-                    const paginatedItems = items.slice(startIndex, endIndex);
+                    const paginatedItems = resultsWithType.slice(startIndex, endIndex);
 
-                    // Формируем ответ в нужном формате
+                    // Формируем ответ
                     const result = {
                         url: category,
                         title: title,
