@@ -20,6 +20,61 @@
         self.network = new Lampa.Reguest();
         self.discovery = false;
 
+        self.list = function (params, onComplete, onError) {
+            params = params || {};
+            const page = params.page || 1;
+            const perPage = params.per_page || 20;
+
+            const url = BASE_URL + '/' + (params.url || CATEGORIES.movies_new);
+
+            self.network.silent(url, function(response) {
+                if (!response) {
+                    onError(new Error('Empty response'));
+                    return;
+                }
+
+                // Определяем, где находятся данные
+                let items = [];
+                if (Array.isArray(response)) {
+                    // Если ответ - массив (старый формат)
+                    items = response;
+                } else if (response.results && Array.isArray(response.results)) {
+                    // Если ответ - объект с полем results (новый формат)
+                    items = response.results;
+                } else {
+                    onError(new Error('Invalid data format'));
+                    return;
+                }
+
+                // Применяем пагинацию
+                const total = items.length;
+                const totalPages = Math.ceil(total / perPage);
+                const startIndex = (page - 1) * perPage;
+                const endIndex = Math.min(startIndex + perPage, total);
+                const paginatedItems = items.slice(startIndex, endIndex);
+
+                // Формируем ответ
+                const result = {
+                    results: paginatedItems,
+                    page: page,
+                    per_page: perPage,
+                    total_pages: totalPages,
+                    total_results: total
+                };
+
+                // Сохраняем дополнительные поля из оригинального ответа
+                if (typeof response === 'object' && !Array.isArray(response)) {
+                    Object.keys(response).forEach(key => {
+                        if (!['results', 'page', 'per_page', 'total_pages', 'total_results'].includes(key)) {
+                            result[key] = response[key];
+                        }
+                    });
+                }
+
+                onComplete(result);
+            }, onError);
+        };
+
         self.category = function (params, onSuccess, onError) {
             params = params || {};
 
