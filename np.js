@@ -1,6 +1,6 @@
 (function () {
     var SOURCE_NAME = 'NUMParser';
-    var BASE_URL = 'https://numparser.igorek1986.ru/';
+    var BASE_URL = 'https://numparser.igorek1986.ru';
     // var BASE_URL = 'http://vps.igorek1986.ru:38888';
 
     var CATEGORIES = {
