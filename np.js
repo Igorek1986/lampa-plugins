@@ -1,18 +1,18 @@
 (function () {
     var SOURCE_NAME = 'NUMParser';
-    var BASE_URL = 'https://numparser.igorek1986.ru';
+    var BASE_URL = 'https://numparser.igorek1986.ru/releases';
 
     var CATEGORIES = {
-        k4: 'lampac_movies_4k',
-        k4_new: 'lampac_movies_4k_new',
-        movies_new: "lampac_movies_new",
-        movies: 'lampac_movies',
-        russian_new_movies: 'lampac_movies_ru_new',
-        russian_movies: 'lampac_movies_ru',
-        cartoons: 'lampac_all_cartoon_movies',
-        cartoons_tv: 'lampac_all_cartoon_series',
-        all_tv: 'lampac_all_tv_shows',
-        russian_tv: 'lampac_all_tv_shows_ru'
+        k4: 'lampac_movies_4k.json',
+        k4_new: 'lampac_movies_4k_new.json',
+        movies_new: "lampac_movies_new.json",
+        movies: 'lampac_movies.json',
+        russian_new_movies: 'lampac_movies_ru_new.json',
+        russian_movies: 'lampac_movies_ru.json',
+        cartoons: 'lampac_all_cartoon_movies.json',
+        cartoons_tv: 'lampac_all_cartoon_series.json',
+        all_tv: 'lampac_all_tv_shows.json',
+        russian_tv: 'lampac_all_tv_shows_ru.json'
     };
 
     function NumparserApiService() {
@@ -20,52 +20,43 @@
         self.network = new Lampa.Reguest();
         self.discovery = false;
 
-        function normalizeData(json) {
-            return {
-                results: (json.results || []).map(function (item) {
-                    var dataItem = {
-                        id: item.id,
-                        poster_path: item.poster_path || item.poster || '',
-                        img: item.img,
-                        overview: item.overview || item.description || '',
-                        vote_average: item.vote_average || 0,
-                        backdrop_path: item.backdrop_path || item.backdrop || '',
-                        background_image: item.background_image,
-                        source: SOURCE_NAME
-                    };
-
-                    if (!!item.release_quality) dataItem.release_quality = item.release_quality;
-
-                    if (!!item.name) dataItem.name = item.name;
-                    if (!!item.title) dataItem.title = item.title;
-                    if (!!item.original_name) dataItem.original_name = item.original_name;
-                    if (!!item.original_title) dataItem.original_title = item.original_title;
-
-                    if (!!item.release_date) dataItem.release_date = item.release_date;
-                    if (!!item.first_air_date) dataItem.first_air_date = item.first_air_date;
-                    if (!!item.number_of_seasons) dataItem.number_of_seasons = item.number_of_seasons;
-                    if (!!item.last_air_date) dataItem.last_air_date = item.last_air_date;
-                    if (!!item.last_episode_to_air) dataItem.last_episode_to_air = item.last_episode_to_air;
-
-                    dataItem.promo_title = dataItem.name || dataItem.title || dataItem.original_name || dataItem.original_title;
-                    dataItem.promo = dataItem.overview;
-
-                    return dataItem;
-                }),
-                page: json.page || 1,
-                total_pages: json.total_pages || json.pagesCount || 1,
-                total_results: json.total_results || json.total || 0
-            };
-        }
-
         self.get = function (url, params, onComplete, onError) {
             self.network.silent(url, function (json) {
                 if (!json) {
                     onError(new Error('Empty response from server'));
                     return;
                 }
-                var normalizedJson = normalizeData(json);
-                onComplete(normalizedJson);
+
+                var isArray = Array.isArray(json);
+                var rawResults = isArray ? json : (json.results || []);
+                var normalizedResults = rawResults.map(function (item) {
+                    return {
+                        id: item.id,
+                        name: item.name || item.title,
+                        number_of_seasons: item.number_of_seasons,
+                        last_episode_to_air: item.last_episode_to_air,
+                        seasons: item.seasons,
+                        first_air_date: item.first_air_date,
+                        release_date: item.release_date,
+                        poster_path: item.poster_path || item.poster || item.img || '',
+                        overview: item.overview || item.description || '',
+                        vote_average: item.vote_average || 0,
+                        vote_count: item.vote_count || 0,
+                        backdrop_path: item.backdrop_path || item.backdrop || '',
+                        still_path: item.still_path || '',
+                        source: SOURCE_NAME,
+                        release_quality: item.release_quality || '',
+                        original_language: item.original_language || 'en',
+                        update_date: item.update_date || ''
+                    };
+                });
+
+                onComplete({
+                    results: normalizedResults,
+                    page: json.page || 1,
+                    total_pages: json.total_pages || json.pagesCount || 1,
+                    total_results: json.total_results || json.total || normalizedResults.length
+                });
             }, function (error) {
                 onError(error);
             });
@@ -73,12 +64,10 @@
 
         self.list = function (params, onComplete, onError) {
             params = params || {};
-            onComplete = onComplete || function () { };
-            onError = onError || function () { };
+            const page = params.page || 1;
+            const perPage = params.per_page || 20;
 
-            var category = params.url || CATEGORIES.movies_new;
-            var page = params.page || 1;
-            var url = BASE_URL + '/' + category + '?page=' + page + '&language=' + Lampa.Storage.get('tmdb_lang', 'ru');
+            const url = BASE_URL + '/' + (params.url || CATEGORIES.movies_new);
 
             self.get(url, params, function(json) {
                 onComplete({
@@ -87,6 +76,53 @@
                     total_pages: json.total_pages || 1,
                     total_results: json.total_results || 0
                 });
+            }, onError);
+
+            self.network.silent(url, function(response) {
+                if (!response) {
+                    onError(new Error('Empty response'));
+                    return;
+                }
+
+                // Определяем, где находятся данные
+                let items = [];
+                if (Array.isArray(response)) {
+                    // Если ответ - массив (старый формат)
+                    items = response;
+                } else if (response.results && Array.isArray(response.results)) {
+                    // Если ответ - объект с полем results (новый формат)
+                    items = response.results;
+                } else {
+                    onError(new Error('Invalid data format'));
+                    return;
+                }
+
+                // Применяем пагинацию
+                const total = items.length;
+                const totalPages = Math.ceil(total / perPage);
+                const startIndex = (page - 1) * perPage;
+                const endIndex = Math.min(startIndex + perPage, total);
+                const paginatedItems = items.slice(startIndex, endIndex);
+
+                // Формируем ответ
+                const result = {
+                    results: paginatedItems,
+                    page: page,
+                    per_page: perPage,
+                    total_pages: totalPages,
+                    total_results: total
+                };
+
+                // Сохраняем дополнительные поля из оригинального ответа
+                if (typeof response === 'object' && !Array.isArray(response)) {
+                    Object.keys(response).forEach(key => {
+                        if (!['results', 'page', 'per_page', 'total_pages', 'total_results'].includes(key)) {
+                            result[key] = response[key];
+                        }
+                    });
+                }
+
+                onComplete(result);
             }, onError);
         };
 
@@ -134,19 +170,49 @@
 
             function makeRequest(category, title, callback) {
                 var page = params.page || 1;
-                var url = BASE_URL + '/' + category + '?page=' + page + '&language=' + Lampa.Storage.get('tmdb_lang', 'ru');
+                var perPage = params.per_page || 20;
+                var url = BASE_URL + '/' + category + '?language=' + Lampa.Storage.get('tmdb_lang', 'ru');
 
+                // Используем self.get вместо прямого вызова network.silent
                 self.get(url, params, function(json) {
-                    var result = {
+                    if (!json) {
+                        callback({ error: 'Empty response' });
+                        return;
+                    }
+
+                    // Определяем тип контента (movie или tv)
+                    const isTvCategory = [
+                        CATEGORIES.all_tv, 
+                        CATEGORIES.russian_tv, 
+                        CATEGORIES.cartoons_tv
+                    ].includes(category);
+
+                    // Добавляем media_type к каждому элементу
+                    const resultsWithType = (json.results || []).map(item => ({
+                        ...item,
+                        media_type: item.media_type || (isTvCategory ? 'tv' : 'movie')
+                    }));
+
+                    // Применяем пагинацию
+                    const total = json.total_results || resultsWithType.length;
+                    const totalPages = json.total_pages || Math.ceil(total / perPage);
+                    const startIndex = (page - 1) * perPage;
+                    const endIndex = Math.min(startIndex + perPage, total);
+                    const paginatedItems = resultsWithType.slice(startIndex, endIndex);
+
+                    // Формируем ответ
+                    const result = {
                         url: category,
                         title: title,
                         page: page,
-                        total_results: json.total_results || 0,
-                        total_pages: json.total_pages || 1,
-                        more: json.total_pages > page,
-                        results: json.results || [],
+                        per_page: perPage,
+                        total_results: total,
+                        total_pages: totalPages,
+                        more: page < totalPages,
+                        results: paginatedItems,
                         source: SOURCE_NAME
                     };
+
                     callback(result);
                 }, function(error) {
                     callback({ error: error });
