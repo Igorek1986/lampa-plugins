@@ -175,7 +175,8 @@
           visible: Lampa.Storage.get('numparser_category_legends', true)
       },
       episodes: {
-          title: 'Ближайшие выходы эпизодов'
+          title: 'Ближайшие выходы эпизодов',
+          visible: true
       },
       k4_new: {
           title: 'В высоком качестве (новые)',
