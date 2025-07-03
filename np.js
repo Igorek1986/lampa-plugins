@@ -656,14 +656,27 @@
           param: {
               name: 'numparser_hide_watched',
               type: 'trigger',
-              default: true
+            //   default: Lampa.Storage.get('numparser_hide_watched', true)
+            default: Lampa.Storage.get('numparser_hide_watched', "true") === "true"
           },
           field: {
               name: 'Скрыть просмотренные',
               description: 'Скрывать просмотренные фильмы и сериалы'
           },
+
           onChange: function(value) {
-              Lampa.Storage.set('numparser_hide_watched', value === "true");
+            Lampa.Storage.set('numparser_hide_watched', value === true || value === "true");
+
+            var active = Lampa.Activity.active();
+            if (active && active.activity_line && active.activity_line.listener && typeof active.activity_line.listener.send === 'function') {
+                active.activity_line.listener.send({
+                    type: 'append',
+                    data: active.activity_line.card_data,
+                    line: active.activity_line
+                });
+            } else {
+                location.reload();
+            }
           }
       });
 
@@ -735,7 +748,6 @@
               },
               field: {
                 name: CATEGORY_VISIBILITY[option].title,
-                description: Lampa.Lang.translate('lnum_select_visibility')
               },
               onChange: function(value) {
                   CATEGORY_VISIBILITY[option].visible = value === "true";
