@@ -1,5 +1,4 @@
 (function () {
-  'use strict';
 
   var DEFAULT_SOURCE_NAME = 'NUMParser';
   var SOURCE_NAME = Lampa.Storage.get('numparser_source_name', DEFAULT_SOURCE_NAME);
