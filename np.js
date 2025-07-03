@@ -76,27 +76,38 @@
 
   // Вспомогательные функции для работы с эпизодами
   function getEpisodesFromHistory(id, favorite) {
-      if (!favorite.card) return [];
-      
-      var historyCard = favorite.card.find(function(card) {
-          return card.id === id && Array.isArray(card.seasons);
+      var historyCard = favorite.card.filter(function (card) {
+          return card.id === id && Array.isArray(card.seasons) && card.seasons.length > 0;
+      })[0];
+
+      if (!historyCard) {
+          return [];
+      }
+
+      var realSeasons = historyCard.seasons.filter(function (season) {
+          return season.season_number > 0
+              && season.episode_count > 0
+              && season.air_date
+              && new Date(season.air_date) < new Date();
       });
-      
-      if (!historyCard) return [];
-      
-      return historyCard.seasons
-          .filter(function(season) {
-              return season.season_number > 0 && 
-                     season.episode_count > 0 && 
-                     season.air_date && 
-                     new Date(season.air_date) < new Date();
-          })
-          .flatMap(function(season) {
-              return Array.from({length: season.episode_count}, (_, i) => ({
+
+      if (realSeasons.length === 0) {
+          return [];
+      }
+
+      var seasonEpisodes = [];
+      for (var seasonIndex = 0; seasonIndex < realSeasons.length; seasonIndex++) {
+          var season = realSeasons[seasonIndex];
+
+          for (var episodeIndex = 1; episodeIndex <= season.episode_count; episodeIndex++) {
+              seasonEpisodes.push({
                   season_number: season.season_number,
-                  episode_number: i + 1
-              }));
-          });
+                  episode_number: episodeIndex
+              });
+          }
+      }
+
+      return seasonEpisodes;
   }
 
   function getEpisodesFromTimeTable(id, timeTable) {
