@@ -287,7 +287,9 @@
                       title: item.title || item.name || '',
                       original_language: item.original_language || 'en',
                       first_air_date: item.first_air_date,
-                      number_of_seasons: item.number_of_seasons
+                      number_of_seasons: item.number_of_seasons,
+                      type: (item.first_air_date || item.number_of_seasons) ? 'tv' : 'movie',
+                      status: item.status || '',
                   };
 
                   if (item.release_quality) dataItem.release_quality = item.release_quality;
