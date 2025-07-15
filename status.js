@@ -89,51 +89,48 @@
     var pendingScan = false;
 
     function getCardView(card) {
-        return card.card?.querySelector?.('.card__view') || 
-               card.element?.querySelector?.('.card__view') || 
-               card.querySelector?.('.card__view');
+        if (!card) return null;
+        if (card.card && card.card.querySelector) return card.card.querySelector('.card__view');
+        if (card.element && card.element.querySelector) return card.element.querySelector('.card__view');
+        if (card.querySelector) return card.querySelector('.card__view');
+        return null;
     }
 
     function getCardData(card) {
-        return card.card_data || card.data || (card.dataset?.id ? card.dataset : card);
+        if (card.card_data) return card.card_data;
+        if (card.data) return card.data;
+        if (card.dataset && card.dataset.id) return card.dataset;
+        return card;
     }
 
     function isTvCard(card, data) {
-        if ((data?.type === 'tv') || card.classList?.contains('card--tv')) return true;
-        
-        const cardView = getCardView(card);
+        if ((data && data.type === 'tv') || (card.classList && card.classList.contains('card--tv'))) return true;
+        var cardView = getCardView(card);
         if (!cardView) return false;
-        
-        const typeElem = cardView.querySelector('.card__type');
-        return typeElem?.textContent.trim().toUpperCase() === 'TV';
+        var typeElem = cardView.querySelector('.card__type');
+        return typeElem && typeElem.textContent && typeElem.textContent.trim().toUpperCase() === 'TV';
     }
 
     function addStatusToCard(card) {
         if (!isEnabled || processedCards.has(card)) return;
-
-        const cardView = getCardView(card);
+        var cardView = getCardView(card);
         if (!cardView) return;
-
-        const data = getCardData(card);
+        var data = getCardData(card);
         if (!isTvCard(card, data)) return;
-
         // Удаляем старые метки если есть
-        cardView.querySelectorAll('.card__type, .card__status').forEach(el => el.remove());
-
+        var old = cardView.querySelectorAll('.card__type, .card__status');
+        for (var i = 0; i < old.length; i++) old[i].parentNode.removeChild(old[i]);
         // Добавляем TV метку
-        const typeElem = document.createElement('div');
+        var typeElem = document.createElement('div');
         typeElem.className = 'card__type';
         typeElem.textContent = 'TV';
         cardView.appendChild(typeElem);
-
         // Добавляем статус
-        let status = (data?.status || '').toLowerCase();
-        if (!status && card.classList?.contains('card--tv')) status = 'airing';
-        if (!status) status = data?.ended || data?.isEnded ? 'ended' : 'airing';
-
-        const statusElement = document.createElement('div');
+        var status = (data && data.status ? data.status : '').toLowerCase();
+        if (!status && card.classList && card.classList.contains('card--tv')) status = 'airing';
+        if (!status) status = (data && (data.ended || data.isEnded)) ? 'ended' : 'airing';
+        var statusElement = document.createElement('div');
         statusElement.className = 'card__status';
-        
         if (status === 'ended') {
             statusElement.setAttribute('data-status', 'ended');
             statusElement.textContent = 'Завершён';
@@ -144,35 +141,35 @@
             statusElement.setAttribute('data-status', 'airing');
             statusElement.textContent = 'В эфире';
         }
-        
         cardView.appendChild(statusElement);
         processedCards.add(card);
     }
 
     function removeAllStatuses() {
-        document.querySelectorAll('.card__status, .card__type').forEach(el => el.remove());
+        var all = document.querySelectorAll('.card__status, .card__type');
+        for (var i = 0; i < all.length; i++) all[i].parentNode.removeChild(all[i]);
         processedCards = new WeakSet();
     }
 
-    function scanCards(selector = '.card') {
+    function scanCards(selector) {
         if (!isEnabled || pendingScan) return;
         pendingScan = true;
-        
-        requestAnimationFrame(() => {
-            document.querySelectorAll(selector).forEach(card => {
-                if (!processedCards.has(card)) {
-                    addStatusToCard(card);
+        setTimeout(function() {
+            var cards = document.querySelectorAll(selector || '.card');
+            for (var i = 0; i < cards.length; i++) {
+                if (!processedCards.has(cards[i])) {
+                    addStatusToCard(cards[i]);
                 }
-            });
+            }
             pendingScan = false;
-        });
+        }, 0);
     }
 
     function handleMoreButton() {
-        const moreButton = document.querySelector('.items-line__more.selector');
+        var moreButton = document.querySelector('.items-line__more.selector');
         if (moreButton) {
             moreButton.addEventListener('click', function() {
-                setTimeout(() => {
+                setTimeout(function() {
                     scanCards('.selector__body .card');
                 }, 300);
             });
@@ -182,35 +179,32 @@
     // Оптимизированный наблюдатель
     function initObserver() {
         if (observer) observer.disconnect();
-
-        observer = new MutationObserver(mutations => {
-            for (const mutation of mutations) {
-                for (const node of mutation.addedNodes) {
+        observer = new MutationObserver(function(mutations) {
+            for (var m = 0; m < mutations.length; m++) {
+                var mutation = mutations[m];
+                for (var n = 0; n < mutation.addedNodes.length; n++) {
+                    var node = mutation.addedNodes[n];
                     if (node.nodeType !== 1) continue;
-                    
-                    if (node.classList?.contains('card')) {
+                    if (node.classList && node.classList.contains('card')) {
                         addStatusToCard(node);
                     } else if (node.querySelectorAll) {
-                        node.querySelectorAll('.card').forEach(card => {
-                            if (!processedCards.has(card)) {
-                                addStatusToCard(card);
+                        var cards = node.querySelectorAll('.card');
+                        for (var i = 0; i < cards.length; i++) {
+                            if (!processedCards.has(cards[i])) {
+                                addStatusToCard(cards[i]);
                             }
-                        });
+                        }
                     }
-                    
-                    // Обработка кнопки "Еще"
-                    if (node.classList?.contains('items-line__more')) {
+                    if (node.classList && node.classList.contains('items-line__more')) {
                         handleMoreButton();
                     }
                 }
             }
-            
             // Периодическое сканирование для страниц категорий
             if (document.querySelector('.category-full, .items-cards')) {
                 scanCards('.category-full .card, .items-cards .card');
             }
         });
-
         observer.observe(document.body, {
             childList: true,
             subtree: true
@@ -226,11 +220,11 @@
             
             // Специальная обработка для категорий
             if (event.component === 'category' || event.component === 'category_full' || event.component === 'catalog') {
-                setTimeout(() => {
+                setTimeout(function() {
                     scanCards('.category-full .card, .items-cards .card');
                 }, 300);
                 
-                setTimeout(() => {
+                setTimeout(function() {
                     scanCards('.category-full .card, .items-cards .card');
                 }, 1000);
             }
@@ -238,11 +232,11 @@
 
         Lampa.Listener.follow('line', function(event) {
             if (event.type === 'append' && event.items) {
-                event.items.forEach(card => {
-                    if (!processedCards.has(card)) {
-                        addStatusToCard(card);
+                for (var i = 0; i < event.items.length; i++) {
+                    if (!processedCards.has(event.items[i])) {
+                        addStatusToCard(event.items[i]);
                     }
-                });
+                }
             }
         });
 
@@ -251,11 +245,11 @@
             initObserver();
             handleMoreButton();
             
-            setTimeout(() => {
+            setTimeout(function() {
                 scanCards();
             }, 500);
             
-            setTimeout(() => {
+            setTimeout(function() {
                 scanCards();
             }, 1500);
         }
