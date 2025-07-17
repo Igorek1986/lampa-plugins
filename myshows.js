@@ -7,9 +7,6 @@
   var STORAGE_KEY = 'myshows_auto_checked';
   var MAP_KEY = 'myshows_hash_map';
   Lampa.Storage.set('myshows_only_current', true);
-  // Кэширование списка сериалов
-  var CACHE_KEY = 'myshows_watching_list';
-  var CACHE_TTL = 24 * 60 * 60 * 1000; // 24 часа
 
 
 
@@ -80,109 +77,6 @@
     }
   });
 
-  function isShowInList(showId, token, callback) {
-    fetch('https://api.myshows.me/v2/rpc/', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer ' + token
-      },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        method: 'profile.Shows',
-        id: 1
-      })
-    })
-    .then(function(response) {
-      return response.json();
-    })
-    .then(function(data) {
-      if (!data || !data.result) {
-        callback(false);
-        return;
-      }
-
-      var isInList = data.result.some(function(show) {
-        return show.show.id === showId && show.watchStatus === 'watching';
-      });
-      callback(isInList);
-    })
-    .catch(function() {
-      callback(false);
-    });
-  }
-
-  function addShowToWatching(showId, token, callback) {
-    isShowInList(showId, token, function(isAdded) {
-      if (isAdded) {
-        callback(true);
-        return;
-      }
-
-      fetch('https://api.myshows.me/v2/rpc/', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer ' + token
-        },
-        body: JSON.stringify({
-          jsonrpc: '2.0',
-          method: 'manage.SetShowStatus',
-          params: {
-            showId: showId,
-            status: "Watching"
-          },
-          id: 1
-        })
-      })
-      .then(function(response) {
-        return response.json();
-      })
-      .then(function(data) {
-        callback(data.result === true);
-      })
-      .catch(function() {
-        callback(false);
-      });
-    });
-  }
-
-  function getWatchingShows(token, callback, forceUpdate) {
-    var cachedData = Lampa.Storage.get(CACHE_KEY, null);
-    
-    if (cachedData && cachedData.expires > Date.now() && !forceUpdate) {
-      callback(cachedData.shows);
-      return;
-    }
-    
-    fetch('https://api.myshows.me/v2/rpc/', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer ' + token
-      },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        method: 'profile.Shows',
-        id: 1
-      })
-    })
-    .then(function(response) {
-      return response.json();
-    })
-    .then(function(data) {
-      var result = data && data.result ? data.result : [];
-      Lampa.Storage.set(CACHE_KEY, {
-        shows: result,
-        expires: Date.now() + CACHE_TTL
-      });
-      callback(result);
-    })
-    .catch(function() {
-      callback([]);
-    });
-  }
-
   // Получить showId по imdbId
   function getShowIdByImdb(imdbId, token, callback) {
     var cleanImdbId = imdbId && imdbId.startsWith('tt') ? imdbId.slice(2) : imdbId;
@@ -248,77 +142,23 @@
   }
 
   // Автоматически получить mapping для текущего сериала (по imdbId из карточки)
-  // function ensureHashMap(card, token, callback) {
-  //   var imdbId = card && (card.imdb_id || card.imdbId || (card.ids && card.ids.imdb));
-  //   var originalName = card && (card.original_name || card.original_title || card.title);
-  //   if(!imdbId || !originalName) { callback({}); return; }
-  //   var map = Lampa.Storage.get(MAP_KEY, {});
-  //   // Если mapping уже есть — используем
-  //   for(var h in map) { if(map.hasOwnProperty(h) && map[h].originalName === originalName) { callback(map); return; } }
-  //   // Получаем showId
-  //   getShowIdByImdb(imdbId, token, function(showId, nameFromApi){
-  //     if(!showId) { callback({}); return; }
-  //     getEpisodesByShowId(showId, token, function(episodes){
-  //       var usedName = nameFromApi || originalName;
-  //       var newMap = buildHashMap(episodes, usedName);
-  //       // Сохраняем mapping с привязкой к originalName
-  //       for(var k in newMap) if(newMap.hasOwnProperty(k)) map[k] = newMap[k];
-  //       Lampa.Storage.set(MAP_KEY, map);
-  //       callback(map);
-  //     });
-  //   });
-  // }
   function ensureHashMap(card, token, callback) {
     var imdbId = card && (card.imdb_id || card.imdbId || (card.ids && card.ids.imdb));
     var originalName = card && (card.original_name || card.original_title || card.title);
-    
-    if (!imdbId || !originalName) {
-      callback({});
-      return;
-    }
-    
+    if(!imdbId || !originalName) { callback({}); return; }
     var map = Lampa.Storage.get(MAP_KEY, {});
-    
-    // Проверяем кэш
-    for (var h in map) {
-      if (map.hasOwnProperty(h) && map[h].originalName === originalName) {
-        // Добавляем сериал в список "Смотрю" перед callback
-        getShowIdByImdb(imdbId, token, function(showId, nameFromApi) {
-          if (showId) {
-            addShowToWatching(showId, token, function() {
-              callback(map);
-            });
-          } else {
-            callback(map);
-          }
-        });
-        return;
-      }
-    }
-    
-    // Получаем showId и добавляем в список
-    getShowIdByImdb(imdbId, token, function(showId, nameFromApi) {
-      if (!showId) {
-        callback({});
-        return;
-      }
-      
-      getEpisodesByShowId(showId, token, function(episodes) {
+    // Если mapping уже есть — используем
+    for(var h in map) { if(map.hasOwnProperty(h) && map[h].originalName === originalName) { callback(map); return; } }
+    // Получаем showId
+    getShowIdByImdb(imdbId, token, function(showId, nameFromApi){
+      if(!showId) { callback({}); return; }
+      getEpisodesByShowId(showId, token, function(episodes){
         var usedName = nameFromApi || originalName;
         var newMap = buildHashMap(episodes, usedName);
-        
-        for (var k in newMap) {
-          if (newMap.hasOwnProperty(k)) {
-            map[k] = newMap[k];
-          }
-        }
-        
+        // Сохраняем mapping с привязкой к originalName
+        for(var k in newMap) if(newMap.hasOwnProperty(k)) map[k] = newMap[k];
         Lampa.Storage.set(MAP_KEY, map);
-        
-        // Добавляем сериал в список "Смотрю"
-        addShowToWatching(showId, token, function() {
-          callback(map);
-        });
+        callback(map);
       });
     });
   }
@@ -365,32 +205,91 @@
 
   // Сохраняем карточку при запуске плеера
   if (window.Lampa && Lampa.Player && Lampa.Player.listener) {
-    Lampa.Player.listener.follow('start', function(data) {
-      var hash = null;
-      if (data && data.timeline && data.timeline.hash) {
-        hash = data.timeline.hash;
-      } else if (data && data.hash) {
-        hash = data.hash;
-      }
-      if (hash) {
-        Lampa.Storage.set('myshows_last_hash', hash);
-      }
-      if (data && data.card) {
-        Lampa.Storage.set('myshows_last_card', data.card);
-      } else if (Lampa.Activity && Lampa.Activity.active && Lampa.Activity.active() && Lampa.Activity.active().movie) {
-        Lampa.Storage.set('myshows_last_card', Lampa.Activity.active().movie);
-      }
-    });
-    Lampa.Player.listener.follow('destroy', function(data) {
-      var onlyCurrent = Lampa.Storage.get('myshows_only_current', false);
-      if (onlyCurrent) {
-        var lastHash = Lampa.Storage.get('myshows_last_hash', null);
-        if (lastHash) {
-          scanFileView(lastHash);
-        } else {
-        }
-      }
-    });
+      Lampa.Player.listener.follow('start', function(data) {
+          
+          // 1. Получаем данные карточки ДО начала воспроизведения
+          var card = data.card || 
+                    (Lampa.Activity.active() && Lampa.Activity.active().movie) || 
+                    Lampa.Storage.get('myshows_last_card');
+          
+          if (!card) {
+              return;
+          }
+
+          var token = Lampa.Storage.get('myshows_token', '');
+          if (!token) {
+              return;
+          }
+
+          var originalName = card.original_name || card.original_title || card.title;
+          if (!originalName) {
+              return;
+          }
+
+          // 2. Проверяем file_view ДО начала просмотра
+          var fileView = Lampa.Storage.get('file_view', {});
+          var firstEpisodeHash = Lampa.Utils.hash('11' + originalName); // S01E01
+
+          // 3. Если первая серия не найдена - добавляем сериал
+          if (!fileView[firstEpisodeHash]) {
+              
+              getShowIdByImdb(card.imdb_id || card.imdbId || (card.ids && card.ids.imdb), token, function(showId, title) {
+                  if (!showId) {
+                      return;
+                  }
+
+                  fetch(API_URL, {
+                      method: 'POST',
+                      headers: {
+                          'Content-Type': 'application/json',
+                          'Authorization': 'Bearer ' + token
+                      },
+                      body: JSON.stringify({
+                          jsonrpc: '2.0',
+                          method: 'manage.SetShowStatus',
+                          params: {
+                              id: showId,
+                              status: "watching"
+                          },
+                          id: 1
+                      })
+                  })
+                  .then(function(response) {
+                      return response.json();
+                  })
+              });
+          }
+
+          // 4. Сохраняем хэш для последующей обработки
+          var hash = null;
+          if (data && data.timeline && data.timeline.hash) {
+              hash = data.timeline.hash;
+          } else if (data && data.hash) {
+              hash = data.hash;
+          }
+          
+          if (hash) {
+              Lampa.Storage.set('myshows_last_hash', hash);
+          }
+          
+          if (data && data.card) {
+              Lampa.Storage.set('myshows_last_card', data.card);
+          } else if (Lampa.Activity && Lampa.Activity.active && Lampa.Activity.active() && Lampa.Activity.active().movie) {
+              Lampa.Storage.set('myshows_last_card', Lampa.Activity.active().movie);
+          }
+      });
+
+      Lampa.Player.listener.follow('destroy', function(data) {
+
+          var onlyCurrent = Lampa.Storage.get('myshows_only_current', false);
+          if (onlyCurrent) {
+              var lastHash = Lampa.Storage.get('myshows_last_hash', null);
+              
+              if (lastHash) {
+                  scanFileView(lastHash);
+              }
+          }
+      });
   }
 
   // Основная функция проверки file_view
@@ -424,7 +323,7 @@
         return;
       }
 
-      // Старое поведение — отмечать все подходящие
+      // отмечать все подходящие
       for (var hash in fileView) {
         if (!fileView.hasOwnProperty(hash)) continue;
         var entry = fileView[hash];
