@@ -1,8 +1,7 @@
 (function () {
   'use strict';
 
-  var DEFAULT_MIN_PROGRESS = 95;
-//   var CHECKED_HASHES = {};
+  var DEFAULT_MIN_PROGRESS = 90;
   var API_URL = 'https://api.myshows.me/v2/rpc/';
   var STORAGE_KEY = 'myshows_auto_checked';
   var MAP_KEY = 'myshows_hash_map';
@@ -14,7 +13,6 @@
   Lampa.SettingsApi.addComponent({
     component: 'myshows_auto_check',
     name: 'MyShows AutoCheck',
-    // title: 'MyShows AutoCheck',
     icon: '<svg height="24" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg"><path fill="currentColor" d="M12,2A10,10 0 0,1 22,12A10,10 0 0,1 12,22A10,10 0 0,1 2,12A10,10 0 0,1 12,2M12,4A8,8 0 0,0 4,12A8,8 0 0,0 12,20A8,8 0 0,0 20,12A8,8 0 0,0 12,4M12,6A6,6 0 0,1 18,12A6,6 0 0,1 12,18A6,6 0 0,1 6,12A6,6 0 0,1 12,6M12,8A4,4 0 0,0 8,12A4,4 0 0,0 12,16A4,4 0 0,0 16,12A4,4 0 0,0 12,8Z"/></svg>'
   });
 
