@@ -418,26 +418,12 @@
     });
   }
 
-  // Сохраняем последнюю открытую карточку сериала (диагностика)
-  function registerCardListener() {
-    if (window.Lampa && Lampa.Activity && Lampa.Activity.listener) {
-      Lampa.Activity.listener.follow('activity', function(e) {
-        if (e && (e.card_data || e.card)) {
-          Lampa.Storage.set('myshows_last_card', e.card_data || e.card);
-        }
-      });
-    } else {
-    }
-  }
-
   if (window.appready) {
     initSettings();
-    // registerCardListener();
   } else {
     Lampa.Listener.follow('app', function (event) {
       if (event.type === 'ready') {
         initSettings();
-        // registerCardListener();
       }
     });
   }
