@@ -46,7 +46,7 @@
     }
 
     function addResetButton() {
- 
+        
         if (Lampa.Settings.main && !Lampa.Settings.main().render().find('[data-component="reset_settings"]').length) {
             var button = $(`
                 <div class="settings-folder selector" data-component="reset_settings" data-static="true">
@@ -64,28 +64,31 @@
         if (e.name === 'main') {
             e.body.find('[data-component="reset_settings"]').off('hover:enter').on('hover:enter', function() {
                 
-                Lampa.Modal.open({
-                    title: Lampa.Lang.translate('reset_settings'),
-                    align: 'center',
-                    html: $('<div>' + Lampa.Lang.translate('reset_confirm') + '</div>'),
-                    buttons: [
-                        {
-                            name: Lampa.Lang.translate('cancel'),
-                            onSelect: function() {
-                                Lampa.Modal.close();
-                            }
-                        },
-                        {
-                            name: Lampa.Lang.translate('reset'),
-                            onSelect: function() {
-                                Lampa.Modal.close();
-                                resetStorage();
-                            }
-                        }
-                    ],
-                    onBack: function() {
-                        Lampa.Modal.close();
-                    },
+                Lampa.Modal.open({  
+                    title: Lampa.Lang.translate('reset_settings'),  
+                    align: 'center',  
+                    html: $('<div>' + Lampa.Lang.translate('reset_confirm') + '</div>'),  
+                    buttons: [  
+                        {  
+                            name: Lampa.Lang.translate('cancel'),  
+                            onSelect: function() {  
+                                Lampa.Modal.close();  
+                                Lampa.Controller.toggle('settings'); // Возвращаем фокус к настройкам  
+                            }  
+                        },  
+                        {  
+                            name: Lampa.Lang.translate('reset'),  
+                            onSelect: function() {  
+                                Lampa.Modal.close();  
+                                resetStorage();  
+                                Lampa.Controller.toggle('settings'); // Возвращаем фокус к настройкам  
+                            }  
+                        }  
+                    ],  
+                    onBack: function() {  
+                        Lampa.Modal.close();  
+                        Lampa.Controller.toggle('settings'); // Возвращаем фокус к настройкам  
+                    },  
                 });
             });
         }
