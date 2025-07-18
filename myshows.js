@@ -250,21 +250,33 @@
   }
 
   // Вспомогательная функция для отправки запроса на myshows
-  function checkEpisodeMyShows(episodeId, token) {
-    if (!episodeId || !token) return;
-    fetch(API_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer ' + token
-      },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        method: 'manage.CheckEpisode',
-        params: { id: episodeId, rating: 0 },
-        id: 1
-      })
-    });
+  function checkEpisodeMyShows(episodeId, token) {  
+    if (!episodeId || !token) return;  
+  
+    fetch(API_URL, {  
+      method: 'POST',  
+      headers: {  
+        'Content-Type': 'application/json',  
+        'Authorization': 'Bearer ' + token  
+      },  
+      body: JSON.stringify({  
+        jsonrpc: '2.0',  
+        method: 'manage.CheckEpisode',  
+        params: { id: episodeId, rating: 0 },  
+        id: 1  
+      })  
+    })  
+    .then(response => {  
+      if (!response.ok) {  
+        throw new Error(`HTTP ${response.status}`);  
+      }  
+      return response.json();  
+    })  
+    .then(data => {  
+      if (data.error) {  
+        Lampa.Noty.show('Ошибка при отметке эпизода: ' + (data.error.message || 'Неизвестная ошибка'));
+      }
+    })  
   }
 
   // Универсальный поиск карточки сериала
@@ -382,7 +394,6 @@
     var minProgress = parseInt(getProfileSetting('myshows_min_progress', DEFAULT_MIN_PROGRESS));  
     var token = getProfileSetting('myshows_token', '');  
     var checked = Lampa.Storage.get(STORAGE_KEY, {});  
-    var map = Lampa.Storage.get(MAP_KEY, {});  
     var card = getCurrentCard();  
 
     if(!card) { return; }
