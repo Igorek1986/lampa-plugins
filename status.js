@@ -166,14 +166,18 @@
     }
 
     function handleMoreButton() {
-        var moreButton = document.querySelector('.items-line__more.selector');
-        if (moreButton) {
-            moreButton.addEventListener('click', function() {
-                setTimeout(function() {
-                    scanCards('.selector__body .card');
-                }, 300);
-            });
-        }
+        Lampa.Listener.follow('line', function (event) {
+            if (event.type === 'append') {
+                var moreButtons = document.querySelectorAll('.items-line__more.selector');
+                moreButtons.forEach(function(moreButton) {
+                    moreButton.addEventListener('click', function() {
+                        setTimeout(function() {
+                            scanCards('.selector__body .card');
+                        }, 300);
+                    });
+                });
+            }
+        });
     }
 
     // Оптимизированный наблюдатель
