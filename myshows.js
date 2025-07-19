@@ -28,6 +28,10 @@
         if (data && data.token) {  
             setProfileSetting('myshows_token', data.token);  
             Lampa.Storage.set('myshows_token', data.token, true);  
+
+            if (Lampa.Settings && Lampa.Settings.update) {  
+                Lampa.Settings.update();  
+            }  
               
             if (successCallback) {  
                 successCallback(data.token);  
@@ -493,50 +497,49 @@
               return;
           }
 
-          // 2. Проверяем file_view ДО начала просмотра
-          var fileView = Lampa.Storage.get('file_view', {});
-          var firstEpisodeHash = Lampa.Utils.hash('11' + originalName); // S01E01
+          // 2. Формируем hash для текущего эпизода  
+          var hash = null;  
+          if (data && data.timeline && data.timeline.hash) {  
+              hash = data.timeline.hash;  
+          } else if (data && data.hash) {  
+              hash = data.hash;  
+          } 
 
-          // 3. Если первая серия не найдена - добавляем сериал
-          if (!fileView[firstEpisodeHash]) {    
-            getShowIdByImdb(card.imdb_id || card.imdbId || (card.ids && card.ids.imdb), token, function(showId, title) {    
-                if (!showId) return;    
-            
-                makeAuthenticatedRequest(API_URL, {    
-                    method: 'POST',    
-                    headers: {    
-                        'Content-Type': 'application/json'    
-                    },    
-                    body: JSON.stringify({    
-                        jsonrpc: '2.0',    
-                        method: 'manage.SetShowStatus',    
-                        params: {    
-                            id: showId,    
-                            status: "watching"    
-                        },    
-                        id: 1    
-                    })    
-                });    
-            });    
-          }
+          // 3. Формируем hash для первой серии первого сезона  
+          var firstEpisodeHash = Lampa.Utils.hash('11' + originalName); // S01E01  
 
-          // 4. Сохраняем хэш для последующей обработки
-          var hash = null;
-          if (data && data.timeline && data.timeline.hash) {
-              hash = data.timeline.hash;
-          } else if (data && data.hash) {
-              hash = data.hash;
-          }
-          
-          if (hash) {
-              Lampa.Storage.set('myshows_last_hash', hash);
-          }
-          
-          if (data && data.card) {
-              Lampa.Storage.set('myshows_last_card', data.card);
-          } else if (Lampa.Activity && Lampa.Activity.active && Lampa.Activity.active() && Lampa.Activity.active().movie) {
-              Lampa.Storage.set('myshows_last_card', Lampa.Activity.active().movie);
-          }
+          // 4. Если текущий hash совпадает с первой серией - добавляем сериал  
+          if (hash && hash === firstEpisodeHash) {  
+              getShowIdByImdb(card.imdb_id || card.imdbId || (card.ids && card.ids.imdb), token, function(showId, title) {      
+                  if (!showId) return;      
+                
+                  makeAuthenticatedRequest(API_URL, {      
+                      method: 'POST',      
+                      headers: {      
+                          'Content-Type': 'application/json'      
+                      },      
+                      body: JSON.stringify({      
+                          jsonrpc: '2.0',      
+                          method: 'manage.SetShowStatus',      
+                          params: {      
+                              id: showId,      
+                              status: "watching"      
+                          },      
+                          id: 1      
+                      })      
+                  });      
+              });      
+            } 
+
+          // 5. Сохраняем hash для последующей обработки
+          if (hash) {  
+            Lampa.Storage.set('myshows_last_hash', hash);  
+          }  
+          if (data && data.card) {  
+              Lampa.Storage.set('myshows_last_card', data.card);  
+          } else if (Lampa.Activity && Lampa.Activity.active && Lampa.Activity.active() && Lampa.Activity.active().movie) {  
+              Lampa.Storage.set('myshows_last_card', Lampa.Activity.active().movie);  
+          } 
       });
 
       Lampa.Player.listener.follow('destroy', function(data) {  
