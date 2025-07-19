@@ -6,6 +6,125 @@
   var isInitialized = false;
   var STORAGE_KEY = 'myshows_auto_check';
   var MAP_KEY = 'myshows_hash_map';
+  var PROXY_URL = 'https://numparser.igorek1986.ru/myshows/auth';
+
+
+  function tryAuthFromSettings(successCallback) {      
+      
+    var login = getProfileSetting('myshows_login', '');      
+    var password = getProfileSetting('myshows_password', '');      
+      
+          
+    if (!login || !password) {      
+        if (!successCallback) Lampa.Noty.show('Enter login and password');    
+        if (successCallback) successCallback(null);  
+        return;      
+    }  
+      
+      
+    var network = new Lampa.Reguest();  
+      
+    network.native(PROXY_URL, function(data) {  
+        if (data && data.token) {  
+            setProfileSetting('myshows_token', data.token);  
+            Lampa.Storage.set('myshows_token', data.token, true);  
+              
+            if (successCallback) {  
+                successCallback(data.token);  
+            } else {  
+                Lampa.Noty.show('Auth success!');  
+            }  
+        } else {  
+            if (successCallback) {  
+                successCallback(null);  
+            } else {  
+                Lampa.Noty.show('Auth failed: no token received');  
+            }  
+        }  
+    }, function(xhr) {  
+        if (successCallback) {  
+            successCallback(null);  
+        } else {  
+            Lampa.Noty.show('Auth error: ' + xhr.status);  
+        }  
+    }, JSON.stringify({  
+        login: login,  
+        password: password  
+    }), {  
+        headers: {  
+            'Content-Type': 'application/json'  
+        },  
+        dataType: 'json'  
+    });  
+  }
+
+  // Функция для выполнения запросов с автоматическим обновлением токена  
+  function makeAuthenticatedRequest(url, options, callback, errorCallback) {  
+    var token = getProfileSetting('myshows_token', '');  
+      
+    if (!token) {  
+        console.error('makeAuthenticatedRequest: No token available');  
+        if (errorCallback) errorCallback(new Error('No token available'));  
+        return;  
+    }  
+      
+      
+    var network = new Lampa.Reguest();  
+      
+    options.headers = options.headers || {};  
+    options.headers['Authorization'] = 'Bearer ' + token;  
+      
+    network.silent(url, function(data) {  
+          
+        // Проверяем JSON-RPC ошибки  
+        if (data && data.error && data.error.code === 401) {  
+            tryAuthFromSettings(function(newToken) {  
+                  
+                if (newToken) {  
+                    options.headers['Authorization'] = 'Bearer ' + newToken;  
+                      
+                    var retryNetwork = new Lampa.Reguest();  
+                    retryNetwork.silent(url, function(retryData) {  
+                        if (callback) callback(retryData);  
+                    }, function(retryXhr) {  
+                        if (errorCallback) errorCallback(new Error('HTTP ' + retryXhr.status));  
+                    }, options.body, {  
+                        headers: options.headers  
+                    });  
+                } else {  
+                    if (errorCallback) errorCallback(new Error('Failed to refresh token'));  
+                }  
+            });  
+        } else {  
+            // Нормальный ответ или другая ошибка  
+            if (callback) callback(data);  
+        }  
+    }, function(xhr) {  
+          
+        if (xhr.status === 401) {  
+            tryAuthFromSettings(function(newToken) {  
+                if (newToken) {  
+                    options.headers['Authorization'] = 'Bearer ' + newToken;  
+                      
+                    var retryNetwork = new Lampa.Reguest();  
+                    retryNetwork.silent(url, function(retryData) {  
+                        if (callback) callback(retryData);  
+                    }, function(retryXhr) {  
+                        if (errorCallback) errorCallback(new Error('HTTP ' + retryXhr.status));  
+                    }, options.body, {  
+                        headers: options.headers  
+                    });  
+                } else {  
+                    if (errorCallback) errorCallback(new Error('Failed to refresh token'));  
+                }  
+            });  
+        } else {  
+            if (errorCallback) errorCallback(new Error('HTTP ' + xhr.status));  
+        }  
+    }, options.body, {  
+        headers: options.headers  
+    });  
+  }
 
   // Функции для работы с профиль-специфичными настройками
   function getProfileKey(baseKey) {
@@ -33,17 +152,29 @@
       
     if (!hasProfileSetting('myshows_only_current')) {  
       setProfileSetting('myshows_only_current', true);  
-    }  
+    }
+
+    if (!hasProfileSetting('myshows_login')) {  
+      setProfileSetting('myshows_login', '');  
+    }
+
+    if (!hasProfileSetting('myshows_password')) {
+      setProfileSetting('myshows_password', '');
+    }
       
     // Получаем значения из профиль-специфичного хранилища  
     var progressValue = getProfileSetting('myshows_min_progress', DEFAULT_MIN_PROGRESS).toString();  
     var tokenValue = getProfileSetting('myshows_token', '');  
     var triggerValue = getProfileSetting('myshows_only_current', true);  
-      
+    var loginValue = getProfileSetting('myshows_login', '');
+    var passwordValue = getProfileSetting('myshows_password', ''); 
+    
     // Устанавливаем в стандартное хранилище ТОЛЬКО для отображения в интерфейсе  
     Lampa.Storage.set('myshows_min_progress', progressValue, true);  
     Lampa.Storage.set('myshows_token', tokenValue, true);  
-    Lampa.Storage.set('myshows_only_current', triggerValue, true);  
+    Lampa.Storage.set('myshows_only_current', triggerValue, true);
+    Lampa.Storage.set('myshows_login', loginValue, true);
+    Lampa.Storage.set('myshows_password', passwordValue, true);
   }  
     
   // Вспомогательная функция для проверки существования профиль-специфичного ключа  
@@ -124,6 +255,49 @@
       }
     });
 
+    // Логин MyShows
+    Lampa.SettingsApi.addParam({
+      component: 'myshows_auto_check',
+      param: {
+        name: 'myshows_login',
+        type: 'input',
+        placeholder: 'Логин MyShows',
+        values: getProfileSetting('myshows_login', ''),
+        default: ''
+      },
+      field: {
+        name: 'MyShows Логин',
+        description: 'Введите логин или email, привязанный к аккаунту myshows.me'
+      },
+      onChange: function(value) {
+        setProfileSetting('myshows_login', value);
+        // При изменении логина пробуем авторизоваться
+        // tryAuthFromSettings();
+      }
+    });
+
+    // Пароль MyShows
+    Lampa.SettingsApi.addParam({
+      component: 'myshows_auto_check',
+      param: {
+        name: 'myshows_password',
+        type: 'input',
+        placeholder: 'Пароль',
+        values: getProfileSetting('myshows_password', ''),
+        default: '',
+        password: true // Скрываем ввод
+      },
+      field: {
+        name: 'MyShows Пароль',
+        description: 'Введите пароль от аккаунта myshows.me'
+      },
+      onChange: function(value) {
+        setProfileSetting('myshows_password', value);
+        // При изменении пароля пробуем авторизоваться
+        tryAuthFromSettings();
+      }
+    });
+
     // Режим "Только текущая серия"
     Lampa.SettingsApi.addParam({
       component: 'myshows_auto_check',
@@ -153,65 +327,73 @@
         var settingsPanel = document.querySelector('[data-component="myshows_auto_check"]');
         if (settingsPanel) {
           // Обновляем значения полей
+          var CurrentTrigger = settingsPanel.querySelector('input[data-name="myshows_only_current"]');
+          if (CurrentTrigger) CurrentTrigger.checked = getProfileSetting('myshows_only_current', true);
+
           var tokenInput = settingsPanel.querySelector('input[data-name="myshows_token"]');
           if (tokenInput) tokenInput.value = getProfileSetting('myshows_token', '');
           
           var progressSelect = settingsPanel.querySelector('select[data-name="myshows_min_progress"]');
           if (progressSelect) progressSelect.value = getProfileSetting('myshows_min_progress', DEFAULT_MIN_PROGRESS).toString();
+
+          var loginInput = settingsPanel.querySelector('input[data-name="myshows_login"]');
+          if (loginInput) loginInput.value = getProfileSetting('myshows_login', '');
+
+          var passwordInput = settingsPanel.querySelector('input[data-name="myshows_password"]');
+          if (passwordInput) passwordInput.value = getProfileSetting('myshows_password', '');
         }
       }, 100);
     }
   });
 
   // Получить showId по imdbId
-  function getShowIdByImdb(imdbId, token, callback) {
-    var cleanImdbId = imdbId && imdbId.startsWith('tt') ? imdbId.slice(2) : imdbId;
-    fetch(API_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer ' + token
-      },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        method: 'shows.GetByExternalId',
-        params: { id: cleanImdbId, source: 'imdb' },
-        id: 1
-      })
-    })
-    .then(function(res){ return res.json(); })
-    .then(function(data){
-      if(data && data.result && data.result.id) callback(data.result.id, data.result.titleOriginal || data.result.title);
-      else callback(null);
-    })
-    .catch(function(err){ 
-      callback(null); 
-    });
+  function getShowIdByImdb(imdbId, token, callback) {    
+    var cleanImdbId = imdbId && imdbId.startsWith('tt') ? imdbId.slice(2) : imdbId;    
+        
+    makeAuthenticatedRequest(API_URL, {    
+        method: 'POST',    
+        headers: {    
+            'Content-Type': 'application/json'    
+        },    
+        body: JSON.stringify({    
+            jsonrpc: '2.0',    
+            method: 'shows.GetByExternalId',    
+            params: { id: cleanImdbId, source: 'imdb' },    
+            id: 1    
+        })    
+    }, function(data) {      
+        if(data && data.result && data.result.id) {      
+            callback(data.result.id, data.result.titleOriginal || data.result.title);      
+        } else {      
+            callback(null);      
+        }      
+    }, function(err) {      
+        callback(null);      
+    });    
   }
 
   // Получить список эпизодов по showId
-  function getEpisodesByShowId(showId, token, callback) {
-    fetch(API_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer ' + token
-      },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        method: 'shows.GetById',
-        params: { showId: showId, withEpisodes: true },
-        id: 1
-      })
-    })
-    .then(function(res){ return res.json(); })
-    .then(function(data){
-      if(data && data.result && data.result.episodes) callback(data.result.episodes);
-      else callback([]);
-    })
-    .catch(function(err){ 
-      callback([]); 
-    });
+  function getEpisodesByShowId(showId, token, callback) {    
+    makeAuthenticatedRequest(API_URL, {    
+        method: 'POST',    
+        headers: {    
+            'Content-Type': 'application/json'    
+        },    
+        body: JSON.stringify({    
+            jsonrpc: '2.0',    
+            method: 'shows.GetById',    
+            params: { showId: showId, withEpisodes: true },    
+            id: 1    
+        })    
+    }, function(data) {    
+        if(data && data.result && data.result.episodes) {    
+            callback(data.result.episodes);    
+        } else {    
+            callback([]);    
+        }    
+    }, function(err) {    
+        callback([]);    
+    });    
   }
 
   // Построить mapping hash -> episodeId
@@ -250,33 +432,27 @@
   }
 
   // Вспомогательная функция для отправки запроса на myshows
-  function checkEpisodeMyShows(episodeId, token) {  
-    if (!episodeId || !token) return;  
-  
-    fetch(API_URL, {  
-      method: 'POST',  
-      headers: {  
-        'Content-Type': 'application/json',  
-        'Authorization': 'Bearer ' + token  
-      },  
-      body: JSON.stringify({  
-        jsonrpc: '2.0',  
-        method: 'manage.CheckEpisode',  
-        params: { id: episodeId, rating: 0 },  
-        id: 1  
-      })  
-    })  
-    .then(response => {  
-      if (!response.ok) {  
-        throw new Error(`HTTP ${response.status}`);  
-      }  
-      return response.json();  
-    })  
-    .then(data => {  
-      if (data.error) {  
-        Lampa.Noty.show('Ошибка при отметке эпизода: ' + (data.error.message || 'Неизвестная ошибка'));
-      }
-    })  
+  function checkEpisodeMyShows(episodeId, token) {      
+    if (!episodeId || !token) return;      
+    
+    makeAuthenticatedRequest(API_URL, {      
+        method: 'POST',      
+        headers: {      
+            'Content-Type': 'application/json'      
+        },      
+        body: JSON.stringify({      
+            jsonrpc: '2.0',      
+            method: 'manage.CheckEpisode',      
+            params: { id: episodeId, rating: 0 },      
+            id: 1      
+        })      
+    }, function(data) {    
+        if (data && data.error) {      
+            Lampa.Noty.show('Ошибка при отметке эпизода: ' + (data.error.message || 'Неизвестная ошибка'));    
+        }    
+    }, function(err) {    
+        callback([]);    
+    });    
   }
 
   // Универсальный поиск карточки сериала
@@ -325,33 +501,26 @@
           var firstEpisodeHash = Lampa.Utils.hash('11' + originalName); // S01E01
 
           // 3. Если первая серия не найдена - добавляем сериал
-          if (!fileView[firstEpisodeHash]) {
-              
-              getShowIdByImdb(card.imdb_id || card.imdbId || (card.ids && card.ids.imdb), token, function(showId, title) {
-                  if (!showId) {
-                      return;
-                  }
-
-                  fetch(API_URL, {
-                      method: 'POST',
-                      headers: {
-                          'Content-Type': 'application/json',
-                          'Authorization': 'Bearer ' + token
-                      },
-                      body: JSON.stringify({
-                          jsonrpc: '2.0',
-                          method: 'manage.SetShowStatus',
-                          params: {
-                              id: showId,
-                              status: "watching"
-                          },
-                          id: 1
-                      })
-                  })
-                  .then(function(response) {
-                      return response.json();
-                  })
-              });
+          if (!fileView[firstEpisodeHash]) {    
+            getShowIdByImdb(card.imdb_id || card.imdbId || (card.ids && card.ids.imdb), token, function(showId, title) {    
+                if (!showId) return;    
+            
+                makeAuthenticatedRequest(API_URL, {    
+                    method: 'POST',    
+                    headers: {    
+                        'Content-Type': 'application/json'    
+                    },    
+                    body: JSON.stringify({    
+                        jsonrpc: '2.0',    
+                        method: 'manage.SetShowStatus',    
+                        params: {    
+                            id: showId,    
+                            status: "watching"    
+                        },    
+                        id: 1    
+                    })    
+                });    
+            });    
           }
 
           // 4. Сохраняем хэш для последующей обработки
