@@ -237,21 +237,20 @@
     });
 
     // Токен MyShows
-    Lampa.SettingsApi.addParam({
-      component: 'myshows_auto_check',
-      param: {
-        name: 'myshows_token',
-        type: 'input',
-        placeholder: 'Bearer-токен MyShows',
-        values: getProfileSetting('myshows_token', ''),
-        default: ''
-      },
-      field: {
-        name: 'MyShows Bearer Token',
-        description: 'Вставьте ваш Bearer-токен для API myshows.me'
-      },
-      onChange: function(value) {
-        setProfileSetting('myshows_token', value);
+    Lampa.SettingsApi.addParam({  
+      component: 'myshows_auto_check',  
+      param: {  
+        name: 'myshows_token',  
+        type: 'static'  
+      },  
+      field: {  
+        name: 'MyShows Bearer Token',  
+        description: 'Токен автоматически обновляется при авторизации'  
+      }, 
+      onRender: function(item) {  
+        var token = getProfileSetting('myshows_token', '');  
+        var displayValue = token ? token.substring(0, 10) + '...' : 'Не установлен';  
+        item.find('.settings-param__name').after('<div class="settings-param__value">' + displayValue + '</div>');  
       }
     });
 
@@ -271,8 +270,6 @@
       },
       onChange: function(value) {
         setProfileSetting('myshows_login', value);
-        // При изменении логина пробуем авторизоваться
-        // tryAuthFromSettings();
       }
     });
 
