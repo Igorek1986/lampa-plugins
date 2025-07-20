@@ -1,6 +1,7 @@
 (function () {
   'use strict';
 
+  var DEFAULT_ADD_THRESHOLD = '0';
   var DEFAULT_MIN_PROGRESS = 90;
   var API_URL = 'https://api.myshows.me/v2/rpc/';
   var isInitialized = false;
@@ -29,11 +30,11 @@
             setProfileSetting('myshows_token', data.token);  
             Lampa.Storage.set('myshows_token', data.token, true);  
 
-              if (Lampa.Settings && Lampa.Settings.update) {        
-                try {    
-                  Lampa.Settings.update();        
-                } catch (error) {}    
-              }  
+            if (Lampa.Settings && Lampa.Settings.update) {        
+              try {    
+                Lampa.Settings.update();        
+              } catch (error) {}    
+            } 
               
             if (successCallback) {  
                 successCallback(data.token);  
@@ -148,6 +149,10 @@
   
   function loadProfileSettings() {  
     // Проверяем существование ключей и устанавливаем значения по умолчанию если их нет  
+    if (!hasProfileSetting('myshows_add_threshold')) {    
+      setProfileSetting('myshows_add_threshold', DEFAULT_ADD_THRESHOLD);    
+    }  
+
     if (!hasProfileSetting('myshows_min_progress')) {  
       setProfileSetting('myshows_min_progress', DEFAULT_MIN_PROGRESS);  
     }  
@@ -169,6 +174,7 @@
     }
       
     // Получаем значения из профиль-специфичного хранилища  
+    var addThresholdValue = parseInt(getProfileSetting('myshows_add_threshold', DEFAULT_ADD_THRESHOLD).toString());
     var progressValue = getProfileSetting('myshows_min_progress', DEFAULT_MIN_PROGRESS).toString();  
     var tokenValue = getProfileSetting('myshows_token', '');  
     var triggerValue = getProfileSetting('myshows_only_current', true);  
@@ -176,11 +182,13 @@
     var passwordValue = getProfileSetting('myshows_password', ''); 
     
     // Устанавливаем в стандартное хранилище ТОЛЬКО для отображения в интерфейсе  
+    Lampa.Storage.set('myshows_add_threshold', addThresholdValue, true);
     Lampa.Storage.set('myshows_min_progress', progressValue, true);  
     Lampa.Storage.set('myshows_token', tokenValue, true);  
     Lampa.Storage.set('myshows_only_current', triggerValue, true);
     Lampa.Storage.set('myshows_login', loginValue, true);
     Lampa.Storage.set('myshows_password', passwordValue, true);
+
   }  
     
   // Вспомогательная функция для проверки существования профиль-специфичного ключа  
@@ -214,6 +222,36 @@
 
     isInitialized = true;  
     loadProfileSettings();  
+
+    // Порог добавления сериала в список  
+    Lampa.SettingsApi.addParam({  
+      component: 'myshows_auto_check',  
+      param: {  
+        name: 'myshows_add_threshold',  
+        type: 'select',  
+        values: {  
+          '0': 'Сразу при запуске',  
+          '5': 'После 5% просмотра',  
+          '10': 'После 10% просмотра',  
+          '15': 'После 15% просмотра',  
+          '20': 'После 20% просмотра',  
+          '25': 'После 25% просмотра',  
+          '30': 'После 30% просмотра',  
+          '35': 'После 35% просмотра',  
+          '40': 'После 40% просмотра',  
+          '45': 'После 45% просмотра',  
+          '50': 'После 50% просмотра'  
+        },  
+        default: getProfileSetting('myshows_add_threshold', DEFAULT_ADD_THRESHOLD).toString() 
+      },  
+      field: {  
+        name: 'Порог добавления сериала',  
+        description: 'Когда добавлять сериал в список "Смотрю" на MyShows'  
+      },  
+      onChange: function(value) {  
+        setProfileSetting('myshows_add_threshold', parseInt(value));  
+      }  
+    });
 
     // Порог просмотра
     Lampa.SettingsApi.addParam({
@@ -330,6 +368,9 @@
         var settingsPanel = document.querySelector('[data-component="myshows_auto_check"]');
         if (settingsPanel) {
           // Обновляем значения полей
+          var addThresholdSelect = settingsPanel.querySelector('select[data-name="myshows_add_threshold"]');  
+          if (addThresholdSelect) addThresholdSelect.value = getProfileSetting('myshows_add_threshold', DEFAULT_ADD_THRESHOLD).toString();
+
           var CurrentTrigger = settingsPanel.querySelector('input[data-name="myshows_only_current"]');
           if (CurrentTrigger) CurrentTrigger.checked = getProfileSetting('myshows_only_current', true);
 
@@ -458,6 +499,29 @@
     });    
   }
 
+  // Добавить сериал в "Смотрю" на MyShows
+  function addShowToWatching(card, token) {  
+    getShowIdByImdb(card.imdb_id || card.imdbId || (card.ids && card.ids.imdb), token, function(showId, title) {        
+        if (!showId) return;        
+        
+        makeAuthenticatedRequest(API_URL, {        
+            method: 'POST',        
+            headers: {        
+                'Content-Type': 'application/json'        
+            },        
+            body: JSON.stringify({        
+                jsonrpc: '2.0',        
+                method: 'manage.SetShowStatus',        
+                params: {        
+                    id: showId,        
+                    status: "watching"        
+                },        
+                id: 1        
+            })        
+        });        
+    });  
+  }
+
   // Универсальный поиск карточки сериала
   function getCurrentCard() {
     var card = (Lampa.Activity && Lampa.Activity.active && Lampa.Activity.active() && (
@@ -509,29 +573,22 @@
 
           // 3. Формируем hash для первой серии первого сезона  
           var firstEpisodeHash = Lampa.Utils.hash('11' + originalName); // S01E01  
+          var addThreshold = parseInt(getProfileSetting('myshows_add_threshold', DEFAULT_ADD_THRESHOLD)); 
 
           // 4. Если текущий hash совпадает с первой серией - добавляем сериал  
           if (hash && hash === firstEpisodeHash) {  
-              getShowIdByImdb(card.imdb_id || card.imdbId || (card.ids && card.ids.imdb), token, function(showId, title) {      
-                  if (!showId) return;      
+              Lampa.Storage.set('myshows_pending_show', {  
+                  card: card,  
+                  token: token,  
+                  addThreshold: addThreshold,  
+                  hash: hash  
+              });  
                 
-                  makeAuthenticatedRequest(API_URL, {      
-                      method: 'POST',      
-                      headers: {      
-                          'Content-Type': 'application/json'      
-                      },      
-                      body: JSON.stringify({      
-                          jsonrpc: '2.0',      
-                          method: 'manage.SetShowStatus',      
-                          params: {      
-                              id: showId,      
-                              status: "watching"      
-                          },      
-                          id: 1      
-                      })      
-                  });      
-              });      
-            } 
+              // Если порог 0% - добавляем сразу  
+              if (addThreshold === 0) {  
+                  addShowToWatching(card, token);  
+              }  
+          } 
 
           // 5. Сохраняем hash для последующей обработки
           if (hash) {  
@@ -566,6 +623,17 @@
     var token = getProfileSetting('myshows_token', '');  
     var checked = Lampa.Storage.get(STORAGE_KEY, {});  
     var card = getCurrentCard();  
+
+
+    // Проверяем, нужно ли добавить сериал в список  
+    var pendingShow = Lampa.Storage.get('myshows_pending_show', null);  
+    if (pendingShow && pendingShow.addThreshold > 0) {  
+        var entry = fileView[pendingShow.hash];  
+        if (entry && entry.percent >= pendingShow.addThreshold) {  
+            addShowToWatching(pendingShow.card, pendingShow.token);  
+            Lampa.Storage.remove('myshows_pending_show'); // Убираем из ожидания  
+        }  
+    }
 
     if(!card) { return; }
     ensureHashMap(card, token, function(map){
