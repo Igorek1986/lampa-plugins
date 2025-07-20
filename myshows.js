@@ -29,9 +29,11 @@
             setProfileSetting('myshows_token', data.token);  
             Lampa.Storage.set('myshows_token', data.token, true);  
 
-            if (Lampa.Settings && Lampa.Settings.update) {  
-                Lampa.Settings.update();  
-            }  
+              if (Lampa.Settings && Lampa.Settings.update) {        
+                try {    
+                  Lampa.Settings.update();        
+                } catch (error) {}    
+              }  
               
             if (successCallback) {  
                 successCallback(data.token);  
