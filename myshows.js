@@ -407,7 +407,7 @@
         })    
     }, function(data) {      
         if(data && data.result && data.result.id) {      
-            callback(data.result.id, data.result.titleOriginal || data.result.title);      
+            callback(data.result.id);      
         } else {      
             callback(null);      
         }      
@@ -462,7 +462,7 @@
     // Если mapping уже есть — используем
     for(var h in map) { if(map.hasOwnProperty(h) && map[h].originalName === originalName) { callback(map); return; } }
     // Получаем showId
-    getShowIdByImdb(imdbId, token, function(showId, originalName){
+    getShowIdByImdb(imdbId, token, function(showId){
       if(!showId) { callback({}); return; }
       getEpisodesByShowId(showId, token, function(episodes){
         var newMap = buildHashMap(episodes, originalName);
@@ -617,6 +617,7 @@
     if (onlyCurrent && !currentHash) {  
       return;  
     }
+
     var fileView = Lampa.Storage.get('file_view', {});  
     var minProgress = parseInt(getProfileSetting('myshows_min_progress', DEFAULT_MIN_PROGRESS));  
     var token = getProfileSetting('myshows_token', '');  
