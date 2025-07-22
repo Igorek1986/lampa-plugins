@@ -462,11 +462,10 @@
     // Если mapping уже есть — используем
     for(var h in map) { if(map.hasOwnProperty(h) && map[h].originalName === originalName) { callback(map); return; } }
     // Получаем showId
-    getShowIdByImdb(imdbId, token, function(showId, nameFromApi){
+    getShowIdByImdb(imdbId, token, function(showId, originalName){
       if(!showId) { callback({}); return; }
       getEpisodesByShowId(showId, token, function(episodes){
-        var usedName = nameFromApi || originalName;
-        var newMap = buildHashMap(episodes, usedName);
+        var newMap = buildHashMap(episodes, originalName);
         // Сохраняем mapping с привязкой к originalName
         for(var k in newMap) if(newMap.hasOwnProperty(k)) map[k] = newMap[k];
         Lampa.Storage.set(MAP_KEY, map);
