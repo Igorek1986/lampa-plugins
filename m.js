@@ -224,34 +224,34 @@
     loadProfileSettings();  
 
     // Порог добавления сериала в список  
-    // Lampa.SettingsApi.addParam({  
-    //   component: 'myshows_auto_check',  
-    //   param: {  
-    //     name: 'myshows_add_threshold',  
-    //     type: 'select',  
-    //     values: {  
-    //       '0': 'Сразу при запуске',  
-    //       '5': 'После 5% просмотра',  
-    //       '10': 'После 10% просмотра',  
-    //       '15': 'После 15% просмотра',  
-    //       '20': 'После 20% просмотра',  
-    //       '25': 'После 25% просмотра',  
-    //       '30': 'После 30% просмотра',  
-    //       '35': 'После 35% просмотра',  
-    //       '40': 'После 40% просмотра',  
-    //       '45': 'После 45% просмотра',  
-    //       '50': 'После 50% просмотра'  
-    //     },  
-    //     default: getProfileSetting('myshows_add_threshold', DEFAULT_ADD_THRESHOLD).toString() 
-    //   },  
-    //   field: {  
-    //     name: 'Порог добавления сериала',  
-    //     description: 'Когда добавлять сериал в список "Смотрю" на MyShows'  
-    //   },  
-    //   onChange: function(value) {  
-    //     setProfileSetting('myshows_add_threshold', parseInt(value));  
-    //   }  
-    // });
+    Lampa.SettingsApi.addParam({  
+      component: 'myshows_auto_check',  
+      param: {  
+        name: 'myshows_add_threshold',  
+        type: 'select',  
+        values: {  
+          '0': 'Сразу при запуске',  
+          '5': 'После 5% просмотра',  
+          '10': 'После 10% просмотра',  
+          '15': 'После 15% просмотра',  
+          '20': 'После 20% просмотра',  
+          '25': 'После 25% просмотра',  
+          '30': 'После 30% просмотра',  
+          '35': 'После 35% просмотра',  
+          '40': 'После 40% просмотра',  
+          '45': 'После 45% просмотра',  
+          '50': 'После 50% просмотра'  
+        },  
+        default: getProfileSetting('myshows_add_threshold', DEFAULT_ADD_THRESHOLD).toString() 
+      },  
+      field: {  
+        name: 'Порог добавления сериала',  
+        description: 'Когда добавлять сериал в список "Смотрю" на MyShows'  
+      },  
+      onChange: function(value) {  
+        setProfileSetting('myshows_add_threshold', parseInt(value));  
+      }  
+    });
 
     // Порог просмотра
     // Lampa.SettingsApi.addParam({
