@@ -254,31 +254,31 @@
     });
 
     // Порог просмотра
-    // Lampa.SettingsApi.addParam({
-    //   component: 'myshows_auto_check',
-    //   param: {
-    //     name: 'myshows_min_progress',
-    //     type: 'select',
-    //     values: {
-    //       '50': '50%',
-    //       '60': '60%',
-    //       '70': '70%',
-    //       '80': '80%',
-    //       '85': '85%',
-    //       '90': '90%',
-    //       '95': '95%',
-    //       '100': '100%'
-    //     },
-    //     default: getProfileSetting('myshows_min_progress', DEFAULT_MIN_PROGRESS).toString()
-    //   },
-    //   field: {
-    //     name: 'Порог просмотра',
-    //     description: 'Минимальный процент просмотра для отметки эпизода на myshows.me'
-    //   },
-    //   onChange: function(value) {
-    //     setProfileSetting('myshows_min_progress', parseInt(value));
-    //   }
-    // });
+    Lampa.SettingsApi.addParam({
+      component: 'myshows_auto_check',
+      param: {
+        name: 'myshows_min_progress',
+        type: 'select',
+        values: {
+          '50': '50%',
+          '60': '60%',
+          '70': '70%',
+          '80': '80%',
+          '85': '85%',
+          '90': '90%',
+          '95': '95%',
+          '100': '100%'
+        },
+        default: getProfileSetting('myshows_min_progress', DEFAULT_MIN_PROGRESS).toString()
+      },
+      field: {
+        name: 'Порог просмотра',
+        description: 'Минимальный процент просмотра для отметки эпизода на myshows.me'
+      },
+      onChange: function(value) {
+        setProfileSetting('myshows_min_progress', parseInt(value));
+      }
+    });
 
     // Токен MyShows
     // Lampa.SettingsApi.addParam({  
@@ -299,23 +299,23 @@
     // });
 
     // Логин MyShows
-    // Lampa.SettingsApi.addParam({
-    //   component: 'myshows_auto_check',
-    //   param: {
-    //     name: 'myshows_login',
-    //     type: 'input',
-    //     placeholder: 'Логин MyShows',
-    //     values: getProfileSetting('myshows_login', ''),
-    //     default: ''
-    //   },
-    //   field: {
-    //     name: 'MyShows Логин',
-    //     description: 'Введите логин или email, привязанный к аккаунту myshows.me'
-    //   },
-    //   onChange: function(value) {
-    //     setProfileSetting('myshows_login', value);
-    //   }
-    // });
+    Lampa.SettingsApi.addParam({
+      component: 'myshows_auto_check',
+      param: {
+        name: 'myshows_login',
+        type: 'input',
+        placeholder: 'Логин MyShows',
+        values: getProfileSetting('myshows_login', ''),
+        default: ''
+      },
+      field: {
+        name: 'MyShows Логин',
+        description: 'Введите логин или email, привязанный к аккаунту myshows.me'
+      },
+      onChange: function(value) {
+        setProfileSetting('myshows_login', value);
+      }
+    });
 
     // Пароль MyShows
     // Lampa.SettingsApi.addParam({
