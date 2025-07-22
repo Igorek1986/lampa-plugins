@@ -281,22 +281,22 @@
     });
 
     // Токен MyShows
-    Lampa.SettingsApi.addParam({  
-      component: 'myshows_auto_check',  
-      param: {  
-        name: 'myshows_token',  
-        type: 'static'  
-      },  
-      field: {  
-        name: 'MyShows Bearer Token',  
-        description: 'Токен автоматически обновляется при авторизации'  
-      }, 
-      onRender: function(item) {  
-        var token = getProfileSetting('myshows_token', '');  
-        var displayValue = token ? token.substring(0, 10) + '...' : 'Не установлен';  
-        item.find('.settings-param__name').after('<div class="settings-param__value">' + displayValue + '</div>');  
-      }
-    });
+    // Lampa.SettingsApi.addParam({  
+    //   component: 'myshows_auto_check',  
+    //   param: {  
+    //     name: 'myshows_token',  
+    //     type: 'static'  
+    //   },  
+    //   field: {  
+    //     name: 'MyShows Bearer Token',  
+    //     description: 'Токен автоматически обновляется при авторизации'  
+    //   }, 
+    //   onRender: function(item) {  
+    //     var token = getProfileSetting('myshows_token', '');  
+    //     var displayValue = token ? token.substring(0, 10) + '...' : 'Не установлен';  
+    //     item.find('.settings-param__name').after('<div class="settings-param__value">' + displayValue + '</div>');  
+    //   }
+    // });
 
     // Логин MyShows
     Lampa.SettingsApi.addParam({
@@ -340,21 +340,21 @@
     });
 
     // Режим "Только текущая серия"
-    // Lampa.SettingsApi.addParam({
-    //   component: 'myshows_auto_check',
-    //   param: {
-    //     name: 'myshows_only_current',
-    //     type: 'trigger',
-    //     default: getProfileSetting('myshows_only_current', true),
-    //   },
-    //   field: {
-    //     name: 'Режим "Отмечать только текущую серию"',
-    //     description: 'Включите, чтобы отмечалась только серия, которую вы только что досмотрели.'
-    //   },
-    //   onChange: function(value) {
-    //     setProfileSetting('myshows_only_current', value);
-    //   }
-    // });
+    Lampa.SettingsApi.addParam({
+      component: 'myshows_auto_check',
+      param: {
+        name: 'myshows_only_current',
+        type: 'trigger',
+        default: getProfileSetting('myshows_only_current', true),
+      },
+      field: {
+        name: 'Режим "Отмечать только текущую серию"',
+        description: 'Включите, чтобы отмечалась только серия, которую вы только что досмотрели.'
+      },
+      onChange: function(value) {
+        setProfileSetting('myshows_only_current', value);
+      }
+    });
   }
 
   // Обновляем UI при смене профиля
