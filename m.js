@@ -281,22 +281,22 @@
     });
 
     // Токен MyShows
-    // Lampa.SettingsApi.addParam({  
-    //   component: 'myshows_auto_check',  
-    //   param: {  
-    //     name: 'myshows_token',  
-    //     type: 'static'  
-    //   },  
-    //   field: {  
-    //     name: 'MyShows Bearer Token',  
-    //     description: 'Токен автоматически обновляется при авторизации'  
-    //   }, 
-    //   onRender: function(item) {  
-    //     var token = getProfileSetting('myshows_token', '');  
-    //     var displayValue = token ? token.substring(0, 10) + '...' : 'Не установлен';  
-    //     item.find('.settings-param__name').after('<div class="settings-param__value">' + displayValue + '</div>');  
-    //   }
-    // });
+    Lampa.SettingsApi.addParam({  
+      component: 'myshows_auto_check',  
+      param: {  
+        name: 'myshows_token',  
+        type: 'static'  
+      },  
+      field: {  
+        name: 'MyShows Bearer Token',  
+        description: 'Токен автоматически обновляется при авторизации'  
+      }, 
+      onRender: function(item) {  
+        var token = getProfileSetting('myshows_token', '');  
+        var displayValue = token ? token.substring(0, 10) + '...' : 'Не установлен';  
+        item.find('.settings-param__name').after('<div class="settings-param__value">' + displayValue + '</div>');  
+      }
+    });
 
     // Логин MyShows
     Lampa.SettingsApi.addParam({
@@ -318,26 +318,26 @@
     });
 
     // Пароль MyShows
-    // Lampa.SettingsApi.addParam({
-    //   component: 'myshows_auto_check',
-    //   param: {
-    //     name: 'myshows_password',
-    //     type: 'input',
-    //     placeholder: 'Пароль',
-    //     values: getProfileSetting('myshows_password', ''),
-    //     default: '',
-    //     password: true // Скрываем ввод
-    //   },
-    //   field: {
-    //     name: 'MyShows Пароль',
-    //     description: 'Введите пароль от аккаунта myshows.me'
-    //   },
-    //   onChange: function(value) {
-    //     setProfileSetting('myshows_password', value);
-    //     // При изменении пароля пробуем авторизоваться
-    //     tryAuthFromSettings();
-    //   }
-    // });
+    Lampa.SettingsApi.addParam({
+      component: 'myshows_auto_check',
+      param: {
+        name: 'myshows_password',
+        type: 'input',
+        placeholder: 'Пароль',
+        values: getProfileSetting('myshows_password', ''),
+        default: '',
+        password: true // Скрываем ввод
+      },
+      field: {
+        name: 'MyShows Пароль',
+        description: 'Введите пароль от аккаунта myshows.me'
+      },
+      onChange: function(value) {
+        setProfileSetting('myshows_password', value);
+        // При изменении пароля пробуем авторизоваться
+        tryAuthFromSettings();
+      }
+    });
 
     // Режим "Только текущая серия"
     // Lampa.SettingsApi.addParam({
