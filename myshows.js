@@ -462,73 +462,74 @@
             Lampa.Activity.active().card ||  
             Lampa.Activity.active().movie  
         )) || null;  
-        if (!card) card = Lampa.Storage.get('myshows_last_card', null);  
-        if (!card) {  
-            var history = Lampa.Storage.get('history', []);  
-            if (Array.isArray(history) && history.length) {  
-            for (var i = history.length - 1; i >= 0; i--) {  
-                if (history[i].number_of_seasons || history[i].original_name) {  
-                card = history[i];  
-                break;  
-                }  
-            }  
-            }  
-        }  
+        if (!card) card = getProfileSetting('myshows_last_card', null);  
         return card;  
     }  
   
     // обработка Timeline обновлений
-    function processTimelineUpdate(data) {  
-        if (!data || !data.data || !data.data.hash || !data.data.road) {  
-            return;  
-        }  
-
-        var hash = data.data.hash;  
-        var percent = data.data.road.percent;  
-        var token = getProfileSetting('myshows_token', '');  
-        var minProgress = parseInt(getProfileSetting('myshows_min_progress', DEFAULT_MIN_PROGRESS));  
-        var addThreshold = parseInt(getProfileSetting('myshows_add_threshold', DEFAULT_ADD_THRESHOLD));  
+    function processTimelineUpdate(data) {    
+        if (!data || !data.data || !data.data.hash || !data.data.road) {    
+            return;    
+        }    
+    
+        var hash = data.data.hash;    
+        var percent = data.data.road.percent;    
+        var token = getProfileSetting('myshows_token', '');    
+        var minProgress = parseInt(getProfileSetting('myshows_min_progress', DEFAULT_MIN_PROGRESS));    
+        var addThreshold = parseInt(getProfileSetting('myshows_add_threshold', DEFAULT_ADD_THRESHOLD));    
             
-        if (!token) {  
-            return;  
-        }  
-
-        var card = getCurrentCard();  
-        if (!card) return;  
-
-        ensureHashMap(card, token, function(map) {  
-            // Отмечаем серию как просмотренную  
-            var episodeId = map[hash];  
-            if (episodeId) {  
-
-            // Проверяем, нужно ли добавить сериал в "Смотрю"  
-            var originalName = card.original_name || card.original_title || card.title;  
-            var firstEpisodeHash = Lampa.Utils.hash('11' + originalName);  
+        if (!token) {    
+            return;    
+        }    
+    
+        var card = getCurrentCard();    
+        if (!card) return;    
+    
+        ensureHashMap(card, token, function(map) {    
+            var episodeId = map[hash];    
             
-            // Добавляем сериал только если это первая серия И процент >= порога  
-            if (hash === firstEpisodeHash && percent >= addThreshold) {    
-                addShowToWatching(card, token);    
-            } else if (addThreshold === 0 && hash === firstEpisodeHash) {    
-                // Если порог 0%, добавляем при любом проценте первой серии    
-                addShowToWatching(card, token);     
-            }
-
-
-            // Отмечаем серию как просмотренную только если достигнут minProgress  
-            if (percent >= minProgress) {  
-                checkEpisodeMyShows(episodeId, token);     
+            // Если hash не найден в mapping - принудительно обновляем  
+            if (!episodeId) {  
+                // Очищаем кеш для этого сериала  
+                var originalName = card.original_name || card.original_title || card.title;  
+                var fullMap = Lampa.Storage.get(MAP_KEY, {});  
+                // Удаляем все записи для этого сериала  
+                for (var h in fullMap) {  
+                    if (fullMap.hasOwnProperty(h) && fullMap[h].originalName === originalName) {  
+                        delete fullMap[h];  
+                    }  
+                }  
+                Lampa.Storage.set(MAP_KEY, fullMap);  
+                
+                // Повторно запрашиваем mapping  
+                ensureHashMap(card, token, function(newMap) {  
+                    var newEpisodeId = newMap[hash];  
+                    if (newEpisodeId) {  
+                        processEpisode(newEpisodeId, hash, percent, card, token, minProgress, addThreshold);  
+                    }  
+                });  
+                return;  
             }  
+            
+            processEpisode(episodeId, hash, percent, card, token, minProgress, addThreshold);  
+        });    
+    }  
 
-            // Сохраняем информацию о просмотренной серии  
-            var watchedEpisodes = Lampa.Storage.get('myshows_watched_episodes', {});  
-            watchedEpisodes[hash] = {  
-                episodeId: episodeId,  
-                percent: percent,  
-                timestamp: new Date().toISOString()  
-            };  
-            Lampa.Storage.set('myshows_watched_episodes', watchedEpisodes);  
-            }  
-        });  
+    function processEpisode(episodeId, hash, percent, card, token, minProgress, addThreshold) {  
+        // Проверяем, нужно ли добавить сериал в "Смотрю"    
+        var originalName = card.original_name || card.original_title || card.title;    
+        var firstEpisodeHash = Lampa.Utils.hash('11' + originalName);    
+        
+        if (hash === firstEpisodeHash && percent >= addThreshold) {      
+            addShowToWatching(card, token);         
+        } else if (addThreshold === 0 && hash === firstEpisodeHash) {      
+            addShowToWatching(card, token);         
+        }  
+    
+        // Отмечаем серию как просмотренную только если достигнут minProgress    
+        if (percent >= minProgress) {    
+            checkEpisodeMyShows(episodeId, token);        
+        }    
     }
   
     // Инициализация Timeline listener  
@@ -561,7 +562,7 @@
         if (!card) return;  
         
         // Просто сохраняем карточку для Timeline обработки  
-        Lampa.Storage.set('myshows_last_card', card);  
+        setProfileSetting('myshows_last_card', card);  
     });  
     }
   
