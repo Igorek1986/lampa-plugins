@@ -7,7 +7,8 @@
     var isInitialized = false;  
     var MAP_KEY = 'myshows_hash_map';  
     var PROXY_URL = 'https://numparser.igorek1986.ru/myshows/auth';  
-  
+    var DEFAULT_CACHE_DAYS = 30;
+
     // Функция авторизации через прокси  
     function tryAuthFromSettings(successCallback) {        
         var login = getProfileSetting('myshows_login', '');        
@@ -158,18 +159,24 @@
         if (!hasProfileSetting('myshows_password')) {  
             setProfileSetting('myshows_password', '');  
         }  
+
+        if (!hasProfileSetting('myshows_cache_days')) {  
+            setProfileSetting('myshows_cache_days', DEFAULT_CACHE_DAYS);  
+        }  
             
         var addThresholdValue = parseInt(getProfileSetting('myshows_add_threshold', DEFAULT_ADD_THRESHOLD).toString());  
         var progressValue = getProfileSetting('myshows_min_progress', DEFAULT_MIN_PROGRESS).toString();    
         var tokenValue = getProfileSetting('myshows_token', '');    
         var loginValue = getProfileSetting('myshows_login', '');  
         var passwordValue = getProfileSetting('myshows_password', '');   
+        var cacheDaysValue = getProfileSetting('myshows_cache_days', DEFAULT_CACHE_DAYS); 
             
         Lampa.Storage.set('myshows_add_threshold', addThresholdValue, true);  
         Lampa.Storage.set('myshows_min_progress', progressValue, true);    
         Lampa.Storage.set('myshows_token', tokenValue, true);    
         Lampa.Storage.set('myshows_login', loginValue, true);  
         Lampa.Storage.set('myshows_password', passwordValue, true);  
+        Lampa.Storage.set('myshows_cache_days', cacheDaysValue, true);  
     }    
       
     function hasProfileSetting(key) {    
@@ -180,7 +187,9 @@
     // Инициализация компонента настроек  
     function initSettings() {  
         if (isInitialized) {    
-            loadProfileSettings();    
+            loadProfileSettings();  
+            autoSetupToken();
+
             return;    
         }   
 
@@ -198,6 +207,7 @@
 
         isInitialized = true;    
         loadProfileSettings();    
+        autoSetupToken();
 
         // Настройки плагина  
         Lampa.SettingsApi.addParam({    
@@ -253,7 +263,30 @@
             onChange: function(value) {  
             setProfileSetting('myshows_min_progress', parseInt(value));  
             }  
-        });  
+        }); 
+        
+        Lampa.SettingsApi.addParam({  
+            component: 'myshows_auto_check',  
+            param: {  
+                name: 'myshows_cache_days',  
+                type: 'select',  
+                values: {  
+                    '7': '7 дней',  
+                    '14': '14 дней',  
+                    '30': '30 дней',  
+                    '60': '60 дней',  
+                    '90': '90 дней'  
+                },  
+                default: DEFAULT_CACHE_DAYS.toString()    
+            },  
+            field: {  
+                name: 'Время жизни кеша',  
+                description: 'Через сколько дней очищать кеш маппинга эпизодов'  
+            },  
+            onChange: function(value) {  
+                setProfileSetting('myshows_cache_days', parseInt(value));  
+            }  
+        });
 
         Lampa.SettingsApi.addParam({  
             component: 'myshows_auto_check',  
@@ -313,6 +346,9 @@
                 
                 var progressSelect = settingsPanel.querySelector('select[data-name="myshows_min_progress"]');
                 if (progressSelect) progressSelect.value = getProfileSetting('myshows_min_progress', DEFAULT_MIN_PROGRESS).toString();
+
+                var daysSelect = settingsPanel.querySelector('select[data-name="myshows_cache_days"]');
+                if (daysSelect) daysSelect.value = getProfileSetting('myshows_cache_days', DEFAULT_CACHE_DAYS).toString();
 
                 var loginInput = settingsPanel.querySelector('input[data-name="myshows_login"]');
                 if (loginInput) loginInput.value = getProfileSetting('myshows_login', '');
@@ -382,7 +418,11 @@
             // Формируем hash как в Lampa: season_number + episode_number + original_name  
             var hashStr = '' + ep.seasonNumber + ep.episodeNumber + originalName;  
             var hash = Lampa.Utils.hash(hashStr);  
-            map[hash] = ep.id;  
+            map[hash] = {  
+                episodeId: ep.id,  
+                originalName: originalName,  
+                timestamp: Date.now()  
+            };
         }  
         return map;  
     }  
@@ -394,7 +434,7 @@
         if(!imdbId || !originalName) { callback({}); return; }  
         var map = Lampa.Storage.get(MAP_KEY, {});  
         // Если mapping уже есть — используем  
-        for(var h in map) { if(map.hasOwnProperty(h) && map[h].originalName === originalName) { callback(map); return; } }  
+        for(var h in map) { if(map.hasOwnProperty(h) && map[h] && map[h].originalName === originalName) { callback(map); return; } }  
         // Получаем showId  
         getShowIdByImdb(imdbId, token, function(showId){  
             if(!showId) { callback({}); return; }  
@@ -486,7 +526,7 @@
         if (!card) return;    
     
         ensureHashMap(card, token, function(map) {    
-            var episodeId = map[hash];    
+            var episodeId = map[hash] && map[hash].episodeId ? map[hash].episodeId : map[hash];   
             
             // Если hash не найден в mapping - принудительно обновляем  
             if (!episodeId) {  
@@ -495,7 +535,7 @@
                 var fullMap = Lampa.Storage.get(MAP_KEY, {});  
                 // Удаляем все записи для этого сериала  
                 for (var h in fullMap) {  
-                    if (fullMap.hasOwnProperty(h) && fullMap[h].originalName === originalName) {  
+                    if (fullMap.hasOwnProperty(h) && fullMap[h] && fullMap[h].originalName === originalName) {  
                         delete fullMap[h];  
                     }  
                 }  
@@ -503,7 +543,7 @@
                 
                 // Повторно запрашиваем mapping  
                 ensureHashMap(card, token, function(newMap) {  
-                    var newEpisodeId = newMap[hash];  
+                    var newEpisodeId = newMap[hash] && newMap[hash].episodeId ? newMap[hash].episodeId : newMap[hash];  
                     if (newEpisodeId) {  
                         processEpisode(newEpisodeId, hash, percent, card, token, minProgress, addThreshold);  
                     }  
@@ -553,6 +593,35 @@
             tryAuthFromSettings();
         }  
     }  
+
+    // Переодическая очистка MAP_KEY
+    function cleanupOldMappings() {      
+        var map = Lampa.Storage.get(MAP_KEY, {});      
+        var now = Date.now();      
+        var days = parseInt(getProfileSetting('myshows_cache_days', DEFAULT_CACHE_DAYS));    
+        var maxAge = days * 24 * 60 * 60 * 1000;    
+            
+        var cleaned = {};      
+        var removedCount = 0;      
+            
+        for (var hash in map) {      
+            if (map.hasOwnProperty(hash)) {        
+                var item = map[hash];        
+                
+                // Только записи с timestamp и в пределах maxAge  
+                if (item && item.timestamp && typeof item.timestamp === 'number' && (now - item.timestamp) < maxAge) {        
+                    cleaned[hash] = item;        
+                } else {        
+                    removedCount++;        
+                }        
+            }   
+        }      
+        
+        if (removedCount > 0) {      
+            Lampa.Storage.set(MAP_KEY, cleaned);      
+            console.log('MyShows: Cleaned', removedCount, 'old mapping entries (including legacy format)');      
+        }      
+    }
   
     // Инициализация плеера  
     if (window.Lampa && Lampa.Player && Lampa.Player.listener) {  
@@ -569,13 +638,13 @@
     // Инициализация  
     if (window.appready) {  
         initSettings();  
-        autoSetupToken();
+        cleanupOldMappings();
         initTimelineListener();  
     } else {  
         Lampa.Listener.follow('app', function (event) {  
         if (event.type === 'ready') {  
             initSettings();  
-            autoSetupToken();
+            cleanupOldMappings();
             initTimelineListener();  
         }  
         });  
