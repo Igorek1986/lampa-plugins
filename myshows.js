@@ -360,31 +360,48 @@
         }
     });
   
-    // Получить showId по imdbId 
-    function getShowIdByImdb(imdbId, token, callback) {      
-        var cleanImdbId = imdbId && imdbId.startsWith('tt') ? imdbId.slice(2) : imdbId;      
-                
-        makeAuthenticatedRequest(API_URL, {      
-            method: 'POST',      
-            headers: {      
-                'Content-Type': 'application/json'      
-            },      
-            body: JSON.stringify({      
-                jsonrpc: '2.0',      
-                method: 'shows.GetByExternalId',      
-                params: { id: cleanImdbId, source: 'imdb' },      
-                id: 1      
-            })      
-        }, function(data) {        
-            if(data && data.result && data.result.id) {        
-                callback(data.result.id);        
-            } else {        
-                callback(null);        
-            }        
-        }, function(err) {        
-            callback(null);        
-        });      
-    } 
+    // Получить showId по imdbId или kinopoiskId
+    function getShowIdByExternalIds(imdbId, kinopoiskId, token, callback) {
+        // Внутренняя функция для выполнения запроса
+        function trySource(source, id, cb) {
+            makeAuthenticatedRequest(API_URL, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    jsonrpc: '2.0',
+                    method: 'shows.GetByExternalId',
+                    params: { id: id, source: source },
+                    id: 1
+                })
+            }, function(data) {
+                cb(data && data.result ? data.result.id : null);
+            }, function() {
+                cb(null);
+            });
+        }
+
+        if (imdbId) {
+            var cleanImdbId = imdbId.startsWith('tt') ? imdbId.slice(2) : imdbId;
+            
+            trySource('imdb', cleanImdbId, function(result) {
+                if (result) {
+                    callback(result);
+                } else if (kinopoiskId) {
+                    trySource('kinopoisk', kinopoiskId, callback);
+                } else {
+                    callback(null);
+                }
+            });
+        }
+        else if (kinopoiskId) {
+            trySource('kinopoisk', kinopoiskId, callback);
+        }
+        else {
+            callback(null);
+        }
+    }
 
     // Получить список эпизодов по showId
     function getEpisodesByShowId(showId, token, callback) {      
@@ -427,26 +444,46 @@
         return map;  
     }  
   
-    // Автоматически получить mapping для текущего сериала (по imdbId из карточки)  
-    function ensureHashMap(card, token, callback) {  
-        var imdbId = card && (card.imdb_id || card.imdbId || (card.ids && card.ids.imdb));  
-        var originalName = card && (card.original_name || card.original_title || card.title);  
-        if(!imdbId || !originalName) { callback({}); return; }  
-        var map = Lampa.Storage.get(MAP_KEY, {});  
-        // Если mapping уже есть — используем  
-        for(var h in map) { if(map.hasOwnProperty(h) && map[h] && map[h].originalName === originalName) { callback(map); return; } }  
-        // Получаем showId  
-        getShowIdByImdb(imdbId, token, function(showId){  
-            if(!showId) { callback({}); return; }  
-            getEpisodesByShowId(showId, token, function(episodes){  
-            var newMap = buildHashMap(episodes, originalName);  
-            // Сохраняем mapping с привязкой к originalName  
-            for(var k in newMap) if(newMap.hasOwnProperty(k)) map[k] = newMap[k];  
-            Lampa.Storage.set(MAP_KEY, map);  
-            callback(map);  
-            });  
-        });  
-    }  
+    // Автоматически получить mapping для текущего сериала (по imdbId или kinopoiskId из карточки)  
+    function ensureHashMap(card, token, callback) {
+        var imdbId = card && (card.imdb_id || card.imdbId || (card.ids && card.ids.imdb));
+        var kinopoiskId = card && (card.kinopoisk_id || card.kp_id || (card.ids && card.ids.kp));
+        var originalName = card && (card.original_name || card.original_title || card.title);
+        
+        if ((!imdbId && !kinopoiskId) || !originalName) {
+            callback({});
+            return;
+        }
+
+        var map = Lampa.Storage.get(MAP_KEY, {});
+        // Проверяем существующий mapping
+        for (var h in map) {
+            if (map.hasOwnProperty(h) && map[h] && map[h].originalName === originalName) {
+                callback(map);
+                return;
+            }
+        }
+
+        // Получаем showId с учетом обоих идентификаторов
+        getShowIdByExternalIds(imdbId, kinopoiskId, token, function(showId) {
+            if (!showId) {
+                callback({});
+                return;
+            }
+            
+            getEpisodesByShowId(showId, token, function(episodes) {
+                var newMap = buildHashMap(episodes, originalName);
+                // Сохраняем mapping
+                for (var k in newMap) {
+                    if (newMap.hasOwnProperty(k)) {
+                        map[k] = newMap[k];
+                    }
+                }
+                Lampa.Storage.set(MAP_KEY, map);
+                callback(map);
+            });
+        });
+    }
   
     // Отметить эпизод на myshows  
     function checkEpisodeMyShows(episodeId, token) {        
@@ -474,25 +511,27 @@
   
     // Добавить сериал в "Смотрю" на MyShows  
     function addShowToWatching(card, token) {    
-        getShowIdByImdb(card.imdb_id || card.imdbId || (card.ids && card.ids.imdb), token, function(showId) {          
-            if (!showId) return;          
-                
-            makeAuthenticatedRequest(API_URL, {          
-                method: 'POST',          
-                headers: {          
-                    'Content-Type': 'application/json'          
-                },          
-                body: JSON.stringify({          
-                    jsonrpc: '2.0',          
-                    method: 'manage.SetShowStatus',          
-                    params: {          
-                        id: showId,          
-                        status: "watching"          
+        var imdbId = card.imdb_id || card.imdbId || (card.ids && card.ids.imdb);
+        var kinopoiskId = card && (card.kinopoisk_id || card.kp_id || (card.ids && card.ids.kp));
+            getShowIdByExternalIds(imdbId, kinopoiskId, token, function(showId) {          
+                if (!showId) return;
+                        
+                makeAuthenticatedRequest(API_URL, {          
+                    method: 'POST',          
+                    headers: {          
+                        'Content-Type': 'application/json'          
                     },          
-                    id: 1          
-                })          
-            });          
-        });    
+                    body: JSON.stringify({          
+                        jsonrpc: '2.0',          
+                        method: 'manage.SetShowStatus',          
+                        params: {          
+                            id: showId,          
+                            status: "watching"          
+                        },          
+                        id: 1          
+                    })          
+                });          
+            });  
     }  
   
     // Универсальный поиск карточки сериала  
@@ -560,7 +599,7 @@
         var originalName = card.original_name || card.original_title || card.title;    
         var firstEpisodeHash = Lampa.Utils.hash('11' + originalName);    
         
-        if (hash === firstEpisodeHash && percent >= addThreshold) {      
+        if (hash === firstEpisodeHash && percent >= addThreshold) {    
             addShowToWatching(card, token);         
         } else if (addThreshold === 0 && hash === firstEpisodeHash) {      
             addShowToWatching(card, token);         
