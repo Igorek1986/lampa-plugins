@@ -133,12 +133,12 @@
                     addStatusToCardView(status.toLowerCase(), cardView, card);  
                 } else {  
                     // Если статус не получен, показываем только TV метку  
-                    addStatusToCardView(null);  
+                    addStatusToCardView(null, cardView, card);  
                 }  
             });    
         } else {  
             // Если нет ID, показываем только TV метку  
-            addStatusToCardView(null);  
+            addStatusToCardView(null, cardView, card);  
         }  
     }
 
