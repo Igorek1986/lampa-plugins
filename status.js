@@ -207,9 +207,136 @@
         processedCards = [];
     }
 
+    function updateStoredStatuses() {  
+        // Обновляем историю  
+        updateStatusesForType('history');  
+        
+        // Обновляем избранное (используем 'book', а не 'bookmarks')  
+        updateStatusesForType('book');  
+    }  
+
+    function updateStatusesForType(type) {      
+        var items = Lampa.Favorite.get({type: type});      
+    
+        console.log('Updating statuses for type:', type, 'Items:', items);    
+        
+        if (items && items.length > 0) {      
+            var hasUpdates = false;    
+            var completedRequests = 0;  
+            var totalRequests = 0;  
+            
+            // Подсчитываем количество запросов  
+            for (var i = 0; i < items.length; i++) {  
+                var item = items[i];  
+                if (item.type === 'tv' || item.number_of_seasons || item.first_air_date) {  
+                    if (item.id) {  
+                        totalRequests++;  
+                    }  
+                }  
+            }  
+            
+            if (totalRequests === 0) return;  
+            
+            // Функция для проверки завершения всех запросов  
+            function checkCompletion() {  
+                completedRequests++;  
+                if (completedRequests === totalRequests) {  
+                    // Все запросы завершены - сохраняем данные  
+                    var storageKey = type === 'book' ? 'favorite' : type;    
+                    var currentData = Lampa.Storage.get(storageKey, {});    
+                    
+                    if (currentData.card) {    
+                        Lampa.Storage.set(storageKey, currentData);    
+                        console.log('Saved to storage:', storageKey);    
+                    }  
+
+                    if (hasUpdates) {  
+                        setTimeout(function() {  
+                            updateVisibleCards();  
+                        }, 100);  
+                    }
+                }  
+            }  
+            
+            // Выполняем запросы  
+            for (var j = 0; j < items.length; j++) {  
+                var item = items[j];  
+                if (item.type === 'tv' || item.number_of_seasons || item.first_air_date) {      
+                    if (item.id) {      
+                        (function(currentItem) {  
+                            fetchSeriesStatusFromTMDB(currentItem.id, function(newStatus) {      
+                                if (newStatus && newStatus.toLowerCase() !== currentItem.status) {      
+                                    currentItem.status = newStatus.toLowerCase();      
+                                    hasUpdates = true;    
+                                    console.log('Updated', type, 'status for', currentItem.title || currentItem.name, 'to', newStatus);      
+                                }  
+                                checkCompletion();  
+                            });  
+                        })(item);  
+                    }      
+                }      
+            }  
+        }      
+    }
+    
+    function updateVisibleCards() {  
+        // Сбрасываем список обработанных карточек  
+        processedCards = [];  
+        
+        // Получаем обновленные данные из Storage  
+        var favoriteData = Lampa.Storage.get('favorite', {});  
+        var historyData = Lampa.Storage.get('history', {});  
+        
+        var cards = document.querySelectorAll('.card');  
+        console.log('Updating visual display for', cards.length, 'cards');  
+        
+        for (var i = 0; i < cards.length; i++) {  
+            var card = cards[i];  
+            var data = card.card_data || card.data || {};  
+            
+            if (data.type === 'tv' || data.number_of_seasons || data.first_air_date) {  
+                // Находим обновленные данные для этой карточки  
+                var updatedItem = null;  
+                
+                // Ищем в избранном  
+                if (favoriteData.card) {  
+                    updatedItem = favoriteData.card.find(function(item) {  
+                        return item.id === data.id;  
+                    });  
+                }  
+                
+                // Если не нашли в избранном, ищем в истории
+                if (!updatedItem && historyData.card) {  
+                    updatedItem = historyData.card.find(function(item) {  
+                        return item.id === data.id;  
+                    });  
+                }  
+                
+                // Если нашли обновленный статус, обновляем карточку
+                if (updatedItem && updatedItem.status !== data.status) {  
+                    if (card.card_data) {  
+                        card.card_data.status = updatedItem.status;  
+                    }  
+                    if (card.data) {  
+                        card.data.status = updatedItem.status;  
+                    }  
+                    console.log('Updated card data for', data.title || data.name, 'to', updatedItem.status);  
+                }  
+    
+                addStatusToCard(card);  
+            }  
+        }  
+    }
+
     // Инициализация через перехват событий
     if (typeof Lampa !== 'undefined') {
         console.log('[Lampa]', Lampa);
+        // Обновляем статусы при инициализации плагина  
+        setTimeout(function() {  
+            console.log('[Lampa] Initial status update on plugin load');  
+            updateStoredStatuses();  
+        }, 1000);
+
         // Перехватываем событие создания карточки
         Lampa.Listener.follow('card', function(event) {
             if (event.type === 'build' && isEnabled) {
@@ -217,4 +344,14 @@
             }
         });
     }
+
+    Lampa.Listener.follow('activity', (data) => {  
+        if (data.component === 'bookmarks' && data.type === 'start') {  
+            updateStoredStatuses();
+        }  
+        
+        if (data.component === 'favorite' && data.type === 'start') {  
+            updateStoredStatuses();
+        }  
+    })
 })();
