@@ -127,8 +127,6 @@
         cardView.appendChild(typeElem);
         // Добавляем статус
         var status = (data && data.status ? data.status : '').toLowerCase();
-        if (!status && card.classList && card.classList.contains('card--tv')) status = 'airing';
-        if (!status) status = (data && (data.ended || data.isEnded)) ? 'ended' : 'airing';
         var statusElement = document.createElement('div');
         statusElement.className = 'card__status';
         if (status === 'ended') {
@@ -137,9 +135,11 @@
         } else if (status === 'on hiatus' || status === 'paused') {
             statusElement.setAttribute('data-status', 'paused');
             statusElement.textContent = 'Пауза';
-        } else {
+        } else if (status === 'returning series' || status === 'airing') {
             statusElement.setAttribute('data-status', 'airing');
             statusElement.textContent = 'В эфире';
+        } else {
+            return;
         }
         cardView.appendChild(statusElement);
         processedCards.add(card);

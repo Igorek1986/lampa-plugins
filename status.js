@@ -127,8 +127,6 @@
 
         // Определяем статус
         var status = (data.status || '').toLowerCase();
-        if (!status && card.classList.contains('card--tv')) status = 'airing';
-        if (!status) status = (data.ended || data.isEnded) ? 'ended' : 'airing';
 
         // Добавляем статус
         var statusElement = document.createElement('div');
@@ -140,9 +138,11 @@
         } else if (status === 'on hiatus' || status === 'paused') {
             statusElement.setAttribute('data-status', 'paused');
             statusElement.textContent = 'Пауза';
-        } else {
+        } else if (status === 'returning series' || status === 'airing') {
             statusElement.setAttribute('data-status', 'airing');
             statusElement.textContent = 'В эфире';
+        } else {
+            return;
         }
         
         cardView.appendChild(statusElement);
