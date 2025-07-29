@@ -129,7 +129,6 @@
             fetchSeriesStatusFromTMDB(data.id, function(status) {    
                 if (status) {    
                     data.status = status.toLowerCase();  
-                    console.log('fetchSeriesStatusFromTMDB', 'Data', data, 'status', status);  
                     addStatusToCardView(status.toLowerCase(), cardView, card);  
                 } else {  
                     // Если статус не получен, показываем только TV метку  
@@ -217,8 +216,6 @@
 
     function updateStatusesForType(type) {      
         var items = Lampa.Favorite.get({type: type});      
-    
-        console.log('Updating statuses for type:', type, 'Items:', items);    
         
         if (items && items.length > 0) {      
             var hasUpdates = false;    
@@ -247,7 +244,6 @@
                     
                     if (currentData.card) {    
                         Lampa.Storage.set(storageKey, currentData);    
-                        console.log('Saved to storage:', storageKey);    
                     }  
 
                     if (hasUpdates) {  
@@ -268,7 +264,6 @@
                                 if (newStatus && newStatus.toLowerCase() !== currentItem.status) {      
                                     currentItem.status = newStatus.toLowerCase();      
                                     hasUpdates = true;    
-                                    console.log('Updated', type, 'status for', currentItem.title || currentItem.name, 'to', newStatus);      
                                 }  
                                 checkCompletion();  
                             });  
@@ -288,7 +283,6 @@
         var historyData = Lampa.Storage.get('history', {});  
         
         var cards = document.querySelectorAll('.card');  
-        console.log('Updating visual display for', cards.length, 'cards');  
         
         for (var i = 0; i < cards.length; i++) {  
             var card = cards[i];  
@@ -320,7 +314,6 @@
                     if (card.data) {  
                         card.data.status = updatedItem.status;  
                     }  
-                    console.log('Updated card data for', data.title || data.name, 'to', updatedItem.status);  
                 }  
     
                 addStatusToCard(card);  
@@ -330,10 +323,8 @@
 
     // Инициализация через перехват событий
     if (typeof Lampa !== 'undefined') {
-        console.log('[Lampa]', Lampa);
         // Обновляем статусы при инициализации плагина  
         setTimeout(function() {  
-            console.log('[Lampa] Initial status update on plugin load');  
             updateStoredStatuses();  
         }, 1000);
 
