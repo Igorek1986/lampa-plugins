@@ -1,7 +1,6 @@
 (function() {
     'use strict';
 
-    // Стили (оставляем без изменений)
     var style = document.createElement('style');
     style.textContent = [
         '.card__type {',
@@ -45,6 +44,10 @@
         '    background: #FFC107;',
         '    color: #222;',
         '}',
+        '.card__status[data-status="canceled"] {',
+        '    background: #FFC107;',
+        '    color: #222;',
+        '}',
         '.card__type + .card__status, .card__status + .card__type {',
         '    top: 0.8em;',
         '}'
@@ -77,12 +80,11 @@
             onChange: function(value) {
                 Lampa.Storage.set(GLOBAL_KEY, value === true || value === 'true');
                 if (!value) removeAllStatuses();
-                else scanAllCards();
+                // else scanAllCards();
             }
         });
     }
 
-    // Основные функции
     var isEnabled = Lampa.Storage.get(GLOBAL_KEY, GLOBAL_DEFAULT);
     var processedCards = [];
 
@@ -99,56 +101,104 @@
         }
     }
 
-    function addStatusToCard(card) {
-        if (!isEnabled || isCardProcessed(card)) return;
+    function addStatusToCard(card) {  
+        if (!isEnabled || isCardProcessed(card)) return;  
         
-        var cardView = card.querySelector('.card__view');
-        if (!cardView) return;
+        var cardView = card.querySelector('.card__view');  
+        if (!cardView) return;  
         
-        var data = card.card_data || card.data || {};
-        var typeElement = cardView.querySelector('.card__type');
-        var isTv = data.type === 'tv' || 
-                  card.classList.contains('card--tv') || 
-                  (typeElement && typeElement.textContent.trim().toUpperCase() === 'TV');
+        var data = card.card_data || card.data || {};  
+        var typeElement = cardView.querySelector('.card__type');  
+    
+        var isTv = data.type === 'tv' ||     
+            data.first_air_date ||    
+            data.number_of_seasons ||    
+            card.classList.contains('card--tv') ||     
+            (typeElement && typeElement.textContent.trim().toUpperCase() === 'TV');  
         
-        if (!isTv) return;
-
-        // Удаляем старые метки если есть
-        var old = cardView.querySelectorAll('.card__type, .card__status');
-        for (var i = 0; i < old.length; i++) {
-            old[i].parentNode.removeChild(old[i]);
-        }
-
-        // Добавляем TV метку
-        var typeElem = document.createElement('div');
-        typeElem.className = 'card__type';
-        typeElem.textContent = 'TV';
-        cardView.appendChild(typeElem);
-
-        // Определяем статус
-        var status = (data.status || '').toLowerCase();
-
-        // Добавляем статус
-        var statusElement = document.createElement('div');
-        statusElement.className = 'card__status';
-        
-        if (status === 'ended') {
-            statusElement.setAttribute('data-status', 'ended');
-            statusElement.textContent = 'Завершён';
-        } else if (status === 'on hiatus' || status === 'paused') {
-            statusElement.setAttribute('data-status', 'paused');
-            statusElement.textContent = 'Пауза';
-        } else if (status === 'returning series' || status === 'airing') {
-            statusElement.setAttribute('data-status', 'airing');
-            statusElement.textContent = 'В эфире';
-        } else {
-            return;
-        }
-        
-        cardView.appendChild(statusElement);
-        addCardToProcessed(card);
+        if (!isTv) return;  
+    
+        var existingStatus = (data.status || (data.movie && data.movie.status) || '').toLowerCase();  
+        if (existingStatus) {  
+            addStatusToCardView(existingStatus, cardView, card);  
+            return;  
+        }  
+    
+        // Если нет статуса, запрашиваем из TMDB  
+        if (data.id && !data.status) {    
+            fetchSeriesStatusFromTMDB(data.id, function(status) {    
+                if (status) {    
+                    data.status = status.toLowerCase();  
+                    console.log('fetchSeriesStatusFromTMDB', 'Data', data, 'status', status);  
+                    addStatusToCardView(status.toLowerCase(), cardView, card);  
+                } else {  
+                    // Если статус не получен, показываем только TV метку  
+                    addStatusToCardView(null);  
+                }  
+            });    
+        } else {  
+            // Если нет ID, показываем только TV метку  
+            addStatusToCardView(null);  
+        }  
     }
 
+    // Функция для добавления статуса (вынесена отдельно)  
+    function addStatusToCardView(status, cardView, card) {  
+        // Удаляем старые метки если есть  
+        var old = cardView.querySelectorAll('.card__type, .card__status');  
+        for (var i = 0; i < old.length; i++) {  
+            old[i].parentNode.removeChild(old[i]);  
+        }  
+
+        // Добавляем TV метку  
+        var typeElem = document.createElement('div');  
+        typeElem.className = 'card__type';  
+        typeElem.textContent = 'TV';  
+        cardView.appendChild(typeElem);  
+
+        // Добавляем статус только если он есть  
+        if (status) {  
+            var statusElement = document.createElement('div');  
+            statusElement.className = 'card__status';  
+            
+            if (status === 'ended') {  
+                statusElement.setAttribute('data-status', 'ended');  
+                statusElement.textContent = 'Завершён';  
+            } else if (status === 'on hiatus' || status === 'paused') {  
+                statusElement.setAttribute('data-status', 'paused');  
+                statusElement.textContent = 'Пауза';  
+            } else if (status === 'canceled') {  
+                statusElement.setAttribute('data-status', 'canceled');  
+                statusElement.textContent = 'Отменен';  
+            } else if (status === 'returning series' || status === 'airing' || status === 'in production') {  
+                statusElement.setAttribute('data-status', 'airing');  
+                statusElement.textContent = 'В эфире';  
+            } else {  
+                // Если статус неизвестен, показываем только TV метку  
+                addCardToProcessed(card);  
+                return;  
+            }  
+            
+            cardView.appendChild(statusElement);  
+        }  
+        
+        addCardToProcessed(card);  
+    }  
+
+
+    function fetchSeriesStatusFromTMDB(seriesId, callback) {  
+        // Используем существующую TMDB API инфраструктуру  
+        var url = 'tv/' + seriesId + '?api_key=' + Lampa.TMDB.key() + '&language=' + Lampa.Storage.get('language', 'ru');  
+        
+        var network = new Lampa.Reguest();  
+        network.timeout(1000 * 5);  
+        network.silent(Lampa.TMDB.api(url), function(json) {  
+            callback(json.status || null);  
+        }, function() {  
+            callback(null);  
+        });  
+    }  
+    
     function removeAllStatuses() {
         var elements = document.querySelectorAll('.card__status, .card__type');
         for (var i = 0; i < elements.length; i++) {
@@ -157,65 +207,14 @@
         processedCards = [];
     }
 
-    function scanAllCards() {
-        if (!isEnabled) return;
-        var cards = document.querySelectorAll('.card');
-        for (var i = 0; i < cards.length; i++) {
-            if (!isCardProcessed(cards[i])) {
-                addStatusToCard(cards[i]);
-            }
-        }
-    }
-
     // Инициализация через перехват событий
     if (typeof Lampa !== 'undefined') {
+        console.log('[Lampa]', Lampa);
         // Перехватываем событие создания карточки
         Lampa.Listener.follow('card', function(event) {
             if (event.type === 'build' && isEnabled) {
                 addStatusToCard(event.object.card);
             }
         });
-
-        // Перехватываем событие добавления элементов в линию
-        Lampa.Listener.follow('line', function(event) {
-            if (event.type === 'append' && isEnabled && event.items) {
-                for (var i = 0; i < event.items.length; i++) {
-                    var item = event.items[i];
-                    if (item.querySelector) {
-                        var cards = item.querySelectorAll('.card');
-                        for (var j = 0; j < cards.length; j++) {
-                            if (!isCardProcessed(cards[j])) {
-                                addStatusToCard(cards[j]);
-                            }
-                        }
-                    }
-                }
-            }
-        });
-
-        // Перехватываем событие загрузки категории
-        Lampa.Listener.follow('activity', function(event) {
-            if ((event.component === 'category' || event.component === 'catalog') && isEnabled) {
-                setTimeout(scanAllCards, 300);
-            }
-        });
-
-        // Обработка кнопки "Показать больше"
-        Lampa.Listener.follow('line', function(event) {
-            if (event.type === 'append' && isEnabled) {
-                var buttons = document.querySelectorAll('.items-line__more.selector');
-                for (var i = 0; i < buttons.length; i++) {
-                    buttons[i].addEventListener('click', function() {
-                        setTimeout(scanAllCards, 300);
-                    });
-                }
-            }
-        });
-
-        // Первоначальный запуск
-        if (isEnabled) {
-            setTimeout(scanAllCards, 500);
-            setTimeout(scanAllCards, 1500);
-        }
     }
 })();

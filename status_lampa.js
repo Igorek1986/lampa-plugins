@@ -1,59 +1,59 @@
 (function() {
     'use strict';
 
-    // Стили (оставляем без изменений)
     var style = document.createElement('style');
-    style.textContent = `
-        .card__type {
-            position: absolute;
-            left: 0;
-            top: 0.8em;
-            // top: 2.2em;
-            padding: 0.2em 0.8em;
-            font-size: 0.9em;
-            border-radius: 0.5em;
-            text-transform: uppercase;
-            font-weight: bold;
-            z-index: 2;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
-            letter-spacing: 0.04em;
-            line-height: 1.1;
-            background: #ff4242;
-            color: #fff;
-        }
-        .card__status {
-            position: absolute;
-            right: -0.8em;
-            // top: -0.8em;
-            padding: 0.2em 0.8em;
-            font-size: 0.9em;
-            border-radius: 0.5em;
-            text-transform: uppercase;
-            font-weight: bold;
-            z-index: 2;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
-            letter-spacing: 0.04em;
-            line-height: 1.1;
-        }
-        .card__status[data-status="ended"] {
-            background: #4CAF50;
-            color: #fff;
-        }
-        .card__status[data-status="airing"] {
-            background: #2196F3;
-            color: #fff;
-        }
-        .card__status[data-status="paused"] {
-            background: #FFC107;
-            color: #222;
-        }
-        .card__type + .card__status, .card__status + .card__type {
-            top: 0.8em;
-        }
-    `;
+    style.textContent = [
+        '.card__type {',
+        '    position: absolute;',
+        '    left: 0;',
+        '    top: 0.8em;',
+        '    padding: 0.2em 0.8em;',
+        '    font-size: 0.9em;',
+        '    border-radius: 0.5em;',
+        '    text-transform: uppercase;',
+        '    font-weight: bold;',
+        '    z-index: 2;',
+        '    box-shadow: 0 2px 8px rgba(0,0,0,0.15);',
+        '    letter-spacing: 0.04em;',
+        '    line-height: 1.1;',
+        '    background: #ff4242;',
+        '    color: #fff;',
+        '}',
+        '.card__status {',
+        '    position: absolute;',
+        '    right: -0.8em;',
+        '    padding: 0.2em 0.8em;',
+        '    font-size: 0.9em;',
+        '    border-radius: 0.5em;',
+        '    text-transform: uppercase;',
+        '    font-weight: bold;',
+        '    z-index: 2;',
+        '    box-shadow: 0 2px 8px rgba(0,0,0,0.15);',
+        '    letter-spacing: 0.04em;',
+        '    line-height: 1.1;',
+        '}',
+        '.card__status[data-status="ended"] {',
+        '    background: #4CAF50;',
+        '    color: #fff;',
+        '}',
+        '.card__status[data-status="airing"] {',
+        '    background: #2196F3;',
+        '    color: #fff;',
+        '}',
+        '.card__status[data-status="paused"] {',
+        '    background: #FFC107;',
+        '    color: #222;',
+        '}',
+        '.card__status[data-status="canceled"] {',
+        '    background: #FFC107;',
+        '    color: #222;',
+        '}',
+        '.card__type + .card__status, .card__status + .card__type {',
+        '    top: 0.8em;',
+        '}'
+    ].join('\n');
     document.head.appendChild(style);
 
-    // Настройки (без изменений)
     var SETTINGS_COMPONENT = 'serial_status_settings';
     var GLOBAL_KEY = 'serial_status_enabled_global';
     var GLOBAL_DEFAULT = true;
@@ -82,68 +82,112 @@
         });
     }
 
-    // Оптимизированные функции
     var isEnabled = Lampa.Storage.get(GLOBAL_KEY, GLOBAL_DEFAULT);
     var processedCards = new WeakSet();
     var observer;
     var pendingScan = false;
 
-    function getCardView(card) {
-        if (!card) return null;
-        if (card.card && card.card.querySelector) return card.card.querySelector('.card__view');
-        if (card.element && card.element.querySelector) return card.element.querySelector('.card__view');
-        if (card.querySelector) return card.querySelector('.card__view');
-        return null;
+    function addStatusToCard(card) {    
+        if (!isEnabled) return;  
+        
+        var cardElement;  
+        if (card && card.card && card.card.querySelector) {  
+            cardElement = card.card;  
+        } else if (card && card.querySelector) {  
+            cardElement = card;  
+        } else {  
+            return;  
+        }  
+        
+        if (processedCards.has(cardElement)) return;  
+        
+        var cardView = cardElement.querySelector('.card__view');    
+        if (!cardView) return;    
+        
+        var data = cardElement.card_data || card.data || {};
+        var typeElement = cardView.querySelector('.card__type');    
+    
+        var isTv = data.type === 'tv' ||       
+            data.first_air_date ||      
+            data.number_of_seasons ||      
+            cardElement.classList.contains('card--tv') ||  
+            (typeElement && typeElement.textContent.trim().toUpperCase() === 'TV');  
+        
+        if (!isTv) return;    
+    
+        var existingStatus = (data.status || (data.movie && data.movie.status) || '').toLowerCase();    
+        if (existingStatus) {    
+            addStatusToCardView(existingStatus, cardView, card);    
+            return;    
+        }    
+     
+        if (data.id && !data.status) {      
+            fetchSeriesStatusFromTMDB(data.id, function(status) {      
+                if (status) {      
+                    data.status = status.toLowerCase();       
+                    addStatusToCardView(status.toLowerCase(), cardView, card);    
+                } else {    
+                    addStatusToCardView(null, cardView, card);
+                }    
+            });      
+        } else {    
+            addStatusToCardView(null, cardView, card);
+        }    
+    
+        processedCards.add(card); 
+    }  
+    
+    function addStatusToCardView(status, cardView, card) {    
+        var old = cardView.querySelectorAll('.card__type, .card__status');    
+        for (var i = 0; i < old.length; i++) {    
+            old[i].parentNode.removeChild(old[i]);    
+        }    
+    
+        var typeElem = document.createElement('div');    
+        typeElem.className = 'card__type';    
+        typeElem.textContent = 'TV';    
+        cardView.appendChild(typeElem);    
+    
+        if (status) {    
+            var statusElement = document.createElement('div');    
+            statusElement.className = 'card__status';    
+            
+            if (status === 'ended') {    
+                statusElement.setAttribute('data-status', 'ended');    
+                statusElement.textContent = 'Завершён';    
+            } else if (status === 'on hiatus' || status === 'paused') {    
+                statusElement.setAttribute('data-status', 'paused');    
+                statusElement.textContent = 'Пауза';    
+            } else if (status === 'canceled') {    
+                statusElement.setAttribute('data-status', 'canceled');    
+                statusElement.textContent = 'Отменен';    
+            } else if (status === 'returning series' || status === 'airing' || status === 'in production') {    
+                statusElement.setAttribute('data-status', 'airing');    
+                statusElement.textContent = 'В эфире';    
+            } else {    
+                processedCards.add(card); 
+                return;    
+            }    
+            
+            cardView.appendChild(statusElement);    
+        }    
+        
+        processedCards.add(card); 
     }
 
-    function getCardData(card) {
-        if (card.card_data) return card.card_data;
-        if (card.data) return card.data;
-        if (card.dataset && card.dataset.id) return card.dataset;
-        return card;
-    }
 
-    function isTvCard(card, data) {
-        if ((data && data.type === 'tv') || (card.classList && card.classList.contains('card--tv'))) return true;
-        var cardView = getCardView(card);
-        if (!cardView) return false;
-        var typeElem = cardView.querySelector('.card__type');
-        return typeElem && typeElem.textContent && typeElem.textContent.trim().toUpperCase() === 'TV';
-    }
+    function fetchSeriesStatusFromTMDB(seriesId, callback) {  
 
-    function addStatusToCard(card) {
-        if (!isEnabled || processedCards.has(card)) return;
-        var cardView = getCardView(card);
-        if (!cardView) return;
-        var data = getCardData(card);
-        if (!isTvCard(card, data)) return;
-        // Удаляем старые метки если есть
-        var old = cardView.querySelectorAll('.card__type, .card__status');
-        for (var i = 0; i < old.length; i++) old[i].parentNode.removeChild(old[i]);
-        // Добавляем TV метку
-        var typeElem = document.createElement('div');
-        typeElem.className = 'card__type';
-        typeElem.textContent = 'TV';
-        cardView.appendChild(typeElem);
-        // Добавляем статус
-        var status = (data && data.status ? data.status : '').toLowerCase();
-        var statusElement = document.createElement('div');
-        statusElement.className = 'card__status';
-        if (status === 'ended') {
-            statusElement.setAttribute('data-status', 'ended');
-            statusElement.textContent = 'Завершён';
-        } else if (status === 'on hiatus' || status === 'paused') {
-            statusElement.setAttribute('data-status', 'paused');
-            statusElement.textContent = 'Пауза';
-        } else if (status === 'returning series' || status === 'airing') {
-            statusElement.setAttribute('data-status', 'airing');
-            statusElement.textContent = 'В эфире';
-        } else {
-            return;
-        }
-        cardView.appendChild(statusElement);
-        processedCards.add(card);
-    }
+        var url = 'tv/' + seriesId + '?api_key=' + Lampa.TMDB.key() + '&language=' + Lampa.Storage.get('language', 'ru');  
+        
+        var network = new Lampa.Reguest();  
+        network.timeout(1000 * 5);  
+        network.silent(Lampa.TMDB.api(url), function(json) {  
+            callback(json.status || null);  
+        }, function() {  
+            callback(null);  
+        });  
+    }  
 
     function removeAllStatuses() {
         var all = document.querySelectorAll('.card__status, .card__type');
@@ -180,7 +224,6 @@
         });
     }
 
-    // Оптимизированный наблюдатель
     function initObserver() {
         if (observer) observer.disconnect();
         observer = new MutationObserver(function(mutations) {
@@ -204,7 +247,7 @@
                     }
                 }
             }
-            // Периодическое сканирование для страниц категорий
+
             if (document.querySelector('.category-full, .items-cards')) {
                 scanCards('.category-full .card, .items-cards .card');
             }
@@ -215,14 +258,12 @@
         });
     }
 
-    // Инициализация
     if (typeof Lampa !== 'undefined') {
-        // Обработка событий Lampa
+
         Lampa.Listener.follow('activity', function(event) {
             initObserver();
             handleMoreButton();
             
-            // Специальная обработка для категорий
             if (event.component === 'category' || event.component === 'category_full' || event.component === 'catalog') {
                 setTimeout(function() {
                     scanCards('.category-full .card, .items-cards .card');
@@ -244,7 +285,6 @@
             }
         });
 
-        // Первоначальный запуск
         if (isEnabled) {
             initObserver();
             handleMoreButton();
