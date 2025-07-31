@@ -139,7 +139,11 @@
         Lampa.Storage.set(getProfileKey(key), value);  
     }  
     
-    function loadProfileSettings() {    
+    function loadProfileSettings() {  
+        if (!hasProfileSetting('myshows_view_in_main')) {      
+            setProfileSetting('myshows_view_in_main', true);      
+        }    
+
         if (!hasProfileSetting('myshows_add_threshold')) {      
             setProfileSetting('myshows_add_threshold', DEFAULT_ADD_THRESHOLD);      
         }    
@@ -164,6 +168,7 @@
             setProfileSetting('myshows_cache_days', DEFAULT_CACHE_DAYS);  
         }  
             
+        var myshowsViewInMain = getProfileSetting('myshows_view_in_main', true); 
         var addThresholdValue = parseInt(getProfileSetting('myshows_add_threshold', DEFAULT_ADD_THRESHOLD).toString());  
         var progressValue = getProfileSetting('myshows_min_progress', DEFAULT_MIN_PROGRESS).toString();    
         var tokenValue = getProfileSetting('myshows_token', '');    
@@ -171,6 +176,7 @@
         var passwordValue = getProfileSetting('myshows_password', '');   
         var cacheDaysValue = getProfileSetting('myshows_cache_days', DEFAULT_CACHE_DAYS); 
             
+        Lampa.Storage.set('myshows_view_in_main', myshowsViewInMain, true);  
         Lampa.Storage.set('myshows_add_threshold', addThresholdValue, true);  
         Lampa.Storage.set('myshows_min_progress', progressValue, true);    
         Lampa.Storage.set('myshows_token', tokenValue, true);    
@@ -208,6 +214,22 @@
         isInitialized = true;    
         loadProfileSettings();    
         autoSetupToken();
+
+        Lampa.SettingsApi.addParam({  
+            component: 'myshows_auto_check',  
+            param: {  
+                name: 'myshows_view_in_main',  
+                type: 'trigger',  
+                default: getProfileSetting('myshows_view_in_main', true)  
+            },  
+            field: {  
+                name: 'Показывать на главной странице',  
+                description: 'Отображать непросмотренные сериалы на главной странице'  
+            },  
+            onChange: function(value) {  
+                setProfileSetting('myshows_view_in_main', value);  
+            }  
+        });
 
         // Настройки плагина  
         Lampa.SettingsApi.addParam({    
@@ -338,6 +360,9 @@
             var settingsPanel = document.querySelector('[data-component="myshows_auto_check"]');
             if (settingsPanel) {
                 // Обновляем значения полей
+                var myshowsViewInMain = settingsPanel.querySelector('select[data-name="myshows_view_in_main"]');  
+                if (myshowsViewInMain) myshowsViewInMain.value = getProfileSetting('myshows_view_in_main', true);
+
                 var addThresholdSelect = settingsPanel.querySelector('select[data-name="myshows_add_threshold"]');  
                 if (addThresholdSelect) addThresholdSelect.value = getProfileSetting('myshows_add_threshold', DEFAULT_ADD_THRESHOLD).toString();
 
@@ -383,7 +408,8 @@
         }
 
         if (imdbId) {
-            var cleanImdbId = imdbId.startsWith('tt') ? imdbId.slice(2) : imdbId;
+            // var cleanImdbId = imdbId.startsWith('tt') ? imdbId.slice(2) : imdbId;
+            var cleanImdbId = imdbId.indexOf('tt') === 0 ? imdbId.slice(2) : imdbId;
             
             trySource('imdb', cleanImdbId, function(result) {
                 if (result) {
@@ -661,6 +687,232 @@
             console.log('MyShows: Cleaned', removedCount, 'old mapping entries (including legacy format)');      
         }      
     }
+
+    // Функция для получения списка непросмотренных сериалов с TMDB данными
+    function getUnwatchedShowsWithDetails(callback) {
+        var token = getProfileSetting('myshows_token', '');
+        if (!token) {
+            callback({ error: 'Not authorized' });
+            return;
+        }
+
+        console.log('[MyShows] Fetching unwatched shows list...');
+        
+        makeAuthenticatedRequest(API_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                jsonrpc: '2.0',
+                method: 'lists.Episodes',
+                params: { list: 'unwatched' },
+                id: 1
+            })
+        }, function(response) {
+            if (!response || !response.result) {
+                callback({ error: response ? response.error : 'Empty response' });
+                return;
+            }
+
+            console.log('[MyShows] Found', response.result.length, 'unwatched items');
+            
+            // Получаем уникальные ID сериалов
+            var showIds = [];
+            var uniqueIds = {};
+            
+            for (var i = 0; i < response.result.length; i++) {
+                var showId = response.result[i].show.id;
+                if (!uniqueIds[showId]) {
+                    uniqueIds[showId] = true;
+                    showIds.push(showId);
+                }
+            }
+            
+            console.log('[MyShows] Unique show IDs:', showIds);
+            
+            // Получаем внешние ID и TMDB данные
+            getShowsDetails(showIds, callback);
+        }, function(error) {
+            callback({ error: error });
+        });
+    }
+
+    // Функция для получения деталей сериалов
+
+    function getShowsDetails(showIds, callback) {  
+        var results = [];  
+        var completed = 0;  
+        var total = showIds.length;  
+        
+        if (total === 0) {  
+            getTMDBDetails([], callback);  
+            return;  
+        }  
+        
+        function checkComplete() {  
+            completed++;  
+            if (completed === total) {  
+                getTMDBDetails(results, callback);  
+            }  
+        }  
+        
+        for (var i = 0; i < showIds.length; i++) {  
+            var showId = showIds[i];  
+            
+            (function(currentShowId) {  
+                makeAuthenticatedRequest(API_URL, {  
+                    method: 'POST',  
+                    headers: { 'Content-Type': 'application/json' },  
+                    body: JSON.stringify({  
+                        jsonrpc: '2.0',  
+                        method: 'shows.GetById',  
+                        params: { showId: currentShowId, withEpisodes: false },  
+                        id: 1  
+                    })  
+                }, function(response) {  
+                    if (response && response.result) {  
+                        var show = response.result;  
+                        results.push({  
+                            myshowsId: currentShowId,  
+                            title: show.title,  
+                            originalTitle: show.titleOriginal,  
+                            year: show.year,  
+                            // poster: show.image  
+                        });  
+                    }  
+                    checkComplete();  
+                }, function() {  
+                    checkComplete();  
+                });  
+            })(showId);  
+        }  
+    }
+
+    function getTMDBDetails(shows, callback) {
+        console.log('[MyShows] Trying to match', shows.length, 'shows with TMDB');
+        
+        var matchedShows = [];
+        var currentIndex = 0;
+        
+        function processNext() {
+            if (currentIndex >= shows.length) {
+                console.log('[MyShows] TMDB matching completed, found:', matchedShows.length);
+                callback({ shows: matchedShows });
+                return;
+            }
+            
+            var show = shows[currentIndex++];
+            console.log('[MyShows] Processing show:', show.title, show.year);
+            
+            // Пытаемся найти сериал в TMDB по названию и году
+            var url = 'https://api.themoviedb.org/3/search/tv' +
+                '?api_key=' + Lampa.TMDB.key() +
+                '&query=' + encodeURIComponent(show.originalTitle || show.title) +
+                '&year=' + show.year +
+                '&language=' + Lampa.Storage.get('tmdb_lang', 'ru');
+            
+            console.log('[MyShows] TMDB search URL:', url);
+            
+            var network = new Lampa.Reguest();
+            network.silent(url, function(response) {
+                if (response && response.results && response.results.length > 0) {
+                    // Берем первый результат (наиболее релевантный)
+                    var tmdbShow = response.results[0];
+                    console.log('[MyShows] Found match:', tmdbShow.name);
+                    
+                    matchedShows.push(tmdbShow);
+                } else {
+                    console.log('[MyShows] No match found for:', show.title);
+                }
+                
+                // Обрабатываем следующий сериал
+                processNext();
+            }, function(error) {
+                console.error('[MyShows] TMDB search error:', error);
+                processNext();
+            });
+        }
+        
+        processNext();
+    }
+
+    window.MyShows = {
+        getUnwatchedShowsWithDetails: getUnwatchedShowsWithDetails
+    };
+
+    // Создайте объект плагина MyShows  
+    var myShowsPlugin = {  
+        type: "video",  
+        name: "MyShows Integration",  
+        author: 'Igor Ponomarev',  
+        
+        onMain: function(data, comp) {  
+            
+            if (!getProfileSetting('myshows_view_in_main', true)) {  
+                return { results: [] };  
+            } 
+
+            var token = getProfileSetting('myshows_token', '');  
+            
+            if (!token) {  
+                return { results: [] };  
+            }  
+            
+            // Получаем кешированные данные  
+            var cachedShows = getProfileSetting('myshows_cached_data', []);  
+            
+            // Запускаем фоновое обновление  
+            this.updateDataInBackground();  
+            
+            // Возвращаем кешированные данные (даже если пустые)  
+            if (!cachedShows || !cachedShows.length) {  
+                return { results: [] };  
+            }  
+            
+            return {  
+                title: 'Непросмотренные сериалы (MyShows)',  
+                results: cachedShows.slice(0, 20),  
+                line_type: 'myshows_unwatched',  
+                nomore: false,  
+                cardClass: function(item, params) {  
+                    var card = new Lampa.Card(item, params);  
+                    card.onEnter = function(target, card_data) {  
+                        Lampa.Activity.push({  
+                            url: card_data.url || '',  
+                            component: 'full',  
+                            id: card_data.id,  
+                            method: card_data.name ? 'tv' : 'movie',  
+                            card: card_data,  
+                            source: card_data.source || 'tmdb'  
+                        });  
+                    };  
+                    return card;  
+                }  
+            };  
+        },  
+        
+        updateDataInBackground: function() {  
+            var self = this;  
+            
+            // Проверяем, не обновляем ли уже данные  
+            if (this.updating) return;  
+            this.updating = true;  
+            
+            getUnwatchedShowsWithDetails(function(result) {  
+                self.updating = false;  
+                
+                if (result && result.shows && result.shows.length > 0) {  
+                    var oldData = getProfileSetting('myshows_cached_data', []);  
+                    setProfileSetting('myshows_cached_data', result.shows);  
+                    
+                    // Если данные изменились и главная страница активна  
+                    if (oldData.length !== result.shows.length &&   
+                        Lampa.Activity.active().component === 'main') {  
+                        console.log('[MyShows] Data updated, refreshing main page');  
+                    }  
+                }  
+            }); 
+        }  
+    };
   
     // Инициализация плеера  
     if (window.Lampa && Lampa.Player && Lampa.Player.listener) {  
@@ -679,12 +931,17 @@
         initSettings();  
         cleanupOldMappings();
         initTimelineListener();  
+        // getUnwatchedShowsWithDetails(function(result) {});
+        Lampa.Manifest.plugins = myShowsPlugin;
     } else {  
         Lampa.Listener.follow('app', function (event) {  
         if (event.type === 'ready') {  
             initSettings();  
             cleanupOldMappings();
             initTimelineListener();  
+            // getUnwatchedShowsWithDetails(function(result) {});  
+
+            Lampa.Manifest.plugins = myShowsPlugin;
         }  
         });  
     }  
