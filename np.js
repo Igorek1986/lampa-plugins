@@ -174,6 +174,10 @@
 
   // Настройки видимости категорий
   var CATEGORY_VISIBILITY = {
+      myshows_unwatched: {
+          title: 'Непросмотренные (MyShows)',
+          visible: Lampa.Storage.get('numparser_category_myshows_unwatched', true)
+      },
       legends: {
           title: 'Топ фильмы',
           visible: Lampa.Storage.get('numparser_category_legends', true)
@@ -362,6 +366,49 @@
           var partsData = [];
 
           // Основные категории с проверкой видимости
+        if (CATEGORY_VISIBILITY.myshows_unwatched.visible) {
+            partsData.push(function (callback) {
+                if (!window.MyShows || !window.MyShows.getUnwatchedShowsWithDetails) {
+                    callback({skip: true});
+                    return;
+                }
+                
+                window.MyShows.getUnwatchedShowsWithDetails(function(response) {
+                    if (response.error || !response.shows || response.shows.length === 0) {
+                        callback({skip: true});
+                        return;
+                    }
+                    
+                    // Если есть быстрые данные - показываем их сразу
+                    if (response.shows[0].isFastResult) {
+                        callback({
+                            url: 'myshows_unwatched',
+                            title: CATEGORY_VISIBILITY.myshows_unwatched.title,
+                            page: 1,
+                            total_results: response.shows.length,
+                            total_pages: 1,
+                            more: false,
+                            results: response.shows,
+                            source: 'myshows',
+                            isFastResult: true
+                        });
+                    } else {
+                        // Полные данные из TMDB
+                        callback({
+                            url: 'myshows_unwatched',
+                            title: CATEGORY_VISIBILITY.myshows_unwatched.title,
+                            page: 1,
+                            total_results: response.shows.length,
+                            total_pages: 1,
+                            more: false,
+                            results: response.shows,
+                            source: 'tmdb'
+                        });
+                    }
+                });
+            });
+        }
+
           if (CATEGORY_VISIBILITY.legends.visible) partsData.push(function (callback) {
               makeRequest(CATEGORIES.legends, CATEGORY_VISIBILITY.legends.title, callback);
           });
