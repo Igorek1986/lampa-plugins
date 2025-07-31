@@ -208,12 +208,7 @@
     }
 
     function updateStoredStatuses() {  
-        // Проверяем готовность системы Favorite  
-        if (!Lampa.Favorite || typeof Lampa.Favorite.get !== 'function') {  
-            console.log('[SerialStatus] Favorite system not ready, retrying...');  
-            setTimeout(updateStoredStatuses, 1000);  
-            return;  
-        }  
+
         // Обновляем историю  
         updateStatusesForType('history');  
         
@@ -223,7 +218,18 @@
 
     function updateStatusesForType(type) {  
         console.log('[SerialStatus] Fetching items for type:', type)
-        var items = Lampa.Favorite.get({type: type});      
+        // var items = Lampa.Favorite.get({type: type});   
+        var items;  
+        try {  
+            items = Lampa.Favorite.get({type: type});  
+        } catch (error) {  
+            Lampa.Noty.show('Ошибка обновления статусов в "Истории" или "Избранном"', error)
+            console.log('[SerialStatus] Error getting items for type:', type, error);  
+            setTimeout(function() {  
+                updateStatusesForType(type);  
+            }, 1000);  
+            return;  
+        }    
         console.log('[SerialStatus] Raw items data:', items);
     
         console.log('[SerialStatus] Updating statuses for type:', type, 'Items:', items);    
