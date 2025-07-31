@@ -223,7 +223,7 @@
         try {  
             items = Lampa.Favorite.get({type: type});  
         } catch (error) {  
-            Lampa.Noty.show('Ошибка обновления статусов в "Истории" или "Избранном"', error)
+            // Lampa.Noty.show('Ошибка обновления статусов в "Истории" или "Избранном"', error)
             console.log('[SerialStatus] Error getting items for type:', type, error);  
             setTimeout(function() {  
                 updateStatusesForType(type);  
