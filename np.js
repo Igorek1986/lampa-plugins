@@ -402,7 +402,8 @@
                                 total_pages: 1,
                                 more: false,
                                 results: response.shows,
-                                source: 'tmdb'
+                                source: 'tmdb',
+                                cardClass: window.MyShows.createMyShowsCard
                             });
                         }
                     });
