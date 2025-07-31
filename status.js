@@ -129,6 +129,7 @@
             fetchSeriesStatusFromTMDB(data.id, function(status) {    
                 if (status) {    
                     data.status = status.toLowerCase();  
+                    console.log('[SerialStatus] fetchSeriesStatusFromTMDB', 'Data', data, 'status', status);  
                     addStatusToCardView(status.toLowerCase(), cardView, card);  
                 } else {  
                     // Если статус не получен, показываем только TV метку  
@@ -207,6 +208,12 @@
     }
 
     function updateStoredStatuses() {  
+        // Проверяем готовность системы Favorite  
+        if (!Lampa.Favorite || typeof Lampa.Favorite.get !== 'function') {  
+            console.log('[SerialStatus] Favorite system not ready, retrying...');  
+            setTimeout(updateStoredStatuses, 1000);  
+            return;  
+        }  
         // Обновляем историю  
         updateStatusesForType('history');  
         
@@ -214,8 +221,12 @@
         updateStatusesForType('book');  
     }  
 
-    function updateStatusesForType(type) {      
+    function updateStatusesForType(type) {  
+        console.log('[SerialStatus] Fetching items for type:', type)
         var items = Lampa.Favorite.get({type: type});      
+        console.log('[SerialStatus] Raw items data:', items);
+    
+        console.log('[SerialStatus] Updating statuses for type:', type, 'Items:', items);    
         
         if (items && items.length > 0) {      
             var hasUpdates = false;    
@@ -244,6 +255,7 @@
                     
                     if (currentData.card) {    
                         Lampa.Storage.set(storageKey, currentData);    
+                        console.log('[SerialStatus] Saved to storage:', storageKey);    
                     }  
 
                     if (hasUpdates) {  
@@ -264,6 +276,7 @@
                                 if (newStatus && newStatus.toLowerCase() !== currentItem.status) {      
                                     currentItem.status = newStatus.toLowerCase();      
                                     hasUpdates = true;    
+                                    console.log('[SerialStatus] Updated', type, 'status for', currentItem.title || currentItem.name, 'to', newStatus);      
                                 }  
                                 checkCompletion();  
                             });  
@@ -283,6 +296,7 @@
         var historyData = Lampa.Storage.get('history', {});  
         
         var cards = document.querySelectorAll('.card');  
+        console.log('[SerialStatus] Updating visual display for', cards.length, 'cards');  
         
         for (var i = 0; i < cards.length; i++) {  
             var card = cards[i];  
@@ -314,6 +328,7 @@
                     if (card.data) {  
                         card.data.status = updatedItem.status;  
                     }  
+                    console.log('[SerialStatus] Updated card data for', data.title || data.name, 'to', updatedItem.status);  
                 }  
     
                 addStatusToCard(card);  
@@ -325,6 +340,7 @@
     if (typeof Lampa !== 'undefined') {
         // Обновляем статусы при инициализации плагина  
         setTimeout(function() {  
+            console.log('[SerialStatus] [Lampa] Initial status update on plugin load');  
             updateStoredStatuses();  
         }, 1000);
 
