@@ -8,6 +8,18 @@
     var MAP_KEY = 'myshows_hash_map';  
     var PROXY_URL = 'https://numparser.igorek1986.ru/myshows/auth';  
     var DEFAULT_CACHE_DAYS = 30;
+    var JSON_HEADERS = {  
+        'Content-Type': 'application/json'  
+    };
+
+    function createJSONRPCRequest(method, params, id) {  
+        return JSON.stringify({  
+            jsonrpc: '2.0',  
+            method: method,  
+            params: params || {},  
+            id: id || 1  
+        });  
+    }
 
     // Функция авторизации через прокси  
     function tryAuthFromSettings(successCallback) {        
@@ -55,9 +67,7 @@
             login: login,    
             password: password    
         }), {    
-            headers: {    
-                'Content-Type': 'application/json'    
-            },    
+            headers: JSON_HEADERS,    
             dataType: 'json'    
         });    
     }  
@@ -391,15 +401,8 @@
         function trySource(source, id, cb) {
             makeAuthenticatedRequest(API_URL, {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    jsonrpc: '2.0',
-                    method: 'shows.GetByExternalId',
-                    params: { id: id, source: source },
-                    id: 1
-                })
+                headers: JSON_HEADERS,
+                body: createJSONRPCRequest('shows.GetByExternalId', { id: id, source: source })
             }, function(data) {
                 cb(data && data.result ? data.result.id : null);
             }, function() {
@@ -433,15 +436,8 @@
     function getEpisodesByShowId(showId, token, callback) {      
         makeAuthenticatedRequest(API_URL, {      
             method: 'POST',      
-            headers: {      
-                'Content-Type': 'application/json'      
-            },      
-            body: JSON.stringify({      
-                jsonrpc: '2.0',      
-                method: 'shows.GetById',      
-                params: { showId: showId, withEpisodes: true },      
-                id: 1      
-            })      
+            headers: JSON_HEADERS,  
+            body: createJSONRPCRequest('shows.GetById', { showId: showId, withEpisodes: true })        
         }, function(data) {      
             if(data && data.result && data.result.episodes) {      
                 callback(data.result.episodes);      
@@ -517,15 +513,8 @@
             
         makeAuthenticatedRequest(API_URL, {        
             method: 'POST',        
-            headers: {        
-                'Content-Type': 'application/json'        
-            },        
-            body: JSON.stringify({        
-                jsonrpc: '2.0',        
-                method: 'manage.CheckEpisode',        
-                params: { id: episodeId, rating: 0 },        
-                id: 1        
-            })        
+            headers: JSON_HEADERS,  
+            body: createJSONRPCRequest('manage.CheckEpisode', { id: episodeId, rating: 0 })             
         }, function(data) {      
             if (data && data.error) {        
                 Lampa.Noty.show('Ошибка при отметке эпизода: ' + (data.error.message || 'Неизвестная ошибка'));      
@@ -544,18 +533,8 @@
                         
                 makeAuthenticatedRequest(API_URL, {          
                     method: 'POST',          
-                    headers: {          
-                        'Content-Type': 'application/json'          
-                    },          
-                    body: JSON.stringify({          
-                        jsonrpc: '2.0',          
-                        method: 'manage.SetShowStatus',          
-                        params: {          
-                            id: showId,          
-                            status: "watching"          
-                        },          
-                        id: 1          
-                    })          
+                    headers: JSON_HEADERS,   
+                    body: createJSONRPCRequest('manage.SetShowStatus', { id: showId, status: "watching" })              
                 });          
             });  
     }  
@@ -697,13 +676,8 @@
     
         makeAuthenticatedRequest(API_URL, {    
             method: 'POST',    
-            headers: { 'Content-Type': 'application/json' },    
-            body: JSON.stringify({    
-                jsonrpc: '2.0',    
-                method: 'lists.Episodes',    
-                params: { list: 'unwatched' },    
-                id: 1    
-            })    
+            headers: JSON_HEADERS, 
+            body: createJSONRPCRequest('lists.Episodes', { list: 'unwatched' })   
         }, function(response) {    
             if (!response || !response.result) {    
                 callback({ error: response ? response.error : 'Empty response' });    
@@ -898,7 +872,7 @@
         `;  
         document.head.appendChild(style);  
     }
-
+ 
     function addMyShowsData(data, oncomplite) {  
         if (getProfileSetting('myshows_view_in_main', true)) {  
             var token = getProfileSetting('myshows_token', '');  
