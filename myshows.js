@@ -411,7 +411,6 @@
         }
 
         if (imdbId) {
-            // var cleanImdbId = imdbId.startsWith('tt') ? imdbId.slice(2) : imdbId;
             var cleanImdbId = imdbId.indexOf('tt') === 0 ? imdbId.slice(2) : imdbId;
             
             trySource('imdb', cleanImdbId, function(result) {
@@ -600,6 +599,7 @@
     }  
 
     function processEpisode(episodeId, hash, percent, card, token, minProgress, addThreshold) {  
+        console.log('MyShows: Processing episode', episodeId, 'with hash', hash, 'and percent', percent);
         // Проверяем, нужно ли добавить сериал в "Смотрю"    
         var originalName = card.original_name || card.original_title || card.title;    
         var firstEpisodeHash = Lampa.Utils.hash('11' + originalName);    
@@ -612,7 +612,13 @@
     
         // Отмечаем серию как просмотренную только если достигнут minProgress    
         if (percent >= minProgress) {    
-            checkEpisodeMyShows(episodeId, token);        
+            checkEpisodeMyShows(episodeId, token);  
+            setTimeout(function() { 
+
+                getUnwatchedShowsWithDetails(function(result) { 
+                        console.log('MyShows: Unwatched shows with details:', result);
+                });
+            }, 1000); 
         }    
     }
   
@@ -848,29 +854,104 @@
         createMyShowsCard: createMyShowsCard,
     };
 
-    function addProgressMarkerStyles() {  
-        var style = document.createElement('style');  
-        style.textContent = `  
-            .card__marker--progress {  
-                position: absolute;  
-                left: 0em;  
-                bottom: 1.4em;  
-                padding: 0.2em 0.8em;  
-                font-size: 1.1em;  
-                border-radius: 0.5em;  
-                font-weight: bold;  
-                z-index: 2;  
-                box-shadow: 0 2px 8px rgba(0,0,0,0.15);  
-                letter-spacing: 0.04em;  
-                line-height: 1.1;  
-                background: #4CAF50;  
-                color: #fff;  
+    // Функция обновления с визуальным эффектом  
+    function updateCardWithAnimation(cardElement, newProgressMarker) {  
+        var progressMarker = cardElement.querySelector('.card__marker--progress span');  
+        if (!progressMarker) return;  
+        
+        var oldText = progressMarker.textContent;  
+        if (oldText === newProgressMarker) return;  
+        
+        // Добавляем CSS анимацию  
+        progressMarker.style.transition = 'all 0.3s ease';  
+        progressMarker.style.transform = 'scale(1.5)';  
+        progressMarker.style.color = '#FFD700';  
+        
+        setTimeout(function() {  
+            progressMarker.textContent = newProgressMarker;  
+            
+            setTimeout(function() {  
+                progressMarker.style.transform = 'scale(1)';  
+                progressMarker.style.color = '#fff';  
+            }, 150);  
+        }, 150);  
+    }  
+    
+    // Обновленная функция updateAllMyShowsCards с анимацией  
+    window.MyShows.updateAllMyShowsCards = function(originalName, newProgressMarker) {  
+        var cards = document.querySelectorAll('.card');  
+        for (var i = 0; i < cards.length; i++) {  
+            var cardElement = cards[i];  
+            var cardData = cardElement.card_data || {};  
+            
+            if ((cardData.original_name || cardData.name || cardData.title) === originalName &&   
+                cardData.progress_marker) {  
+                
+                // Обновляем данные карточки  
+                cardData.progress_marker = newProgressMarker;  
+                
+                // Обновляем с анимацией  
+                updateCardWithAnimation(cardElement, newProgressMarker);  
+                
+                console.log('[MyShows] Updated card progress:', originalName, 'to', newProgressMarker);  
             }  
-            .card__marker::before {  
-                display: none;  
-            } 
-        `;  
-        document.head.appendChild(style);  
+        }  
+    };
+
+    Lampa.Listener.follow('activity', function(event) {    
+        console.log('[MyShows] Activity event:', event.type, event.component);
+        // Отслеживаем возврат на main или category  
+        if (event.type === 'start' && (event.component === 'main' || event.component === 'category')) {    
+            var lastCard = getProfileSetting('myshows_last_card', null);    
+            if (lastCard) {    
+                var originalName = lastCard.original_name || lastCard.original_title || lastCard.title;    
+                
+                setTimeout(function() {    
+                    getUnwatchedShowsWithDetails(function(result) {    
+                        if (result && result.shows) {    
+                            var updatedShow = result.shows.find(function(show) {    
+                                return (show.original_name || show.name || show.title) === originalName;    
+                            });    
+                            
+                            if (updatedShow && updatedShow.progress_marker && window.MyShows && window.MyShows.updateAllMyShowsCards) {    
+                                window.MyShows.updateAllMyShowsCards(originalName, updatedShow.progress_marker);    
+                            }    
+                        }    
+                    });    
+                }, 500);    
+            }    
+        }    
+    });
+
+    function addProgressMarkerStyles() {    
+        var style = document.createElement('style');    
+        style.textContent = `    updateAllMyShowsCards
+            .card__marker--progress {    
+                position: absolute;    
+                left: 0em;    
+                bottom: 1.4em;    
+                padding: 0.2em 0.8em;    
+                font-size: 1.1em;    
+                border-radius: 0.5em;    
+                font-weight: bold;    
+                z-index: 2;    
+                box-shadow: 0 2px 8px rgba(0,0,0,0.15);    
+                letter-spacing: 0.04em;    
+                line-height: 1.1;    
+                background: #4CAF50 !important;    
+                color: #fff;    
+            }    
+            
+            .card__marker--progress span {  
+                transition: all 0.3s ease;  
+                display: inline-block;  
+            }  
+            
+            .card__marker::before {    
+                display: none;    
+            }   
+        `;    
+        document.head.appendChild(style);    
     }
  
     function addMyShowsData(data, oncomplite) {  
@@ -892,12 +973,12 @@
                     }  
                     oncomplite(data);  
                 });  
-                return true; // Указывает, что выполняется асинхронная операция  
+                return true;  
             }  
         }  
         
         oncomplite(data);  
-        return false; // Указывает, что асинхронная операция не выполняется  
+        return false; 
     }  
     
     // Главная TMDB  
