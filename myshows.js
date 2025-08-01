@@ -899,70 +899,51 @@
         document.head.appendChild(style);  
     }
 
+    function addMyShowsData(data, oncomplite) {  
+        if (getProfileSetting('myshows_view_in_main', true)) {  
+            var token = getProfileSetting('myshows_token', '');  
+            
+            if (token) {  
+                getUnwatchedShowsWithDetails(function(result) {  
+                    if (result && result.shows && result.shows.length > 0) {  
+                        var myshowsCategory = {  
+                            title: 'Непросмотренные сериалы (MyShows)',  
+                            results: result.shows.slice(0, 20),  
+                            source: 'tmdb',  
+                            line_type: 'myshows_unwatched',  
+                            cardClass: createMyShowsCard  
+                        };  
+                        
+                        data.unshift(myshowsCategory);  
+                    }  
+                    oncomplite(data);  
+                });  
+                return true; // Указывает, что выполняется асинхронная операция  
+            }  
+        }  
+        
+        oncomplite(data);  
+        return false; // Указывает, что асинхронная операция не выполняется  
+    }  
+    
+    // Главная TMDB  
     function addMyShowsToTMDB() {  
         var originalTMDBMain = Lampa.Api.sources.tmdb.main;  
         
         Lampa.Api.sources.tmdb.main = function(params, oncomplite, onerror) {  
             return originalTMDBMain.call(this, params, function(data) {  
-                if (getProfileSetting('myshows_view_in_main', true)) {  
-                    var token = getProfileSetting('myshows_token', '');  
-                    
-                    if (token) {  
-                        getUnwatchedShowsWithDetails(function(result) {  
-                            if (result && result.shows && result.shows.length > 0) {  
-                                var myshowsCategory = {  
-                                    title: 'Непросмотренные сериалы (MyShows)',  
-                                    results: result.shows.slice(0, 20),  
-                                    source: 'tmdb',  
-                                    line_type: 'myshows_unwatched',  
-                                    cardClass: createMyShowsCard  
-                                };  
-                                
-                                data.unshift(myshowsCategory);  
-                            }  
-                            oncomplite(data);  
-                        });  
-                        return;  
-                    }  
-                }  
-                
-                oncomplite(data);  
+                addMyShowsData(data, oncomplite);  
             }, onerror);  
         };  
-    }
-
+    }  
+    
+    // Главная CUB  
     function addMyShowsToCUB() {  
-        // Сохраняем оригинальную функцию main CUB  
         var originalCUBMain = Lampa.Api.sources.cub.main;  
         
-        // Переопределяем функцию main CUB  
         Lampa.Api.sources.cub.main = function(params, oncomplite, onerror) {  
-            // Получаем оригинальную функцию loadPart  
             var originalLoadPart = originalCUBMain.call(this, params, function(data) {  
-                // Добавляем MyShows данные  
-                if (getProfileSetting('myshows_view_in_main', true)) {  
-                    var token = getProfileSetting('myshows_token', '');  
-                    
-                    if (token) {  
-                        getUnwatchedShowsWithDetails(function(result) {  
-                            if (result && result.shows && result.shows.length > 0) {  
-                                var myshowsCategory = {  
-                                    title: 'Непросмотренные сериалы (MyShows)',  
-                                    results: result.shows.slice(0, 20),  
-                                    source: 'tmdb',  
-                                    line_type: 'myshows_unwatched',
-                                    cardClass: createMyShowsCard 
-                                };  
-                                
-                                data.unshift(myshowsCategory);  
-                            }  
-                            oncomplite(data);  
-                        });  
-                        return;  
-                    }  
-                }  
-                
-                oncomplite(data);  
+                addMyShowsData(data, oncomplite);  
             }, onerror);  
             
             return originalLoadPart;  
