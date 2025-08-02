@@ -779,24 +779,47 @@
                         var fullNetwork = new Lampa.Reguest();  
                         fullNetwork.silent(fullUrl, function(fullResponse) {  
                             if (fullResponse && fullResponse.seasons) {  
-                                // Подсчитываем общее количество серий  
                                 var totalEpisodes = getTotalEpisodesCount(fullResponse);  
-                                var watchedEpisodes = Math.max(0, totalEpisodes - currentShow.unwatchedCount);  
                                 
-                                // Добавляем информацию о прогрессе  
-                                foundShow.progress_marker = watchedEpisodes + '/' + totalEpisodes;  
-                                foundShow.watched_count = watchedEpisodes;  
-                                foundShow.total_count = totalEpisodes;  
-                                foundShow.seasons = fullResponse.seasons; // Сохраняем информацию о сезонах  
+                                // Получаем детали последнего сезона для проверки дат выхода  
+                                var lastSeason = Math.max(...fullResponse.seasons.filter(s => s.season_number > 0).map(s => s.season_number));  
                                 
-                                console.log('[MyShows] Progress for', foundShow.name + ':', foundShow.progress_marker);  
+                                var seasonUrl = 'https://api.themoviedb.org/3/tv/' + foundShow.id + '/season/' + lastSeason +  
+                                    '?api_key=' + Lampa.TMDB.key() +  
+                                    '&language=' + Lampa.Storage.get('tmdb_lang', 'ru');  
+                                
+                                var seasonNetwork = new Lampa.Reguest();  
+                                seasonNetwork.silent(seasonUrl, function(seasonResponse) {  
+                                    var releasedEpisodes = totalEpisodes;  
+                                    
+                                    if (seasonResponse && seasonResponse.episodes) {  
+                                        var today = new Date();  
+                                        var unreleased = seasonResponse.episodes.filter(function(ep) {  
+                                            if (!ep.air_date) return false;  
+                                            var airDate = new Date(ep.air_date);  
+                                            return airDate > today;  
+                                        }).length;  
+                                        
+                                        releasedEpisodes = totalEpisodes - unreleased;  
+                                    }  
+                                    
+                                    var watchedEpisodes = Math.max(0, releasedEpisodes - currentShow.unwatchedCount);  
+                                    
+                                    foundShow.progress_marker = watchedEpisodes + '/' + totalEpisodes;  
+                                    foundShow.watched_count = watchedEpisodes;  
+                                    foundShow.total_count = releasedEpisodes;  
+                                    
+                                    status.append('tmdb_' + index, foundShow);  
+                                }, function() {  
+                                    // Fallback к старой логике если не удалось получить детали сезона  
+                                    var watchedEpisodes = Math.max(0, totalEpisodes - currentShow.unwatchedCount);  
+                                    foundShow.progress_marker = watchedEpisodes + '/' + totalEpisodes;  
+                                    status.append('tmdb_' + index, foundShow);  
+                                });  
+                            } else {  
+                                status.append('tmdb_' + index, foundShow);  
                             }  
-                            
-                            status.append('tmdb_' + index, foundShow);  
-                        }, function(error) {  
-                            console.error('[MyShows] Full details error for', foundShow.name, ':', error);  
-                            status.append('tmdb_' + index, foundShow);  
-                        });  
+                        });
                     } else {  
                         status.append('tmdb_' + index, null);  
                     }  
