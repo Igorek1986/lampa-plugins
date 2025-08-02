@@ -923,35 +923,44 @@
         }    
     });
 
-    function addProgressMarkerStyles() {    
-        var style = document.createElement('style');    
-        style.textContent = `    updateAllMyShowsCards
-            .card__marker--progress {    
-                position: absolute;    
-                left: 0em;    
-                bottom: 1.4em;    
-                padding: 0.2em 0.8em;    
-                font-size: 1.1em;    
-                border-radius: 0.5em;    
-                font-weight: bold;    
-                z-index: 2;    
-                box-shadow: 0 2px 8px rgba(0,0,0,0.15);    
-                letter-spacing: 0.04em;    
-                line-height: 1.1;    
-                background: #4CAF50 !important;    
-                color: #fff;    
-            }    
+    function addProgressMarkerStyles() {      
+        var style = document.createElement('style');      
+        style.textContent = `      
+            .card__marker--progress {      
+                position: absolute;      
+                left: 0em;      
+                bottom: 0.5em;      
+                padding: 0.2em 0.4em;      
+                font-size: 1.3em;      
+                border-radius: 0.5em;      
+                font-weight: bold;      
+                z-index: 2;      
+                box-shadow: 0 2px 8px rgba(0,0,0,0.15);      
+                letter-spacing: 0.04em;      
+                line-height: 1.1;      
+                background: #4CAF50;      
+                color: #fff;      
+            }      
             
-            .card__marker--progress span {  
-                transition: all 0.3s ease;  
-                display: inline-block;  
+            /* Поддержка glass-стиля как у других маркеров */  
+            body.glass--style.platform--browser .card .card__marker--progress,  
+            body.glass--style.platform--nw .card .card__marker--progress,  
+            body.glass--style.platform--apple .card .card__marker--progress {  
+                background-color: rgba(76, 175, 80, 0.8);  
+                -webkit-backdrop-filter: blur(1em);  
+                backdrop-filter: blur(1em);  
             }  
             
-            .card__marker::before {    
-                display: none;    
-            }   
-        `;    
-        document.head.appendChild(style);    
+            .card__marker--progress span {    
+                transition: all 0.3s ease;    
+                display: inline-block;    
+            }    
+            
+            .card__marker::before {      
+                display: none;      
+            }     
+        `;      
+        document.head.appendChild(style);      
     }
  
     function addMyShowsData(data, oncomplite) {  
