@@ -952,7 +952,7 @@
             .card__marker--progress {      
                 position: absolute;      
                 left: 0em;      
-                bottom: 0.5em;      
+                bottom: 0.4em;      
                 padding: 0.2em 0.4em;      
                 font-size: 1.3em;      
                 border-radius: 0.5em;      
