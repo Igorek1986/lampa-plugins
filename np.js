@@ -403,7 +403,8 @@
                                 more: false,
                                 results: response.shows,
                                 source: 'tmdb',
-                                cardClass: window.MyShows.createMyShowsCard
+                                cardClass: window.MyShows.createMyShowsCard,
+                                nomore: true
                             });
                         }
                     });
