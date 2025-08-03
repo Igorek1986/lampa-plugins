@@ -154,6 +154,10 @@
             setProfileSetting('myshows_view_in_main', true);      
         }    
 
+        if (!hasProfileSetting('myshows_sort_order')) {    
+            setProfileSetting('myshows_sort_order', 'alphabet');    
+        }  
+
         if (!hasProfileSetting('myshows_add_threshold')) {      
             setProfileSetting('myshows_add_threshold', DEFAULT_ADD_THRESHOLD);      
         }    
@@ -179,20 +183,25 @@
         }  
             
         var myshowsViewInMain = getProfileSetting('myshows_view_in_main', true); 
+        var sortOrderValue = getProfileSetting('myshows_sort_order', 'alphabet');  
         var addThresholdValue = parseInt(getProfileSetting('myshows_add_threshold', DEFAULT_ADD_THRESHOLD).toString());  
         var progressValue = getProfileSetting('myshows_min_progress', DEFAULT_MIN_PROGRESS).toString();    
         var tokenValue = getProfileSetting('myshows_token', '');    
         var loginValue = getProfileSetting('myshows_login', '');  
         var passwordValue = getProfileSetting('myshows_password', '');   
         var cacheDaysValue = getProfileSetting('myshows_cache_days', DEFAULT_CACHE_DAYS); 
+        // var lasrCard = getProfileSetting('myshows_last_card', '');    
+
             
         Lampa.Storage.set('myshows_view_in_main', myshowsViewInMain, true);  
+        Lampa.Storage.set('myshows_sort_order', sortOrderValue, true);
         Lampa.Storage.set('myshows_add_threshold', addThresholdValue, true);  
         Lampa.Storage.set('myshows_min_progress', progressValue, true);    
         Lampa.Storage.set('myshows_token', tokenValue, true);    
         Lampa.Storage.set('myshows_login', loginValue, true);  
         Lampa.Storage.set('myshows_password', passwordValue, true);  
         Lampa.Storage.set('myshows_cache_days', cacheDaysValue, true);  
+        // Lampa.Storage.set('myshows_last_card', lasrCard, true);
     }    
       
     function hasProfileSetting(key) {    
@@ -239,6 +248,27 @@
             onChange: function(value) {  
                 setProfileSetting('myshows_view_in_main', value);  
             }  
+        });
+
+        Lampa.SettingsApi.addParam({    
+            component: 'myshows',    
+            param: {    
+                name: 'myshows_sort_order',    
+                type: 'select',    
+                values: {    
+                    'alphabet': 'По алфавиту',    
+                    'progress': 'По прогрессу',    
+                    'unwatched_count': 'По количеству непросмотренных'  
+                },    
+                default: 'alphabet'    
+            },    
+            field: {    
+                name: 'Сортировка сериалов',    
+                description: 'Порядок отображения сериалов на главной странице'    
+            },    
+            onChange: function(value) {    
+                setProfileSetting('myshows_sort_order', value);    
+            }    
         });
 
         // Настройки плагина  
@@ -372,6 +402,9 @@
                 // Обновляем значения полей
                 var myshowsViewInMain = settingsPanel.querySelector('select[data-name="myshows_view_in_main"]');  
                 if (myshowsViewInMain) myshowsViewInMain.value = getProfileSetting('myshows_view_in_main', true);
+
+                var sortSelect = settingsPanel.querySelector('select[data-name="myshows_sort_order"]');  
+                if (sortSelect) sortSelect.value = getProfileSetting('myshows_sort_order', 'alphabet');
 
                 var addThresholdSelect = settingsPanel.querySelector('select[data-name="myshows_add_threshold"]');  
                 if (addThresholdSelect) addThresholdSelect.value = getProfileSetting('myshows_add_threshold', DEFAULT_ADD_THRESHOLD).toString();
@@ -545,7 +578,8 @@
             Lampa.Activity.active().card ||  
             Lampa.Activity.active().movie  
         )) || null;  
-        if (!card) card = getProfileSetting('myshows_last_card', null);  
+        // if (!card) card = getProfileSetting('myshows_last_card', null);  
+        if (!card) card = Lampa.Storage.get('myshows_last_card', null);  
         return card;  
     }  
   
@@ -744,16 +778,72 @@
         }  
         
         var status = new Lampa.Status(shows.length);  
-        
-        status.onComplite = function(data) {  
-            var matchedShows = [];  
-            for (var key in data) {  
-                if (data[key]) {  
-                    matchedShows.push(data[key]);  
-                }  
+
+        status.onComplite = function(data) {    
+            var matchedShows = [];    
+            for (var key in data) {    
+                if (data[key]) {    
+                    matchedShows.push(data[key]);    
+                }    
             }  
-            callback({ shows: matchedShows });  
-        };  
+            
+            var sortOrder = getProfileSetting('myshows_sort_order', 'alphabet');  
+            console.log('[MyShows] Sorting by:', sortOrder);  
+            
+            
+            switch(sortOrder) {  
+                case 'alphabet':  
+                    matchedShows.sort(function(a, b) {  
+                        var nameA = (a.name || a.title || '').toLowerCase();  
+                        var nameB = (b.name || b.title || '').toLowerCase();  
+                        return nameA.localeCompare(nameB, 'ru');  
+                    });  
+                    break;  
+                    
+                case 'progress':  
+                    matchedShows.sort(function(a, b) {  
+                        var progressA = (a.watched_count || 0) / (a.total_count || 1);  
+                        var progressB = (b.watched_count || 0) / (b.total_count || 1);  
+                        
+                        // Сортируем по проценту просмотра (больше процент - выше)  
+                        if (progressB !== progressA) {  
+                            return progressB - progressA;  
+                        }  
+                        
+                        // При равном проценте - по количеству просмотренных серий  
+                        return (b.watched_count || 0) - (a.watched_count || 0);  
+                    });  
+                    break;  
+                    
+                case 'unwatched_count':  
+                    matchedShows.sort(function(a, b) {  
+                        var unwatchedA = (a.total_count || 0) - (a.watched_count || 0);  
+                        var unwatchedB = (b.total_count || 0) - (b.watched_count || 0);  
+                        
+                        // Сортируем по количеству непросмотренных (меньше непросмотренных - выше)  
+                        if (unwatchedA !== unwatchedB) {  
+                            return unwatchedA - unwatchedB;  
+                        }  
+                        
+                        // При равном количестве - по алфавиту  
+                        var nameA = (a.name || a.title || '').toLowerCase();  
+                        var nameB = (b.name || b.title || '').toLowerCase();  
+                        return nameA.localeCompare(nameB, 'ru');  
+                    });  
+                    break;  
+                    
+                default:  
+                    // Fallback к алфавитной сортировке  
+                    matchedShows.sort(function(a, b) {  
+                        var nameA = (a.name || a.title || '').toLowerCase();  
+                        var nameB = (b.name || b.title || '').toLowerCase();  
+                        return nameA.localeCompare(nameB, 'ru');  
+                    });  
+            }  
+            
+            console.log('[MyShows] Sorted', matchedShows.length, 'shows by', sortOrder);  
+            callback({ shows: matchedShows });    
+        };
         
         for (var i = 0; i < shows.length; i++) {  
             var show = shows[i];  
@@ -804,10 +894,12 @@
                                     }  
                                     
                                     var watchedEpisodes = Math.max(0, releasedEpisodes - currentShow.unwatchedCount);  
-                                    
+                                                                        
                                     foundShow.progress_marker = watchedEpisodes + '/' + totalEpisodes;  
                                     foundShow.watched_count = watchedEpisodes;  
-                                    foundShow.total_count = releasedEpisodes;  
+                                    // foundShow.total_count = releasedEpisodes;  
+                                    foundShow.total_count = totalEpisodes;  
+                                    foundShow.released_count = releasedEpisodes;
                                     
                                     status.append('tmdb_' + index, foundShow);  
                                 }, function() {  
@@ -886,7 +978,7 @@
         if (oldText === newProgressMarker) return;  
         
         // Добавляем CSS анимацию  
-        progressMarker.style.transition = 'all 0.3s ease';  
+        progressMarker.style.transition = 'all 0.5s ease';  
         progressMarker.style.transform = 'scale(1.5)';  
         progressMarker.style.color = '#FFD700';  
         
@@ -921,30 +1013,251 @@
         }  
     };
 
-    Lampa.Listener.follow('activity', function(event) {    
-        console.log('[MyShows] Activity event:', event.type, event.component);
-        // Отслеживаем возврат на main или category  
-        if (event.type === 'start' && (event.component === 'main' || event.component === 'category')) {    
-            var lastCard = getProfileSetting('myshows_last_card', null);    
-            if (lastCard) {    
-                var originalName = lastCard.original_name || lastCard.original_title || lastCard.title;    
+    Lampa.Listener.follow('activity', function(event) {            
+        
+        // Слушаем только возврат на главную страницу  
+        if (event.type === 'archive' && (event.component === 'main' || event.component === 'category')) {          
+            var lastCard = Lampa.Storage.get('myshows_last_card', null);          
+            if (lastCard) {      
+                var originalName = lastCard.original_name || lastCard.original_title || lastCard.title;          
                 
-                setTimeout(function() {    
-                    getUnwatchedShowsWithDetails(function(result) {    
-                        if (result && result.shows) {    
-                            var updatedShow = result.shows.find(function(show) {    
-                                return (show.original_name || show.name || show.title) === originalName;    
-                            });    
+                setTimeout(function() {      
+                    getUnwatchedShowsWithDetails(function(result) {       
+                        var foundInAPI = false;    
+                        var foundShow = null;  
+                        
+                        if (result && result.shows) {        
+                            foundShow = result.shows.find(function(show) {        
+                                return (show.original_name || show.name || show.title) === originalName;        
+                            });        
                             
-                            if (updatedShow && updatedShow.progress_marker && window.MyShows && window.MyShows.updateAllMyShowsCards) {    
-                                window.MyShows.updateAllMyShowsCards(originalName, updatedShow.progress_marker);    
-                            }    
-                        }    
-                    });    
-                }, 500);    
+                            if (foundShow) {        
+                                foundInAPI = true;    
+                                
+                                // Проверяем, есть ли карточка на странице  
+                                var existingCard = findExistingCard(originalName);  
+                                
+                                if (existingCard && foundShow.progress_marker) {  
+                                    // Карточка есть - обновляем прогресс  
+                                    if (window.MyShows && window.MyShows.updateAllMyShowsCards) {        
+                                        window.MyShows.updateAllMyShowsCards(originalName, foundShow.progress_marker);        
+                                    }  
+                                } else if (!existingCard) {  
+                                    // Карточки нет - добавляем новую  
+                                    insertNewCardIntoMyShowsSection(foundShow);  
+                                }  
+                            }        
+                        }   
+                        if (!foundInAPI) {      
+                            updateCompletedShowCard(originalName);      
+                        }      
+                    });        
+                }, 500);        
+            }        
+        }        
+    });  
+
+    function updateCompletedShowCard(showName) {    
+        var cards = document.querySelectorAll('.card');    
+        
+        for (var i = 0; i < cards.length; i++) {    
+            var cardElement = cards[i];    
+            var cardData = cardElement.card_data || {};    
+            
+            var cardName = cardData.original_name || cardData.name || cardData.title;    
+            if (cardName === showName && cardData.progress_marker) {    
+                var releasedEpisodes = cardData.released_count;    
+                var totalEpisodes = cardData.total_count;    
+                
+                if (releasedEpisodes && totalEpisodes) {    
+                    var newProgressMarker = releasedEpisodes + '/' + totalEpisodes;    
+                    cardData.progress_marker = newProgressMarker;    
+                    
+                    updateCardWithAnimation(cardElement, newProgressMarker);    
+                    
+                    // Сохраняем информацию о навигации перед удалением  
+                    var parentSection = cardElement.closest('.items-line');  
+                    var allCards = parentSection.querySelectorAll('.card');  
+                    var currentIndex = Array.from(allCards).indexOf(cardElement);  
+                    
+                    // Удаляем карточку через 3 секунды после обновления    
+                    setTimeout(function() {    
+                        removeCompletedCard(cardElement, showName, parentSection, currentIndex);    
+                    }, 3000);    
+                }    
+                break;    
             }    
         }    
-    });
+    }    
+
+    function removeCompletedCard(cardElement, showName, parentSection, cardIndex) {    
+        
+        // Проверяем, находится ли фокус на удаляемой карточке  
+        var isCurrentlyFocused = cardElement.classList.contains('focus');  
+        
+        // Определяем следующую карточку для фокуса только если карточка сейчас в фокусе  
+        var nextCard = null;  
+        if (isCurrentlyFocused) {  
+            var allCards = parentSection.querySelectorAll('.card');  
+            
+            if (cardIndex < allCards.length - 1) {  
+                nextCard = allCards[cardIndex + 1]; // Следующая карточка  
+            } else if (cardIndex > 0) {  
+                nextCard = allCards[cardIndex - 1]; // Предыдущая карточка  
+            }  
+        }  
+        
+        // Добавляем анимацию исчезновения    
+        cardElement.style.transition = 'opacity 0.5s ease, transform 0.5s ease';    
+        cardElement.style.opacity = '0';    
+        cardElement.style.transform = 'scale(0.8)';    
+        
+        // Удаляем элемент после анимации  
+        setTimeout(function() {    
+            if (cardElement && cardElement.parentNode) {    
+                cardElement.remove();    
+                
+                // Восстанавливаем фокус только если удаляемая карточка была в фокусе  
+                if (nextCard && window.Lampa && window.Lampa.Controller) {  
+                    setTimeout(function() {  
+                        Lampa.Controller.collectionSet(parentSection);  
+                        Lampa.Controller.collectionFocus(nextCard, parentSection);  
+                    }, 50);  
+                } else if (isCurrentlyFocused) {  
+                    // Если была в фокусе, но нет следующей карточки, обновляем коллекцию  
+                    setTimeout(function() {  
+                        if (window.Lampa && window.Lampa.Controller) {  
+                            Lampa.Controller.collectionSet(parentSection);  
+                        }  
+                    }, 50);  
+                }  
+            }    
+        }, 500);    
+    }
+    
+    
+    function findExistingCard(showName) {    
+        
+        // Используем тот же метод поиска, что и в insertNewCardIntoMyShowsSection  
+        var titleElements = document.querySelectorAll('.items-line__title');      
+        var targetSection = null;      
+        
+        for (var i = 0; i < titleElements.length; i++) {      
+            var titleText = titleElements[i].textContent || titleElements[i].innerText;      
+            if (titleText.indexOf('MyShows') !== -1) {      
+                targetSection = titleElements[i].closest('.items-line');      
+                break;      
+            }      
+        }  
+        
+        // if (!targetSection) {  
+        //     return null;  
+        // }  
+        
+        var cards = targetSection.querySelectorAll('.card');    
+        
+        for (var i = 0; i < cards.length; i++) {    
+            var cardElement = cards[i];    
+            var cardData = cardElement.card_data || {};    
+            
+            var cardNames = [  
+                cardData.original_name,  
+                cardData.name,   
+                cardData.title,  
+                cardData.original_title  
+            ].filter(Boolean);  
+            
+            if (cardNames.some(cardName => cardName === showName)) {  
+                return cardElement;    
+            }  
+        }    
+        
+        return null;    
+    }
+
+
+    function insertNewCardIntoMyShowsSection(showData, retryCount = 0) {      
+        
+        var titleElements = document.querySelectorAll('.items-line__title');      
+        var targetSection = null;      
+        
+        
+        for (var i = 0; i < titleElements.length; i++) {      
+            var titleText = titleElements[i].textContent || titleElements[i].innerText;      
+            
+            if (titleText.indexOf('MyShows') !== -1) {      
+                targetSection = titleElements[i].closest('.items-line');      
+                break;      
+            }      
+        } 
+
+        // if (!targetSection) {  
+        //     return;  
+        // }  
+        
+        if (targetSection) {    
+            var scrollElement = targetSection.querySelector('.scroll');    
+            
+            if (scrollElement && scrollElement.Scroll) {    
+                
+                var scroll = scrollElement.Scroll;  
+
+                try {    
+                    var newCard = new Lampa.Card(showData, {    
+                        object: { source: 'tmdb' },    
+                        card_category: true    
+                    });    
+                    
+                    // Переопределяем метод favorite    
+                    var originalFavorite = newCard.favorite;    
+                    newCard.favorite = function() {    
+                        originalFavorite.call(this);    
+                        
+                        if (showData.progress_marker) {    
+                            var marker = this.card.querySelector('.card__marker');    
+                            
+                            if (!marker) {    
+                                marker = document.createElement('div');    
+                                marker.className = 'card__marker card__marker--progress';    
+                                marker.innerHTML = '<span></span>';    
+                                this.card.querySelector('.card__view').appendChild(marker);    
+                            }    
+                            
+                            marker.querySelector('span').textContent = showData.progress_marker;    
+                            marker.classList.add('card__marker--progress');    
+                        }    
+                    };    
+                    
+                    newCard.onEnter = function(target, card_data) {    
+                        Lampa.Activity.push({    
+                            url: card_data.url,    
+                            component: 'full',    
+                            id: card_data.id,    
+                            method: card_data.name ? 'tv' : 'movie',    
+                            card: card_data,    
+                            source: card_data.source || 'tmdb'    
+                        });    
+                    };    
+                    
+                    newCard.create();    
+                    newCard.favorite();    
+                    
+                    var cardElement = newCard.render(true);    
+                    
+                    if (cardElement) {  
+                        // ИСПРАВЛЕНИЕ: Используем scroll.append() для правильного добавления  
+                        scroll.append(cardElement);  
+                        
+                        // Добавляем карточку в систему навигации    
+                        if (window.Lampa && window.Lampa.Controller) {    
+                            window.Lampa.Controller.collectionAppend(cardElement);    
+                        }    
+                    }    
+                } catch (error) {}  
+            }  
+        }  
+    }
+
 
     function addProgressMarkerStyles() {      
         var style = document.createElement('style');      
@@ -985,33 +1298,37 @@
         `;      
         document.head.appendChild(style);      
     }
- 
-    function addMyShowsData(data, oncomplite) {  
-        if (getProfileSetting('myshows_view_in_main', true)) {  
-            var token = getProfileSetting('myshows_token', '');  
+
+    function addMyShowsData(data, oncomplite) {    
+        if (getProfileSetting('myshows_view_in_main', true)) {    
+            var token = getProfileSetting('myshows_token', '');    
             
-            if (token) {  
-                getUnwatchedShowsWithDetails(function(result) {  
-                    if (result && result.shows && result.shows.length > 0) {  
-                        var myshowsCategory = {  
-                            title: 'Непросмотренные сериалы (MyShows)',  
-                            results: result.shows.slice(0, 20),  
-                            source: 'tmdb',  
-                            line_type: 'myshows_unwatched',  
-                            cardClass: createMyShowsCard  
-                        };  
+            if (token) {    
+                getUnwatchedShowsWithDetails(function(result) {    
+                    if (result && result.shows && result.shows.length > 0) {    
+                        var myshowsCategory = {    
+                            title: 'Непросмотренные сериалы (MyShows)',    
+                            results: result.shows,  
+                            source: 'tmdb',    
+                            line_type: 'myshows_unwatched',    
+                            cardClass: createMyShowsCard,
+                            nomore: true   
+                        };    
                         
-                        data.unshift(myshowsCategory);  
-                    }  
-                    oncomplite(data);  
-                });  
-                return true;  
-            }  
-        }  
+                        // Сохраняем ссылку на данные для последующих модификаций  
+                        window.myShowsData = myshowsCategory;  
+                        
+                        data.unshift(myshowsCategory);    
+                    }    
+                    oncomplite(data);    
+                });    
+                return true;    
+            }    
+        }    
         
-        oncomplite(data);  
-        return false; 
-    }  
+        oncomplite(data);    
+        return false;   
+    }
     
     // Главная TMDB  
     function addMyShowsToTMDB() {  
@@ -1045,7 +1362,8 @@
         if (!card) return;  
         
         // Просто сохраняем карточку для Timeline обработки  
-        setProfileSetting('myshows_last_card', card);  
+        // setProfileSetting('myshows_last_card', card);  
+        Lampa.Storage.set('myshows_last_card', card);  
     });  
     }
   
