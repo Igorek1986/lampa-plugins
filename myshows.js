@@ -1150,10 +1150,6 @@
             }      
         }  
         
-        // if (!targetSection) {  
-        //     return null;  
-        // }  
-        
         var cards = targetSection.querySelectorAll('.card');    
         
         for (var i = 0; i < cards.length; i++) {    
@@ -1190,10 +1186,6 @@
                 break;      
             }      
         } 
-
-        // if (!targetSection) {  
-        //     return;  
-        // }  
         
         if (targetSection) {    
             var scrollElement = targetSection.querySelector('.scroll');    
