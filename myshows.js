@@ -12,6 +12,83 @@
         'Content-Type': 'application/json'  
     };
 
+
+    function accountUrl(url) {  
+        url = url + '';  
+        if (url.indexOf('uid=') == -1) {  
+            var uid = Lampa.Storage.get('lampac_unic_id', '');  
+            if (uid) url = Lampa.Utils.addUrlComponent(url, 'uid=' + encodeURIComponent(uid));  
+        }  
+        return url;  
+    }  
+    
+    // Сохранение кеша с использованием профилей  
+    function saveCacheToServer(cacheData, callback) {  
+        try {  
+            var data = JSON.stringify(cacheData, null, 2);  
+            var profileId = Lampa.Storage.get('lampac_profile_id', 'default');  
+            var uri = accountUrl('/storage/set?path=myshows&pathfile=' + profileId);  
+            
+            var network = new Lampa.Reguest();  
+            network.native(uri, function(response) {  
+                if (response.success) {  
+                    console.log('[MyShows] Cache saved to server:', response.fileInfo.path);  
+                    // Сохраняем время изменения для проверки актуальности  
+                    Lampa.Storage.set('lampac_myshows_cache', response.fileInfo.changeTime);  
+                    if (callback) callback(true);  
+                } else {  
+                    console.error('[MyShows] Cache save failed:', response.msg);  
+                    if (callback) callback(false);  
+                }  
+            }, function(error) {  
+                console.error('[MyShows] Cache save error:', error);  
+                if (callback) callback(false);  
+            }, data, {  
+                headers: { 'Content-Type': 'application/json' },  
+                method: 'POST'  
+            });  
+        } catch(e) {  
+            console.error('[MyShows] Cache preparation error:', e);  
+            if (callback) callback(false);  
+        }  
+    }  
+  
+    // Загрузка кеша 
+    function loadCacheFromServer(callback) {      
+        var profileId = Lampa.Storage.get('lampac_profile_id', 'default');      
+        var uri = accountUrl('/storage/get?path=myshows&pathfile=' + profileId);      
+            
+        var network = new Lampa.Reguest();      
+        network.silent(uri, function(response) {      
+            if (response.success && response.fileInfo && response.data) {      
+                var lastChangeTime = Lampa.Storage.get('lampac_myshows_cache', '0');      
+                if (response.fileInfo.changeTime > lastChangeTime) {      
+                    // Файл изменился - используем новый кеш    
+                    console.log('[MyShows] Loading NEW cache from server (file changed)');  
+                    var cacheData = JSON.parse(response.data);      
+                    Lampa.Storage.set('lampac_myshows_cache', response.fileInfo.changeTime);      
+                    callback({ shows: cacheData.shows });      
+                    return;      
+                } else {    
+                    // Файл не изменился - используем существующий кеш    
+                    console.log('[MyShows] Loading EXISTING cache from server (file unchanged)');  
+                    var cacheData = JSON.parse(response.data);    
+                    callback({ shows: cacheData.shows });    
+                    return;    
+                }    
+            } else if (response.msg && response.msg == 'outFile') {    
+                // Файл не существует - это первый запуск    
+                console.log('[MyShows] No cache file exists yet');    
+            } else {  
+                console.log('[MyShows] Cache response invalid:', response);  
+            }  
+            callback(null);       
+        }, function(error) {      
+            console.log('[MyShows] Cache load error:', error);      
+            callback(null);      
+        });      
+    }
+
     function createJSONRPCRequest(method, params, id) {  
         return JSON.stringify({  
             jsonrpc: '2.0',  
@@ -190,7 +267,6 @@
         var loginValue = getProfileSetting('myshows_login', '');  
         var passwordValue = getProfileSetting('myshows_password', '');   
         var cacheDaysValue = getProfileSetting('myshows_cache_days', DEFAULT_CACHE_DAYS); 
-        // var lasrCard = getProfileSetting('myshows_last_card', '');    
 
             
         Lampa.Storage.set('myshows_view_in_main', myshowsViewInMain, true);  
@@ -201,7 +277,6 @@
         Lampa.Storage.set('myshows_login', loginValue, true);  
         Lampa.Storage.set('myshows_password', passwordValue, true);  
         Lampa.Storage.set('myshows_cache_days', cacheDaysValue, true);  
-        // Lampa.Storage.set('myshows_last_card', lasrCard, true);
     }    
       
     function hasProfileSetting(key) {    
@@ -632,28 +707,48 @@
         });    
     }  
 
-    function processEpisode(episodeId, hash, percent, card, token, minProgress, addThreshold) {  
-        console.log('MyShows: Processing episode', episodeId, 'with hash', hash, 'and percent', percent);
-        // Проверяем, нужно ли добавить сериал в "Смотрю"    
-        var originalName = card.original_name || card.original_title || card.title;    
-        var firstEpisodeHash = Lampa.Utils.hash('11' + originalName);    
+    function processEpisode(episodeId, hash, percent, card, token, minProgress, addThreshold) {    
         
+        var originalName = card.original_name || card.original_title || card.title;      
+        var firstEpisodeHash = Lampa.Utils.hash('11' + originalName);      
+        
+        // Проверяем, нужно ли добавить сериал в "Смотрю"  
         if (hash === firstEpisodeHash && percent >= addThreshold) {    
-            addShowToWatching(card, token);         
-        } else if (addThreshold === 0 && hash === firstEpisodeHash) {      
-            addShowToWatching(card, token);         
-        }  
+            addShowToWatching(card, token);    
+            
+            // Обновляем кеш только если НЕ достигнут minProgress    
+            if (percent < minProgress) {    
+                setTimeout(function() {    
+                    console.log('[MyShows] Force refreshing cache after adding show to watching');    
+                    getUnwatchedShowsWithDetails(function(result) {    
+                        console.log('[MyShows] Cache updated after adding show');    
+                    }, true);    
+                }, 1000);    
+            }    
+        } else if (addThreshold === 0 && hash === firstEpisodeHash) {    
+            addShowToWatching(card, token);    
+            
+            // Обновляем кеш только если НЕ достигнут minProgress    
+            if (percent < minProgress) {    
+                setTimeout(function() {    
+                    console.log('[MyShows] Force refreshing cache after adding show to watching (threshold 0)');    
+                    getUnwatchedShowsWithDetails(function(result) {    
+                        console.log('[MyShows] Cache updated after adding show');    
+                    }, true);    
+                }, 1000);    
+            }  
+        }   
     
-        // Отмечаем серию как просмотренную только если достигнут minProgress    
-        if (percent >= minProgress) {    
-            checkEpisodeMyShows(episodeId, token);  
-            setTimeout(function() { 
-
-                getUnwatchedShowsWithDetails(function(result) { 
-                        console.log('MyShows: Unwatched shows with details:', result);
-                });
-            }, 1000); 
-        }    
+        // Отмечаем серию как просмотренную только если достигнут minProgress      
+        if (percent >= minProgress) {      
+            checkEpisodeMyShows(episodeId, token);    
+            setTimeout(function() {   
+                console.log('[MyShows] About to call getUnwatchedShowsWithDetails with forceRefresh = true');
+                getUnwatchedShowsWithDetails(function(result) {   
+                    console.log('MyShows: Unwatched shows with details:', result);  
+                }, true);  
+            }, 1000);   
+        }      
     }
   
     // Инициализация Timeline listener  
@@ -707,29 +802,24 @@
         }      
     }
 
-    function getUnwatchedShowsWithDetails(callback) {    
-        var token = getProfileSetting('myshows_token', '');    
-        if (!token) {    
-            callback({ error: 'Not authorized' });    
-            return;    
-        }    
-    
-        makeAuthenticatedRequest(API_URL, {    
-            method: 'POST',    
-            headers: JSON_HEADERS, 
-            body: createJSONRPCRequest('lists.Episodes', { list: 'unwatched' })   
-        }, function(response) {    
-            if (!response || !response.result) {    
-                callback({ error: response ? response.error : 'Empty response' });    
-                return;    
-            }    
+    function fetchFromMyShowsAPI(callback) {  
+        console.log('[MyShows] Fetching unwatched shows from MyShows API...');
+        makeAuthenticatedRequest(API_URL, {  
+            method: 'POST',  
+            headers: JSON_HEADERS,  
+            body: createJSONRPCRequest('lists.Episodes', { list: 'unwatched' })  
+        }, function(response) {  
+            if (!response || !response.result) {  
+                callback({ error: response ? response.error : 'Empty response' });  
+                return;  
+            }  
     
             // Группируем эпизоды по сериалам и подсчитываем количество  
-            var showsData = {};    
-            var shows = [];    
+            var showsData = {};  
+            var shows = [];  
             
-            for (var i = 0; i < response.result.length; i++) {    
-                var item = response.result[i];    
+            for (var i = 0; i < response.result.length; i++) {  
+                var item = response.result[i];  
                 if (item.show) {  
                     var showId = item.show.id;  
                     
@@ -744,19 +834,19 @@
                     showsData[showId].unwatchedCount++;  
                     showsData[showId].episodes.push(item.episode);  
                 }  
-            }    
+            }  
             
             // Преобразуем в массив для отображения  
             for (var showId in showsData) {  
                 var showData = showsData[showId];  
-                shows.push({    
-                    myshowsId: showData.show.id,    
-                    title: showData.show.title,    
-                    originalTitle: showData.show.titleOriginal,    
+                shows.push({  
+                    myshowsId: showData.show.id,  
+                    title: showData.show.title,  
+                    originalTitle: showData.show.titleOriginal,  
                     year: showData.show.year,  
                     unwatchedCount: showData.unwatchedCount,  
                     unwatchedEpisodes: showData.episodes  
-                });    
+                });  
             }  
             
             console.log('[MyShows] Found', shows.length, 'unique shows with unwatched episodes:');  
@@ -764,11 +854,105 @@
                 console.log('[MyShows]', show.title, '- осталось серий:', show.unwatchedCount);  
             });  
             
-            // Сразу переходим к поиску в TMDB    
-            getTMDBDetails(shows, callback);    
-        }, function(error) {    
-            callback({ error: error });    
-        });    
+            // Сразу переходим к поиску в TMDB  
+            getTMDBDetails(shows, function(result) {  
+                if (result && result.shows) {  
+                    // Сохраняем в серверный кеш  
+                    var cacheData = {  
+                        shows: result.shows,  
+                    };  
+                    saveCacheToServer(cacheData);  
+                }  
+                callback(result);  
+            });  
+        }, function(error) {  
+            callback({ error: error });  
+        });  
+    }  
+
+    function getUnwatchedShowsWithDetails(callback, forceRefresh) {    
+        console.log('[MyShows] getUnwatchedShowsWithDetails called with forceRefresh:', forceRefresh);  
+        if (typeof forceRefresh === 'undefined') {    
+            forceRefresh = false;    
+        }    
+    
+        var token = getProfileSetting('myshows_token', '');    
+        if (!token) {    
+            callback({ error: 'Not authorized' });    
+            return;    
+        }    
+    
+        console.log('[MyShows] forceRefresh after check:', forceRefresh);  
+    
+        if (forceRefresh) {    
+            console.log('[MyShows] Taking forceRefresh path - calling fetchFromMyShowsAPI');    
+            fetchFromMyShowsAPI(callback);    
+        } else {    
+            // Логика с кешем    
+            loadCacheFromServer(function(cachedResult) {    
+                if (cachedResult) {    
+                    callback(cachedResult);    
+                    
+                    // Запускаем отложенную проверку только один раз при загрузке  
+                    setTimeout(function() {  
+                        console.log('[MyShows] Starting delayed background check');  
+                        fetchFromMyShowsAPI(function(freshResult) {  
+                            if (freshResult && freshResult.shows && cachedResult.shows) {  
+                                updateUIIfNeeded(cachedResult.shows, freshResult.shows);  
+                            }  
+                        });  
+                    }, 5000);  
+                    
+                    return;    
+                }    
+                fetchFromMyShowsAPI(callback);    
+            });    
+        }  
+    }
+
+    function updateUIIfNeeded(oldShows, newShows) {  
+        // Создаем карты для быстрого поиска  
+        var oldShowsMap = {};  
+        var newShowsMap = {};  
+        
+        oldShows.forEach(function(show) {  
+            var key = show.original_name || show.name || show.title;  
+            oldShowsMap[key] = show;  
+        });  
+        
+        newShows.forEach(function(show) {  
+            var key = show.original_name || show.name || show.title;  
+            newShowsMap[key] = show;  
+        });  
+        
+        // Добавляем новые сериалы  
+        for (var newKey in newShowsMap) {  
+            if (!oldShowsMap[newKey]) {  
+                console.log('[MyShows] Adding new show:', newKey);  
+                insertNewCardIntoMyShowsSection(newShowsMap[newKey]);  
+            }  
+        }  
+        
+        // Удаляем завершенные сериалы  
+        for (var oldKey in oldShowsMap) {  
+            if (!newShowsMap[oldKey]) {  
+                console.log('[MyShows] Removing completed show:', oldKey);  
+                updateCompletedShowCard(oldKey);  
+            }  
+        }  
+        
+        // Обновляем прогресс существующих сериалов  
+        for (var key in newShowsMap) {  
+            if (oldShowsMap[key]) {  
+                var oldShow = oldShowsMap[key];  
+                var newShow = newShowsMap[key];  
+                
+                if (oldShow.progress_marker !== newShow.progress_marker) {  
+                    console.log('[MyShows] Updating show progress:', key);  
+                    window.MyShows.updateAllMyShowsCards(key, newShow.progress_marker);  
+                }  
+            }  
+        }  
     }
 
     function getTMDBDetails(shows, callback) {  
@@ -781,6 +965,7 @@
 
         status.onComplite = function(data) {    
             var matchedShows = [];    
+
             for (var key in data) {    
                 if (data[key]) {    
                     matchedShows.push(data[key]);    
@@ -872,7 +1057,13 @@
                                 var totalEpisodes = getTotalEpisodesCount(fullResponse);  
                                 
                                 // Получаем детали последнего сезона для проверки дат выхода  
-                                var lastSeason = Math.max(...fullResponse.seasons.filter(s => s.season_number > 0).map(s => s.season_number));  
+                                var validSeasons = [];  
+                                for (var i = 0; i < fullResponse.seasons.length; i++) {  
+                                    if (fullResponse.seasons[i].season_number > 0) {  
+                                        validSeasons.push(fullResponse.seasons[i].season_number);  
+                                    }  
+                                }  
+                                var lastSeason = Math.max.apply(Math, validSeasons);
                                 
                                 var seasonUrl = 'https://api.themoviedb.org/3/tv/' + foundShow.id + '/season/' + lastSeason +  
                                     '?api_key=' + Lampa.TMDB.key() +  
@@ -897,7 +1088,6 @@
                                                                         
                                     foundShow.progress_marker = watchedEpisodes + '/' + totalEpisodes;  
                                     foundShow.watched_count = watchedEpisodes;  
-                                    // foundShow.total_count = releasedEpisodes;  
                                     foundShow.total_count = totalEpisodes;  
                                     foundShow.released_count = releasedEpisodes;
                                     
@@ -1027,9 +1217,13 @@
                         var foundShow = null;  
                         
                         if (result && result.shows) {        
-                            foundShow = result.shows.find(function(show) {        
-                                return (show.original_name || show.name || show.title) === originalName;        
-                            });        
+                            for (var i = 0; i < result.shows.length; i++) {  
+                                var show = result.shows[i];  
+                                if ((show.original_name || show.name || show.title) === originalName) {  
+                                    foundShow = show;  
+                                    break;  
+                                }  
+                            }    
                             
                             if (foundShow) {        
                                 foundInAPI = true;    
@@ -1055,7 +1249,7 @@
                 }, 500);        
             }        
         }        
-    });  
+    });
 
     function updateCompletedShowCard(showName) {    
         var cards = document.querySelectorAll('.card');    
@@ -1135,44 +1329,60 @@
         }, 500);    
     }
     
-    
-    function findExistingCard(showName) {    
+
+    function findExistingCard(showName) {  
+        var titleElements = document.querySelectorAll('.items-line__title');  
+        var targetSection = null;  
         
-        // Используем тот же метод поиска, что и в insertNewCardIntoMyShowsSection  
-        var titleElements = document.querySelectorAll('.items-line__title');      
-        var targetSection = null;      
-        
-        for (var i = 0; i < titleElements.length; i++) {      
-            var titleText = titleElements[i].textContent || titleElements[i].innerText;      
-            if (titleText.indexOf('MyShows') !== -1) {      
-                targetSection = titleElements[i].closest('.items-line');      
-                break;      
-            }      
+        for (var i = 0; i < titleElements.length; i++) {  
+            var titleText = titleElements[i].textContent || titleElements[i].innerText;  
+            if (titleText.indexOf('MyShows') !== -1) {  
+                targetSection = titleElements[i].closest('.items-line');  
+                break;  
+            }  
         }  
         
-        var cards = targetSection.querySelectorAll('.card');    
+        if (!targetSection) {  
+            console.log('[MyShows] Target section not found');  
+            return null;  
+        }  
         
-        for (var i = 0; i < cards.length; i++) {    
-            var cardElement = cards[i];    
-            var cardData = cardElement.card_data || {};    
+        var cards = targetSection.querySelectorAll('.card');  
+        
+        for (var i = 0; i < cards.length; i++) {  
+            var cardElement = cards[i];  
+            var cardData = cardElement.card_data || {};  
             
             var cardNames = [  
                 cardData.original_name,  
-                cardData.name,   
+                cardData.name,  
                 cardData.title,  
                 cardData.original_title  
             ].filter(Boolean);  
             
-            if (cardNames.some(cardName => cardName === showName)) {  
-                return cardElement;    
+            // Используем другую переменную для внутреннего цикла  
+            for (var j = 0; j < cardNames.length; j++) {  
+                if (cardNames[j] === showName) {  
+                    return cardElement;  
+                }  
             }  
-        }    
+        }  
         
-        return null;    
+        return null;  
     }
 
 
-    function insertNewCardIntoMyShowsSection(showData, retryCount = 0) {      
+    function insertNewCardIntoMyShowsSection(showData, retryCount) {  
+        var currentFocusedElement = document.querySelector('.focus');  
+        var currentFocusedCard = null;
+        
+        if (currentFocusedElement && currentFocusedElement.closest('.card')) {  
+            currentFocusedCard = currentFocusedElement.closest('.card');  
+        }
+
+        if (typeof retryCount === 'undefined') {  
+            retryCount = 0;  
+        }   
         
         var titleElements = document.querySelectorAll('.items-line__title');      
         var targetSection = null;      
@@ -1237,14 +1447,34 @@
                     var cardElement = newCard.render(true);    
                     
                     if (cardElement) {  
-                        // ИСПРАВЛЕНИЕ: Используем scroll.append() для правильного добавления  
                         scroll.append(cardElement);  
                         
-                        // Добавляем карточку в систему навигации    
-                        if (window.Lampa && window.Lampa.Controller) {    
-                            window.Lampa.Controller.collectionAppend(cardElement);    
-                        }    
-                    }    
+                        // Добавляем карточку в систему навигации  
+                        if (window.Lampa && window.Lampa.Controller) {  
+                            window.Lampa.Controller.collectionAppend(cardElement);  
+                            
+                            // Восстанавливаем фокус на предыдущий элемент  
+                            setTimeout(function() {  
+                                if (currentFocusedCard && window.Lampa.Controller.enabled()) {  
+                                    // Находим индекс предыдущего элемента  
+                                    var allCards = document.querySelectorAll('.card');  
+                                    var targetIndex = -1;  
+                                    
+                                    for (var i = 0; i < allCards.length; i++) {  
+                                        if (allCards[i] === currentFocusedCard) {  
+                                            targetIndex = i;  
+                                            break;  
+                                        }  
+                                    }  
+                                    
+                                    if (targetIndex >= 0) {  
+                                        // Устанавливаем фокус на сохраненный элемент  
+                                        window.Lampa.Controller.focus(currentFocusedCard);  
+                                    }  
+                                }  
+                            }, 100);  
+                        }  
+                    } 
                 } catch (error) {}  
             }  
         }  
@@ -1354,7 +1584,6 @@
         if (!card) return;  
         
         // Просто сохраняем карточку для Timeline обработки  
-        // setProfileSetting('myshows_last_card', card);  
         Lampa.Storage.set('myshows_last_card', card);  
     });  
     }
