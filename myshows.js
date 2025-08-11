@@ -55,6 +55,7 @@
   
     // Загрузка кеша 
     function loadCacheFromServer(callback) {      
+        console.log('[MyShows] loadCacheFromServer function called'); 
         var profileId = Lampa.Storage.get('lampac_profile_id', 'default');      
         var uri = accountUrl('/storage/get?path=myshows&pathfile=' + profileId);      
             
@@ -1246,7 +1247,7 @@
                             updateCompletedShowCard(originalName);      
                         }      
                     });        
-                }, 500);        
+                }, 2000);        
             }        
         }        
     });
@@ -1608,4 +1609,21 @@
         }  
         });  
     }  
+
+    Lampa.Listener.follow('line', function(event) {  
+        if (event.data && event.data.title && event.data.title.indexOf('MyShows') !== -1) {  
+            if (event.type === 'create') {  
+                // Принудительно создаем все карточки после создания Line  
+                setTimeout(function() {  
+                    if (event.data && event.data.results && event.line) {  
+                        event.data.results.forEach(function(show) {  
+                            if (!show.ready && event.line.append) {  
+                                event.line.append(show);  
+                            }  
+                        });  
+                    }  
+                }, 50);  
+            }  
+        }  
+    });
 })();
