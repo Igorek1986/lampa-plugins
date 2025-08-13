@@ -1241,76 +1241,131 @@
     }  
     
     // Обновленная функция updateAllMyShowsCards с анимацией  
-    window.MyShows.updateAllMyShowsCards = function(originalName, newProgressMarker) {  
-        var cards = document.querySelectorAll('.card');  
-        for (var i = 0; i < cards.length; i++) {  
-            var cardElement = cards[i];  
-            var cardData = cardElement.card_data || {};  
+    window.MyShows.updateAllMyShowsCards = function(originalName, newProgressMarker, withAnimation) {    
+        var cards = document.querySelectorAll('.card');    
+        for (var i = 0; i < cards.length; i++) {    
+            var cardElement = cards[i];    
+            var cardData = cardElement.card_data || {};    
             
-            if ((cardData.original_name || cardData.name || cardData.title) === originalName &&   
-                cardData.progress_marker) {  
+            if ((cardData.original_name || cardData.name || cardData.title) === originalName &&     
+                cardData.progress_marker) {    
                 
-                // Обновляем данные карточки  
-                cardData.progress_marker = newProgressMarker;  
+                // Обновляем данные карточки    
+                cardData.progress_marker = newProgressMarker;    
                 
-                // Обновляем с анимацией  
-                updateCardWithAnimation(cardElement, newProgressMarker);  
+                if (withAnimation) {  
+                    // Обновляем с анимацией только если флаг установлен  
+                    updateCardWithAnimation(cardElement, newProgressMarker);    
+                } else {  
+                    // Обновляем без анимации - просто меняем текст  
+                    var progressElement = cardElement.querySelector('.card__marker--progress span');  
+                    if (progressElement) {  
+                        progressElement.textContent = newProgressMarker;  
+                    }  
+                }  
                 
-                console.log('[MyShows] Updated card progress:', originalName, 'to', newProgressMarker);  
-            }  
-        }  
+                console.log('[MyShows] Updated card progress:', originalName, 'to', newProgressMarker);    
+            }    
+        }    
     };
 
-    Lampa.Listener.follow('activity', function(event) {            
+    Lampa.Listener.follow('activity', function(event) {  
+        if (event.type === 'start' && event.component === 'full') {  
+            // Сохраняем карточку, в которую зашли  
+            var currentCard = event.object && event.object.card;  
+            if (currentCard) {  
+                Lampa.Storage.set('myshows_current_card', currentCard);  
+            }  
+        }  
         
-        // Слушаем только возврат на главную страницу  
-        if (event.type === 'archive' && (event.component === 'main' || event.component === 'category')) {          
+        if (event.type === 'archive' && (event.component === 'main' || event.component === 'category')) {  
             var lastCard = Lampa.Storage.get('myshows_last_card', null);  
-            var wasWatching = Lampa.Storage.get('myshows_was_watching', false);
-
-            if (lastCard && wasWatching) {      
-                var originalName = lastCard.original_name || lastCard.original_title || lastCard.title;     
-                Lampa.Storage.set('myshows_was_watching', false);     
+            var currentCard = Lampa.Storage.get('myshows_current_card', null);  
+            var wasWatching = Lampa.Storage.get('myshows_was_watching', false);  
+    
+            if (lastCard && wasWatching) {  
+                // Был просмотр - выполняем полную логику с таймаутом  
+                var originalName = lastCard.original_name || lastCard.original_title || lastCard.title;  
+                Lampa.Storage.set('myshows_was_watching', false);  
                 
-                setTimeout(function() {      
-                    getUnwatchedShowsWithDetails(function(result) {       
-                        var foundInAPI = false;    
+                setTimeout(function() {  
+                    loadCacheFromServer(function(cachedResult) {  
+                        var foundInAPI = false;  
                         var foundShow = null;  
                         
-                        if (result && result.shows) {        
-                            for (var i = 0; i < result.shows.length; i++) {  
-                                var show = result.shows[i];  
+                        if (cachedResult && cachedResult.shows) {  
+                            for (var i = 0; i < cachedResult.shows.length; i++) {  
+                                var show = cachedResult.shows[i];  
                                 if ((show.original_name || show.name || show.title) === originalName) {  
                                     foundShow = show;  
                                     break;  
                                 }  
-                            }    
+                            }  
                             
-                            if (foundShow) {        
-                                foundInAPI = true;    
+                            if (foundShow) {  
+                                foundInAPI = true;  
                                 
-                                // Проверяем, есть ли карточка на странице  
                                 var existingCard = findExistingCard(originalName);  
                                 
                                 if (existingCard && foundShow.progress_marker) {  
-                                    // Карточка есть - обновляем прогресс  
-                                    if (window.MyShows && window.MyShows.updateAllMyShowsCards) {        
-                                        window.MyShows.updateAllMyShowsCards(originalName, foundShow.progress_marker);        
+                                    if (window.MyShows && window.MyShows.updateAllMyShowsCards) {  
+                                        window.MyShows.updateAllMyShowsCards(originalName, foundShow.progress_marker, true);  
                                     }  
                                 } else if (!existingCard) {  
-                                    // Карточки нет - добавляем новую  
                                     insertNewCardIntoMyShowsSection(foundShow);  
                                 }  
-                            }        
-                        }   
-                        if (!foundInAPI) {      
-                            updateCompletedShowCard(originalName);      
-                        }      
-                    });        
-                }, 2000);        
-            }        
-        }        
+                            }  
+                        }  
+                        if (!foundInAPI) {  
+                            updateCompletedShowCard(originalName);  
+                        }  
+                    });  
+                }, 2000);  
+            } else if (currentCard) {  
+                // Просто навигация - обновляем сразу без таймаута  
+                var originalName = currentCard.original_name || currentCard.original_title || currentCard.title;  
+                
+                loadCacheFromServer(function(cachedResult) {  
+                    if (cachedResult && cachedResult.shows) {  
+                        var foundShow = cachedResult.shows.find(function(show) {  
+                            return (show.original_name || show.name || show.title) === originalName;  
+                        });  
+                        
+                        if (foundShow && foundShow.progress_marker) {  
+                            // Обновляем DOM данные карточки  
+                            var existingCard = findExistingCard(originalName);  
+                            if (existingCard && existingCard.card_data) {  
+                                existingCard.card_data.progress_marker = foundShow.progress_marker;  
+                                existingCard.card_data.watched_count = foundShow.watched_count;  
+                                existingCard.card_data.total_count = foundShow.total_count;  
+                            }  
+                            
+                            // Обновляем UI  
+                            if (window.MyShows && window.MyShows.updateAllMyShowsCards) {  
+                                window.MyShows.updateAllMyShowsCards(originalName, foundShow.progress_marker, false);  
+                            }  
+                        }  
+                    }  
+                });  
+            }  
+            
+            // Очищаем сохраненную карточку после обработки  
+            Lampa.Storage.remove('myshows_current_card');  
+        }  
     });
+
+    function updateCardData(originalName, newData) {  
+        var existingCard = findExistingCard(originalName);  
+        if (existingCard && existingCard.card_data) {  
+            // Обновляем конкретные поля  
+            existingCard.card_data.progress_marker = newData.progress_marker;  
+            existingCard.card_data.watched_count = newData.watched_count;  
+            existingCard.card_data.total_count = newData.total_count;  
+            
+            // Или полная замена данных  
+            Object.assign(existingCard.card_data, newData);  
+        }  
+    }
 
     function updateCompletedShowCard(showName) {    
         var cards = document.querySelectorAll('.card');    
