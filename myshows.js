@@ -891,8 +891,18 @@
         } else {    
             // Логика с кешем    
             loadCacheFromServer(function(cachedResult) {    
-                if (cachedResult) {    
-                    callback(cachedResult);    
+                if (cachedResult) {      
+                    // Добавляем предварительную подготовку маркеров для кешированных данных  
+                    if (cachedResult && cachedResult.shows) {    
+                        cachedResult.shows.forEach(function(show) {    
+                            if (show.progress_marker) {    
+                                show._prebuiltMarker = '<div class="card__marker card__marker--progress"><span>' +     
+                                                    show.progress_marker + '</span></div>';    
+                            }    
+                        });    
+                    }  
+                    
+                    callback(cachedResult);
                     
                     // Запускаем отложенную проверку только один раз при загрузке  
                     setTimeout(function() {  
@@ -956,6 +966,36 @@
         }  
     }
 
+    function enrichShowData(tmdbShow) {  
+        // Добавляем недостающие поля для совместимости с numparser  
+        var enriched = Object.assign({}, tmdbShow);  
+        
+        // Даты  
+        enriched.create_date = tmdbShow.first_air_date || '';  
+        enriched.last_air_date = tmdbShow.last_air_date || '';  
+        enriched.release_date = tmdbShow.first_air_date || '';  
+        
+        // Метаданные  
+        enriched.number_of_seasons = tmdbShow.number_of_seasons || 0;  
+        enriched.original_title = tmdbShow.original_name || tmdbShow.name || '';  
+        enriched.release_quality = 'WEBDL 1080p'; // Значение по умолчанию  
+        enriched.seasons = tmdbShow.seasons || null;  
+        
+        // Системные поля  
+        enriched.source = 'MyShows';  
+        enriched.status = tmdbShow.status || 'Released';  
+        enriched.still_path = '';  
+        enriched.update_date = new Date().toISOString();  
+        enriched.video = false;  
+        
+        // Полный URL для постера  
+        // if (enriched.poster_path && !enriched.poster_path.startsWith('http')) {  
+        //     enriched.poster_path = 'http://image.tmdb.org/t/p/w342' + enriched.poster_path;  
+        // }  
+        
+        return enriched;  
+    }
+
     function getTMDBDetails(shows, callback) {  
         if (shows.length === 0) {  
             callback({ shows: [] });  
@@ -969,7 +1009,8 @@
 
             for (var key in data) {    
                 if (data[key]) {    
-                    matchedShows.push(data[key]);    
+                    var enrichedShow = enrichShowData(data[key]); 
+                    matchedShows.push(enrichedShow);    
                 }    
             }  
             
@@ -1127,32 +1168,23 @@
         return total;  
     }
 
-    function createMyShowsCard(item, params) {  
-        var card = new Lampa.Card(item, params);  
+    function createMyShowsCard(item, params) {    
+        var card = new Lampa.Card(item, params);    
         
-        // Переопределяем метод favorite для добавления кастомного маркера  
-        var originalFavorite = card.favorite;  
-        card.favorite = function() {  
-            // Вызываем оригинальный метод  
-            originalFavorite.call(this);  
+        var originalFavorite = card.favorite;    
+        card.favorite = function() {    
+            originalFavorite.call(this);    
             
-            // Добавляем кастомный маркер прогресса  
-            if (item.progress_marker) {  
-                var marker = this.card.querySelector('.card__marker');  
-                
-                if (!marker) {  
-                    marker = document.createElement('div');  
-                    marker.className = 'card__marker card__marker--progress';  
-                    marker.innerHTML = '<span></span>';  
-                    this.card.querySelector('.card__view').appendChild(marker);  
+            // Используем предварительно подготовленный HTML  
+            if (item._prebuiltMarker) {    
+                var cardView = this.card.querySelector('.card__view');  
+                if (cardView) {  
+                    cardView.insertAdjacentHTML('beforeend', item._prebuiltMarker);  
                 }  
-                
-                marker.querySelector('span').textContent = item.progress_marker;  
-                marker.classList.add('card__marker--progress');  
-            }  
-        };  
+            }    
+        };    
         
-        return card;  
+        return card;    
     }
 
     window.MyShows = {
@@ -1614,15 +1646,13 @@
         if (event.data && event.data.title && event.data.title.indexOf('MyShows') !== -1) {  
             if (event.type === 'create') {  
                 // Принудительно создаем все карточки после создания Line  
-                setTimeout(function() {  
-                    if (event.data && event.data.results && event.line) {  
-                        event.data.results.forEach(function(show) {  
-                            if (!show.ready && event.line.append) {  
-                                event.line.append(show);  
-                            }  
-                        });  
-                    }  
-                }, 50);  
+                if (event.data && event.data.results && event.line) {  
+                    event.data.results.forEach(function(show) {  
+                        if (!show.ready && event.line.append) {  
+                            event.line.append(show);  
+                        }  
+                    });  
+                }  
             }  
         }  
     });
