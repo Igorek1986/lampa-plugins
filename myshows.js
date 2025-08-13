@@ -711,7 +711,9 @@
     function processEpisode(episodeId, hash, percent, card, token, minProgress, addThreshold) {    
         
         var originalName = card.original_name || card.original_title || card.title;      
-        var firstEpisodeHash = Lampa.Utils.hash('11' + originalName);      
+        var firstEpisodeHash = Lampa.Utils.hash('11' + originalName);     
+        
+        Lampa.Storage.set('myshows_was_watching', true); 
         
         // Проверяем, нужно ли добавить сериал в "Смотрю"  
         if (hash === firstEpisodeHash && percent >= addThreshold) {    
@@ -1263,9 +1265,12 @@
         
         // Слушаем только возврат на главную страницу  
         if (event.type === 'archive' && (event.component === 'main' || event.component === 'category')) {          
-            var lastCard = Lampa.Storage.get('myshows_last_card', null);          
-            if (lastCard) {      
-                var originalName = lastCard.original_name || lastCard.original_title || lastCard.title;          
+            var lastCard = Lampa.Storage.get('myshows_last_card', null);  
+            var wasWatching = Lampa.Storage.get('myshows_was_watching', false);
+
+            if (lastCard && wasWatching) {      
+                var originalName = lastCard.original_name || lastCard.original_title || lastCard.title;     
+                Lampa.Storage.set('myshows_was_watching', false);     
                 
                 setTimeout(function() {      
                     getUnwatchedShowsWithDetails(function(result) {       
