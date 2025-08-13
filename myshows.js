@@ -966,34 +966,38 @@
         }  
     }
 
-    function enrichShowData(tmdbShow) {  
-        // Добавляем недостающие поля для совместимости с numparser  
-        var enriched = Object.assign({}, tmdbShow);  
+    function enrichShowData(fullResponse, myshowsData) {    
+        // Используем полные данные TMDB как основу  
+        var enriched = Object.assign({}, fullResponse);    
+        console.log('[SerialStatus] fullResponse', fullResponse);  
+        console.log('[SerialStatus] myshowsData', myshowsData);  
         
-        // Даты  
-        enriched.create_date = tmdbShow.first_air_date || '';  
-        enriched.last_air_date = tmdbShow.last_air_date || '';  
-        enriched.release_date = tmdbShow.first_air_date || '';  
+        // Добавляем данные MyShows  
+        if (myshowsData) {  
+            enriched.progress_marker = myshowsData.progress_marker;  
+            enriched.watched_count = myshowsData.watched_count;  
+            enriched.total_count = myshowsData.total_count;  
+            enriched.released_count = myshowsData.released_count;  
+        }  
         
-        // Метаданные  
-        enriched.number_of_seasons = tmdbShow.number_of_seasons || 0;  
-        enriched.original_title = tmdbShow.original_name || tmdbShow.name || '';  
-        enriched.release_quality = 'WEBDL 1080p'; // Значение по умолчанию  
-        enriched.seasons = tmdbShow.seasons || null;  
+        // Даты (теперь из полных данных TMDB)  
+        enriched.create_date = fullResponse.first_air_date || '';    
+        enriched.last_air_date = fullResponse.last_air_date || '';    
+        enriched.release_date = fullResponse.first_air_date || '';    
         
-        // Системные поля  
-        enriched.source = 'MyShows';  
-        enriched.status = tmdbShow.status || 'Released';  
-        enriched.still_path = '';  
-        enriched.update_date = new Date().toISOString();  
-        enriched.video = false;  
+        // Метаданные (из полных данных TMDB)  
+        enriched.number_of_seasons = fullResponse.number_of_seasons || 0;    
+        enriched.original_title = fullResponse.original_name || fullResponse.name || '';    
+        enriched.seasons = fullResponse.seasons || null;    
         
-        // Полный URL для постера  
-        // if (enriched.poster_path && !enriched.poster_path.startsWith('http')) {  
-        //     enriched.poster_path = 'http://image.tmdb.org/t/p/w342' + enriched.poster_path;  
-        // }  
+        // Системные поля    
+        enriched.source = 'MyShows';    
+        enriched.status = fullResponse.status;    
+        enriched.still_path = '';    
+        enriched.update_date = new Date().toISOString();    
+        enriched.video = false;    
         
-        return enriched;  
+        return enriched;    
     }
 
     function getTMDBDetails(shows, callback) {  
@@ -1009,8 +1013,7 @@
 
             for (var key in data) {    
                 if (data[key]) {    
-                    var enrichedShow = enrichShowData(data[key]); 
-                    matchedShows.push(enrichedShow);    
+                    matchedShows.push(data[key])
                 }    
             }  
             
@@ -1132,14 +1135,34 @@
                                     foundShow.watched_count = watchedEpisodes;  
                                     foundShow.total_count = totalEpisodes;  
                                     foundShow.released_count = releasedEpisodes;
+
+                                    var myshowsData = {  
+                                        progress_marker: foundShow.progress_marker,  
+                                        watched_count: foundShow.watched_count,  
+                                        total_count: foundShow.total_count,  
+                                        released_count: foundShow.released_count  
+                                    }; 
+
+                                    var enrichedShow = enrichShowData(fullResponse, myshowsData);
                                     
-                                    status.append('tmdb_' + index, foundShow);  
-                                }, function() {  
-                                    // Fallback к старой логике если не удалось получить детали сезона  
-                                    var watchedEpisodes = Math.max(0, totalEpisodes - currentShow.unwatchedCount);  
+                                    status.append('tmdb_' + index, enrichedShow);  
+                                }, function() {    
+                                    // Fallback к старой логике если не удалось получить детали сезона    
+                                    var watchedEpisodes = Math.max(0, totalEpisodes - currentShow.unwatchedCount);    
                                     foundShow.progress_marker = watchedEpisodes + '/' + totalEpisodes;  
-                                    status.append('tmdb_' + index, foundShow);  
-                                });  
+                                    foundShow.watched_count = watchedEpisodes;  
+                                    foundShow.total_count = totalEpisodes;  
+                                    
+                                    var myshowsData = {  
+                                        progress_marker: foundShow.progress_marker,  
+                                        watched_count: foundShow.watched_count,  
+                                        total_count: foundShow.total_count,  
+                                        released_count: totalEpisodes  
+                                    };  
+                                    
+                                    var enrichedShow = enrichShowData(fullResponse, myshowsData);  
+                                    status.append('tmdb_' + index, enrichedShow);  // Используем enrichedShow  
+                                }); 
                             } else {  
                                 status.append('tmdb_' + index, foundShow);  
                             }  
