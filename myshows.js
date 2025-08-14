@@ -914,7 +914,7 @@
                                 updateUIIfNeeded(cachedResult.shows, freshResult.shows);  
                             }  
                         });  
-                    }, 5000);  
+                    }, 15000);  
                     
                     return;    
                 }    
