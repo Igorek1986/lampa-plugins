@@ -3,7 +3,8 @@
 
     var DEFAULT_ADD_THRESHOLD = '0';  
     var DEFAULT_MIN_PROGRESS = 90;  
-    var API_URL = 'https://api.myshows.me/v2/rpc/';  
+    var SERIES_API_URL = 'https://api.myshows.me/v2/rpc/';  
+    var MOVIES_API_URL = 'https://api.myshows.me/v3/rpc/';
     var isInitialized = false;  
     var MAP_KEY = 'myshows_hash_map';  
     var PROXY_URL = 'https://numparser.igorek1986.ru/myshows/auth';  
@@ -163,7 +164,12 @@
         var network = new Lampa.Reguest();    
             
         options.headers = options.headers || {};    
-        options.headers['Authorization'] = 'Bearer ' + token;    
+        // options.headers['Authorization'] = 'Bearer ' + token;  
+        if (url.includes('v3')) {
+            options.headers['authorization2'] = 'Bearer ' + token;
+        } else {
+            options.headers['Authorization'] = 'Bearer ' + token;
+        }  
             
         network.silent(url, function(data) {    
             // Проверяем JSON-RPC ошибки    
@@ -396,7 +402,7 @@
             },  
             field: {  
             name: 'Порог просмотра',  
-            description: 'Минимальный процент просмотра для отметки эпизода на myshows.me'  
+            description: 'Минимальный процент просмотра для отметки эпизода или фильма на myshows.me'  
             },  
             onChange: function(value) {  
             setProfileSetting('myshows_min_progress', parseInt(value));  
@@ -508,7 +514,7 @@
     function getShowIdByExternalIds(imdbId, kinopoiskId, token, callback) {
         // Внутренняя функция для выполнения запроса
         function trySource(source, id, cb) {
-            makeAuthenticatedRequest(API_URL, {
+            makeAuthenticatedRequest(SERIES_API_URL, {
                 method: 'POST',
                 headers: JSON_HEADERS,
                 body: createJSONRPCRequest('shows.GetByExternalId', { id: id, source: source })
@@ -542,7 +548,7 @@
 
     // Получить список эпизодов по showId
     function getEpisodesByShowId(showId, token, callback) {      
-        makeAuthenticatedRequest(API_URL, {      
+        makeAuthenticatedRequest(SERIES_API_URL, {      
             method: 'POST',      
             headers: JSON_HEADERS,  
             body: createJSONRPCRequest('shows.GetById', { showId: showId, withEpisodes: true })        
@@ -556,6 +562,170 @@
             callback([]);      
         });      
     }  
+
+    function getMovieIdByOriginalTitle(title, year, callback) {
+        console.log('[MyShows] Начало поиска ID фильма:', {title: title, year: year});
+        
+        var token = getProfileSetting('myshows_token', '');
+        if (!token) {
+            console.error('[MyShows] Ошибка: отсутствует токен авторизации');
+            callback(null);
+            return;
+        }
+
+        makeAuthenticatedRequest(MOVIES_API_URL, {
+            method: 'POST',
+            headers: JSON_HEADERS,
+            body: createJSONRPCRequest('movies.GetCatalog', {
+                search: { "query": title },
+                page: 0,
+                pageSize: 10
+            })
+        }, function(data) {
+            if (!data) {
+                console.error('[MyShows] Ошибка: пустой ответ от API');
+                callback(null);
+                return;
+            }
+
+            if (!data.result) {
+                console.error('[MyShows] Ошибка: неверный формат ответа', {
+                    response: data,
+                    error: data.error ? data.error.message : 'No result field'
+                });
+                callback(null);
+                return;
+            }
+
+            console.log('[MyShows] Получены результаты поиска:', {
+                count: data.result.length,
+                firstItems: data.result.slice(0, 3).map(function(item) {
+                    return {
+                        id: item.movie.id,
+                        title: item.movie.titleOriginal,
+                        year: item.movie.year,
+                        releaseDate: item.movie.releaseDate
+                    };
+                })
+            });
+
+            var candidates = [];
+            for (var i = 0; i < data.result.length; i++) {
+                try {
+                    var movie = data.result[i].movie;
+                    if (!movie) continue;
+
+                    var titleMatch = movie.titleOriginal && 
+                                movie.titleOriginal.toLowerCase() === title.toLowerCase();
+                    var yearMatch = movie.year == year;
+
+                    if (titleMatch && yearMatch) {
+                        candidates.push(movie);
+                    }
+                } catch (e) {
+                    console.error('[MyShows] Ошибка обработки элемента:', {
+                        index: i,
+                        error: e.message,
+                        item: data.result[i]
+                    });
+                }
+            }
+
+            console.log('[MyShows] Найдено кандидатов:', candidates.length);
+            
+            if (candidates.length === 0) {
+                console.warn('[MyShows] Подходящих фильмов не найдено');
+                callback(null);
+                return;
+            }
+
+            if (candidates.length === 1) {
+                console.log('[MyShows] Найден один подходящий фильм:', {
+                    id: candidates[0].id,
+                    title: candidates[0].titleOriginal,
+                    year: candidates[0].year
+                });
+                callback(candidates[0].id);
+                return;
+            }
+
+            // Если несколько кандидатов
+            console.log('[MyShows] Несколько подходящих фильмов, проверяем даты...');
+            var primaryCandidate = candidates[0];
+            var releaseDate = primaryCandidate.releaseDate;
+            
+            if (!releaseDate) {
+                console.warn('[MyShows] Нет даты релиза у кандидата, берём первый:', {
+                    id: primaryCandidate.id
+                });
+                callback(primaryCandidate.id);
+                return;
+            }
+
+            try {
+                var parts = releaseDate.split('.');
+                if (parts.length !== 3) {
+                    console.error('[MyShows] Неверный формат даты:', releaseDate);
+                    callback(null);
+                    return;
+                }
+
+                var myshowsDate = new Date(parts[2], parts[1]-1, parts[0]);
+                var card = getCurrentCard();
+                var tmdbDate = card && card.release_date ? new Date(card.release_date) : null;
+                
+                if (!tmdbDate) {
+                    console.warn('[MyShows] Нет даты релиза в TMDB, берём первый:', {
+                        id: primaryCandidate.id
+                    });
+                    callback(primaryCandidate.id);
+                    return;
+                }
+
+                if (myshowsDate.getTime() === tmdbDate.getTime()) {
+                    console.log('[MyShows] Даты релиза совпадают:', {
+                        myshowsDate: releaseDate,
+                        tmdbDate: card.release_date,
+                        selectedId: primaryCandidate.id
+                    });
+                    callback(primaryCandidate.id);
+                } else {
+                    console.warn('[MyShows] Даты релиза не совпадают:', {
+                        myshowsDate: releaseDate,
+                        tmdbDate: card.release_date,
+                        skippedId: primaryCandidate.id
+                    });
+                    callback(null);
+                }
+            } catch (e) {
+                console.error('[MyShows] Ошибка сравнения дат:', {
+                    error: e.message,
+                    releaseDate: releaseDate
+                });
+                callback(null);
+            }
+        }, function(error) {
+            console.error('[MyShows] Ошибка API при поиске фильма:', {
+                title: title,
+                year: year,
+                error: error && error.message,
+                status: error && error.status
+            });
+            callback(null);
+        });
+    }
+
+    function getMovieYear(card) {   
+        
+        // Сначала пробуем готовое поле  
+        if (card.release_year && card.release_year !== '0000') {  
+            return card.release_year;  
+        }  
+        
+        // Извлекаем из release_date  
+        var date = (card.release_date || '') + '';  
+        return date ? date.slice(0,4) : null;  
+    }
   
     // Построить mapping hash -> episodeId  
     function buildHashMap(episodes, originalName) {  
@@ -619,7 +789,7 @@
     function checkEpisodeMyShows(episodeId, token) {        
         if (!episodeId || !token) return;        
             
-        makeAuthenticatedRequest(API_URL, {        
+        makeAuthenticatedRequest(SERIES_API_URL, {        
             method: 'POST',        
             headers: JSON_HEADERS,  
             body: createJSONRPCRequest('manage.CheckEpisode', { id: episodeId, rating: 0 })             
@@ -631,6 +801,71 @@
             console.error('MyShows API error:', err);      
         });      
     }  
+
+    function checkMovieMyShows(movieId, token) {
+        if (!movieId || !token) {
+            console.log('[MyShows] Отмена отметки фильма: отсутствует movieId или token');
+            return;
+        }
+        
+        console.log('[MyShows] Пытаюсь отметить фильм (ID:', movieId + ')');
+        
+        makeAuthenticatedRequest(MOVIES_API_URL, {
+            method: 'POST',
+            headers: JSON_HEADERS,
+            body: createJSONRPCRequest('manage.SetMovieStatus', { 
+                movieId: movieId, 
+                status: "finished" 
+            })
+        }, function(data) {
+            if (data && data.error) {
+                console.error('[MyShows] Ошибка отметки фильма:', {
+                    movieId: movieId,
+                    error: data.error.message || 'Неизвестная ошибка',
+                    code: data.error.code
+                });
+                Lampa.Noty.show('Ошибка при отметке фильма: ' + (data.error.message || 'Неизвестная ошибка'));
+            } else if (data && data.result) {
+                console.log('[MyShows] Фильм успешно отмечен:', {
+                    movieId: movieId,
+                    response: data.result
+                });
+            } else {
+                console.warn('[MyShows] Неожиданный ответ при отметке фильма:', data);
+            }
+        }, function(err) {
+            console.error('[MyShows] Ошибка API при отметке фильма:', {
+                movieId: movieId,
+                error: err,
+                status: err.status,
+                responseText: err.responseText
+            });
+        });
+    }
+
+    function isMovieContent(card) {
+        // Проверяем наличие явных признаков фильма
+        if (card && (
+            (card.number_of_seasons === undefined || card.number_of_seasons === null) &&
+            (card.media_type === 'movie') ||
+            (Lampa.Activity.active() && Lampa.Activity.active().method === 'movie')
+        )) {
+            return true;
+        }
+        
+        // Проверяем наличие явных признаков сериала
+        if (card && (
+            (card.number_of_seasons > 0) ||
+            (card.media_type === 'tv') ||
+            (Lampa.Activity.active() && Lampa.Activity.active().method === 'tv') ||
+            (card.name !== undefined)
+        )) {
+            return false;
+        }
+        
+        // Дополнительные проверки
+        return !card.original_name && (card.original_title || card.title);
+    }
   
     // Добавить сериал в "Смотрю" на MyShows  
     function addShowToWatching(card, token) {    
@@ -639,7 +874,7 @@
             getShowIdByExternalIds(imdbId, kinopoiskId, token, function(showId) {          
                 if (!showId) return;
                         
-                makeAuthenticatedRequest(API_URL, {          
+                makeAuthenticatedRequest(SERIES_API_URL, {          
                     method: 'POST',          
                     headers: JSON_HEADERS,   
                     body: createJSONRPCRequest('manage.SetShowStatus', { id: showId, status: "watching" })              
@@ -656,6 +891,9 @@
         )) || null;  
         // if (!card) card = getProfileSetting('myshows_last_card', null);  
         if (!card) card = Lampa.Storage.get('myshows_last_card', null);  
+        if (card) {
+            card.isMovie = isMovieContent(card);
+        }
         return card;  
     }  
   
@@ -677,35 +915,53 @@
     
         var card = getCurrentCard();    
         if (!card) return;    
-    
-        ensureHashMap(card, token, function(map) {    
-            var episodeId = map[hash] && map[hash].episodeId ? map[hash].episodeId : map[hash];   
-            
-            // Если hash не найден в mapping - принудительно обновляем  
-            if (!episodeId) {  
-                // Очищаем кеш для этого сериала  
-                var originalName = card.original_name || card.original_title || card.title;  
-                var fullMap = Lampa.Storage.get(MAP_KEY, {});  
-                // Удаляем все записи для этого сериала  
-                for (var h in fullMap) {  
-                    if (fullMap.hasOwnProperty(h) && fullMap[h] && fullMap[h].originalName === originalName) {  
-                        delete fullMap[h];  
-                    }  
-                }  
-                Lampa.Storage.set(MAP_KEY, fullMap);  
+
+        var isMovie = isMovieContent(card);
+
+        if (isMovie) {
+            console.log('[MyShows] isMovie')
+            // Обработка фильма
+            if (percent >= minProgress) {
+                var originalTitle = card.original_title || card.title;
+                var year = getMovieYear(card)
+                getMovieIdByOriginalTitle(originalTitle, year, function(movieId) {
+                    if (movieId) {
+                        console.log('[MyShows] checkMovieMyShows')
+                        checkMovieMyShows(movieId, token);
+                        Lampa.Noty.show('Фильм отмечен как просмотренный на MyShows');
+                    }
+                });
+            }
+        } else {  
+            ensureHashMap(card, token, function(map) {    
+                var episodeId = map[hash] && map[hash].episodeId ? map[hash].episodeId : map[hash];   
                 
-                // Повторно запрашиваем mapping  
-                ensureHashMap(card, token, function(newMap) {  
-                    var newEpisodeId = newMap[hash] && newMap[hash].episodeId ? newMap[hash].episodeId : newMap[hash];  
-                    if (newEpisodeId) {  
-                        processEpisode(newEpisodeId, hash, percent, card, token, minProgress, addThreshold);  
+                // Если hash не найден в mapping - принудительно обновляем  
+                if (!episodeId) {  
+                    // Очищаем кеш для этого сериала  
+                    var originalName = card.original_name || card.original_title || card.title;  
+                    var fullMap = Lampa.Storage.get(MAP_KEY, {});  
+                    // Удаляем все записи для этого сериала  
+                    for (var h in fullMap) {  
+                        if (fullMap.hasOwnProperty(h) && fullMap[h] && fullMap[h].originalName === originalName) {  
+                            delete fullMap[h];  
+                        }  
                     }  
-                });  
-                return;  
-            }  
-            
-            processEpisode(episodeId, hash, percent, card, token, minProgress, addThreshold);  
-        });    
+                    Lampa.Storage.set(MAP_KEY, fullMap);  
+                    
+                    // Повторно запрашиваем mapping  
+                    ensureHashMap(card, token, function(newMap) {  
+                        var newEpisodeId = newMap[hash] && newMap[hash].episodeId ? newMap[hash].episodeId : newMap[hash];  
+                        if (newEpisodeId) {  
+                            processEpisode(newEpisodeId, hash, percent, card, token, minProgress, addThreshold);  
+                        }  
+                    });  
+                    return;  
+                }  
+                
+                processEpisode(episodeId, hash, percent, card, token, minProgress, addThreshold);  
+            });   
+        } 
     }  
 
     function processEpisode(episodeId, hash, percent, card, token, minProgress, addThreshold) {    
@@ -807,7 +1063,7 @@
 
     function fetchFromMyShowsAPI(callback) {  
         console.log('[MyShows] Fetching unwatched shows from MyShows API...');
-        makeAuthenticatedRequest(API_URL, {  
+        makeAuthenticatedRequest(SERIES_API_URL, {  
             method: 'POST',  
             headers: JSON_HEADERS,  
             body: createJSONRPCRequest('lists.Episodes', { list: 'unwatched' })  
@@ -1120,16 +1376,38 @@
                                 seasonNetwork.silent(seasonUrl, function(seasonResponse) {  
                                     var releasedEpisodes = totalEpisodes;  
                                     
-                                    if (seasonResponse && seasonResponse.episodes) {  
-                                        var today = new Date();  
-                                        var unreleased = seasonResponse.episodes.filter(function(ep) {  
-                                            if (!ep.air_date) return false;  
-                                            var airDate = new Date(ep.air_date);  
-                                            return airDate > today;  
-                                        }).length;  
+                                    if (seasonResponse && seasonResponse.episodes) {
+                                        var today = new Date();
+                                        var unreleased = 0;
                                         
-                                        releasedEpisodes = totalEpisodes - unreleased;  
-                                    }  
+                                        for (var i = 0; i < seasonResponse.episodes.length; i++) {
+                                            var ep = seasonResponse.episodes[i];
+                                            var myshowsEpisode = null;
+                                            
+                                            // Ищем соответствующий эпизод в данных MyShows
+                                            for (var j = 0; j < currentShow.unwatchedEpisodes.length; j++) {
+                                                var mep = currentShow.unwatchedEpisodes[j];
+                                                if (mep.seasonNumber === ep.season_number && 
+                                                    mep.episodeNumber === ep.episode_number) {
+                                                    myshowsEpisode = mep;
+                                                    break;
+                                                }
+                                            }
+                                            
+                                            // Используем дату из MyShows если есть, иначе из TMDB
+                                            var airDateStr = myshowsEpisode ? myshowsEpisode.airDate : ep.air_date;
+                                            
+                                            if (airDateStr) {
+                                                var airDate = new Date(airDateStr);
+                                                if (airDate > today) {
+                                                    unreleased++;
+                                                }
+                                            }
+                                        }
+                                        
+                                        releasedEpisodes = totalEpisodes - unreleased;
+                                    }
+
                                     
                                     var watchedEpisodes = Math.max(0, releasedEpisodes - currentShow.unwatchedCount);  
                                                                         
@@ -1444,7 +1722,6 @@
             }    
         }, 500);    
     }
-    
 
     function findExistingCard(showName) {  
         var titleElements = document.querySelectorAll('.items-line__title');  
@@ -1486,7 +1763,6 @@
         
         return null;  
     }
-
 
     function insertNewCardIntoMyShowsSection(showData, retryCount) {  
         var currentFocusedElement = document.querySelector('.focus');  
@@ -1551,7 +1827,7 @@
                             url: card_data.url,    
                             component: 'full',    
                             id: card_data.id,    
-                            method: card_data.name ? 'tv' : 'movie',    
+                            method: isMovieContent(card_data) ? 'movie' : 'tv',   
                             card: card_data,    
                             source: card_data.source || 'tmdb'    
                         });    
@@ -1595,7 +1871,6 @@
             }  
         }  
     }
-
 
     function addProgressMarkerStyles() {      
         var style = document.createElement('style');      
