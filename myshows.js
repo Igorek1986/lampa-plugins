@@ -1243,204 +1243,171 @@
         return enriched;    
     }
 
-    function getTMDBDetails(shows, callback) {  
-        if (shows.length === 0) {  
-            callback({ shows: [] });  
-            return;  
-        }  
-        
-        var status = new Lampa.Status(shows.length);  
+    function getTMDBDetails(shows, callback) {
+        if (shows.length === 0) {
+            return callback({ shows: [] });
+        }
 
-        status.onComplite = function(data) {    
-            var matchedShows = [];    
+        var status = new Lampa.Status(shows.length);
 
-            for (var key in data) {    
-                if (data[key]) {    
-                    matchedShows.push(data[key])
-                }    
-            }  
-            
-            var sortOrder = getProfileSetting('myshows_sort_order', 'alphabet');  
-            console.log('[MyShows] Sorting by:', sortOrder);  
-            
-            
-            switch(sortOrder) {  
-                case 'alphabet':  
-                    matchedShows.sort(function(a, b) {  
-                        var nameA = (a.name || a.title || '').toLowerCase();  
-                        var nameB = (b.name || b.title || '').toLowerCase();  
-                        return nameA.localeCompare(nameB, 'ru');  
-                    });  
-                    break;  
-                    
-                case 'progress':  
-                    matchedShows.sort(function(a, b) {  
-                        var progressA = (a.watched_count || 0) / (a.total_count || 1);  
-                        var progressB = (b.watched_count || 0) / (b.total_count || 1);  
-                        
-                        // Сортируем по проценту просмотра (больше процент - выше)  
-                        if (progressB !== progressA) {  
-                            return progressB - progressA;  
-                        }  
-                        
-                        // При равном проценте - по количеству просмотренных серий  
-                        return (b.watched_count || 0) - (a.watched_count || 0);  
-                    });  
-                    break;  
-                    
-                case 'unwatched_count':  
-                    matchedShows.sort(function(a, b) {  
-                        var unwatchedA = (a.total_count || 0) - (a.watched_count || 0);  
-                        var unwatchedB = (b.total_count || 0) - (b.watched_count || 0);  
-                        
-                        // Сортируем по количеству непросмотренных (меньше непросмотренных - выше)  
-                        if (unwatchedA !== unwatchedB) {  
-                            return unwatchedA - unwatchedB;  
-                        }  
-                        
-                        // При равном количестве - по алфавиту  
-                        var nameA = (a.name || a.title || '').toLowerCase();  
-                        var nameB = (b.name || b.title || '').toLowerCase();  
-                        return nameA.localeCompare(nameB, 'ru');  
-                    });  
-                    break;  
-                    
-                default:  
-                    // Fallback к алфавитной сортировке  
-                    matchedShows.sort(function(a, b) {  
-                        var nameA = (a.name || a.title || '').toLowerCase();  
-                        var nameB = (b.name || b.title || '').toLowerCase();  
-                        return nameA.localeCompare(nameB, 'ru');  
-                    });  
-            }  
-            
-            console.log('[MyShows] Sorted', matchedShows.length, 'shows by', sortOrder);  
-            callback({ shows: matchedShows });    
+        status.onComplite = function (data) {
+            var matchedShows = Object.keys(data)
+                .map(function (key) { return data[key]; })
+                .filter(Boolean);
+
+            var sortOrder = getProfileSetting('myshows_sort_order', 'alphabet');
+            console.log('[MyShows] Sorting by:', sortOrder);
+
+            sortShows(matchedShows, sortOrder);
+
+            console.log('[MyShows] Sorted', matchedShows.length, 'shows by', sortOrder);
+            callback({ shows: matchedShows });
         };
-        
-        for (var i = 0; i < shows.length; i++) {  
-            var show = shows[i];  
-            
-            (function(currentShow, index) {  
-                // Сначала ищем сериал  
-                var searchUrl = 'https://api.themoviedb.org/3/search/tv' +  
-                    '?api_key=' + Lampa.TMDB.key() +  
-                    '&query=' + encodeURIComponent(currentShow.originalTitle || currentShow.title) +  
-                    '&year=' + currentShow.year +  
-                    '&language=' + Lampa.Storage.get('tmdb_lang', 'ru');  
-                
-                var network = new Lampa.Reguest();  
-                network.silent(searchUrl, function(searchResponse) {  
-                    if (searchResponse && searchResponse.results && searchResponse.results.length > 0) {  
-                        var foundShow = searchResponse.results[0];  
-                        
-                        // Теперь получаем полную информацию о сериале  
-                        var fullUrl = 'https://api.themoviedb.org/3/tv/' + foundShow.id +  
-                            '?api_key=' + Lampa.TMDB.key() +  
-                            '&language=' + Lampa.Storage.get('tmdb_lang', 'ru');  
-                        
-                        var fullNetwork = new Lampa.Reguest();  
-                        fullNetwork.silent(fullUrl, function(fullResponse) {  
-                            if (fullResponse && fullResponse.seasons) {  
-                                var totalEpisodes = getTotalEpisodesCount(fullResponse);  
-                                
-                                // Получаем детали последнего сезона для проверки дат выхода  
-                                var validSeasons = [];  
-                                for (var i = 0; i < fullResponse.seasons.length; i++) {  
-                                    if (fullResponse.seasons[i].season_number > 0) {  
-                                        validSeasons.push(fullResponse.seasons[i].season_number);  
-                                    }  
-                                }  
-                                var lastSeason = Math.max.apply(Math, validSeasons);
-                                
-                                var seasonUrl = 'https://api.themoviedb.org/3/tv/' + foundShow.id + '/season/' + lastSeason +  
-                                    '?api_key=' + Lampa.TMDB.key() +  
-                                    '&language=' + Lampa.Storage.get('tmdb_lang', 'ru');  
-                                
-                                var seasonNetwork = new Lampa.Reguest();  
-                                seasonNetwork.silent(seasonUrl, function(seasonResponse) {  
-                                    var releasedEpisodes = totalEpisodes;  
-                                    
-                                    if (seasonResponse && seasonResponse.episodes) {
-                                        var today = new Date();
-                                        var unreleased = 0;
-                                        
-                                        for (var i = 0; i < seasonResponse.episodes.length; i++) {
-                                            var ep = seasonResponse.episodes[i];
-                                            var myshowsEpisode = null;
-                                            
-                                            // Ищем соответствующий эпизод в данных MyShows
-                                            for (var j = 0; j < currentShow.unwatchedEpisodes.length; j++) {
-                                                var mep = currentShow.unwatchedEpisodes[j];
-                                                if (mep.seasonNumber === ep.season_number && 
-                                                    mep.episodeNumber === ep.episode_number) {
-                                                    myshowsEpisode = mep;
-                                                    break;
-                                                }
-                                            }
-                                            
-                                            // Используем дату из MyShows если есть, иначе из TMDB
-                                            var airDateStr = myshowsEpisode ? myshowsEpisode.airDate : ep.air_date;
-                                            
-                                            if (airDateStr) {
-                                                var airDate = new Date(airDateStr);
-                                                if (airDate > today) {
-                                                    unreleased++;
-                                                }
-                                            }
-                                        }
-                                        
-                                        releasedEpisodes = totalEpisodes - unreleased;
-                                    }
 
-                                    
-                                    var watchedEpisodes = Math.max(0, releasedEpisodes - currentShow.unwatchedCount);  
-                                                                        
-                                    foundShow.progress_marker = watchedEpisodes + '/' + totalEpisodes;  
-                                    foundShow.watched_count = watchedEpisodes;  
-                                    foundShow.total_count = totalEpisodes;  
-                                    foundShow.released_count = releasedEpisodes;
+        shows.forEach(function (show, index) {
+            fetchTMDBShowDetails(show, index, status);
+        });
+    }
 
-                                    var myshowsData = {  
-                                        progress_marker: foundShow.progress_marker,  
-                                        watched_count: foundShow.watched_count,  
-                                        total_count: foundShow.total_count,  
-                                        released_count: foundShow.released_count  
-                                    }; 
+    function sortShows(shows, order) {
+        switch (order) {
+            case 'alphabet':
+                shows.sort(sortByAlphabet);
+                break;
+            case 'progress':
+                shows.sort(sortByProgress);
+                break;
+            case 'unwatched_count':
+                shows.sort(sortByUnwatched);
+                break;
+            default:
+                shows.sort(sortByAlphabet);
+        }
+    }
 
-                                    var enrichedShow = enrichShowData(fullResponse, myshowsData);
-                                    
-                                    status.append('tmdb_' + index, enrichedShow);  
-                                }, function() {    
-                                    // Fallback к старой логике если не удалось получить детали сезона    
-                                    var watchedEpisodes = Math.max(0, totalEpisodes - currentShow.unwatchedCount);    
-                                    foundShow.progress_marker = watchedEpisodes + '/' + totalEpisodes;  
-                                    foundShow.watched_count = watchedEpisodes;  
-                                    foundShow.total_count = totalEpisodes;  
-                                    
-                                    var myshowsData = {  
-                                        progress_marker: foundShow.progress_marker,  
-                                        watched_count: foundShow.watched_count,  
-                                        total_count: foundShow.total_count,  
-                                        released_count: totalEpisodes  
-                                    };  
-                                    
-                                    var enrichedShow = enrichShowData(fullResponse, myshowsData);  
-                                    status.append('tmdb_' + index, enrichedShow);  // Используем enrichedShow  
-                                }); 
-                            } else {  
-                                status.append('tmdb_' + index, foundShow);  
-                            }  
-                        });
-                    } else {  
-                        status.append('tmdb_' + index, null);  
-                    }  
-                }, function(error) {  
-                    console.error('[MyShows] Search error:', error);  
-                    status.error();  
-                });  
-            })(show, i);  
-        }  
+    function sortByAlphabet(a, b) {
+        var nameA = (a.name || a.title || '').toLowerCase();
+        var nameB = (b.name || b.title || '').toLowerCase();
+        return nameA.localeCompare(nameB, 'ru');
+    }
+
+    function sortByProgress(a, b) {
+        var progressA = (a.watched_count || 0) / (a.total_count || 1);
+        var progressB = (b.watched_count || 0) / (b.total_count || 1);
+
+        if (progressB !== progressA) {
+            return progressB - progressA;
+        }
+        return (b.watched_count || 0) - (a.watched_count || 0);
+    }
+
+    function sortByUnwatched(a, b) {
+        var unwatchedA = (a.total_count || 0) - (a.watched_count || 0);
+        var unwatchedB = (b.total_count || 0) - (b.watched_count || 0);
+
+        if (unwatchedA !== unwatchedB) {
+            return unwatchedA - unwatchedB;
+        }
+        return sortByAlphabet(a, b);
+    }
+
+    function fetchTMDBShowDetails(currentShow, index, status) {
+        var searchUrl = 'https://api.themoviedb.org/3/search/tv' +
+            '?api_key=' + Lampa.TMDB.key() +
+            '&query=' + encodeURIComponent(currentShow.originalTitle || currentShow.title) +
+            '&year=' + currentShow.year +
+            '&language=' + Lampa.Storage.get('tmdb_lang', 'ru');
+
+        var network = new Lampa.Reguest();
+        network.silent(searchUrl, function (searchResponse) {
+            if (searchResponse && searchResponse.results && searchResponse.results.length > 0) {
+                var foundShow = searchResponse.results[0];
+                enrichTMDBShow(foundShow, currentShow, index, status);
+            } else {
+                status.append('tmdb_' + index, null);
+            }
+        }, function (error) {
+            console.error('[MyShows] Search error:', error);
+            status.error();
+        });
+    }
+
+    function enrichTMDBShow(foundShow, currentShow, index, status) {
+        var fullUrl = 'https://api.themoviedb.org/3/tv/' + foundShow.id +
+            '?api_key=' + Lampa.TMDB.key() +
+            '&language=' + Lampa.Storage.get('tmdb_lang', 'ru');
+
+        var fullNetwork = new Lampa.Reguest();
+        fullNetwork.silent(fullUrl, function (fullResponse) {
+            if (!fullResponse || !fullResponse.seasons) {
+                return status.append('tmdb_' + index, foundShow);
+            }
+
+            var totalEpisodes = getTotalEpisodesCount(fullResponse);
+            var lastSeason = getLastValidSeason(fullResponse);
+
+            if (!lastSeason) {
+                return appendEnriched(fullResponse, foundShow, currentShow, totalEpisodes, totalEpisodes, index, status);
+            }
+
+            fetchSeasonDetails(foundShow, fullResponse, currentShow, totalEpisodes, lastSeason, index, status);
+        });
+    }
+
+    function getLastValidSeason(fullResponse) {
+        var validSeasons = fullResponse.seasons
+            .filter(function (s) { return s.season_number > 0; })
+            .map(function (s) { return s.season_number; });
+
+        return validSeasons.length ? Math.max.apply(Math, validSeasons) : null;
+    }
+
+    function fetchSeasonDetails(foundShow, fullResponse, currentShow, totalEpisodes, lastSeason, index, status) {
+        var seasonUrl = 'https://api.themoviedb.org/3/tv/' + foundShow.id + '/season/' + lastSeason +
+            '?api_key=' + Lampa.TMDB.key() +
+            '&language=' + Lampa.Storage.get('tmdb_lang', 'ru');
+
+        var seasonNetwork = new Lampa.Reguest();
+        seasonNetwork.silent(seasonUrl, function (seasonResponse) {
+            var releasedEpisodes = getReleasedEpisodesCount(seasonResponse, currentShow, totalEpisodes);
+            appendEnriched(fullResponse, foundShow, currentShow, totalEpisodes, releasedEpisodes, index, status);
+        }, function () {
+            appendEnriched(fullResponse, foundShow, currentShow, totalEpisodes, totalEpisodes, index, status);
+        });
+    }
+
+    function getReleasedEpisodesCount(seasonResponse, currentShow, totalEpisodes) {
+        if (!seasonResponse || !seasonResponse.episodes) return totalEpisodes;
+
+        var today = new Date();
+        var unreleased = seasonResponse.episodes.reduce(function (acc, ep) {
+            var myshowsEpisode = currentShow.unwatchedEpisodes.find(function (mep) {
+                return mep.seasonNumber === ep.season_number &&
+                    mep.episodeNumber === ep.episode_number;
+            });
+
+            var airDateStr = myshowsEpisode ? myshowsEpisode.airDate : ep.air_date;
+            if (airDateStr && new Date(airDateStr) > today) {
+                acc++;
+            }
+            return acc;
+        }, 0);
+
+        return totalEpisodes - unreleased;
+    }
+
+    function appendEnriched(fullResponse, foundShow, currentShow, totalEpisodes, releasedEpisodes, index, status) {
+        var watchedEpisodes = Math.max(0, releasedEpisodes - currentShow.unwatchedCount);
+
+        var myshowsData = {
+            progress_marker: watchedEpisodes + '/' + totalEpisodes,
+            watched_count: watchedEpisodes,
+            total_count: totalEpisodes,
+            released_count: releasedEpisodes
+        };
+
+        var enrichedShow = enrichShowData(fullResponse, myshowsData);
+        status.append('tmdb_' + index, enrichedShow);
     }
 
     function getTotalEpisodesCount(tmdbShow) {  
