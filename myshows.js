@@ -2,9 +2,8 @@
     'use strict';  
 
     var DEFAULT_ADD_THRESHOLD = '0';  
-    var DEFAULT_MIN_PROGRESS = 90;  
-    var SERIES_API_URL = 'https://api.myshows.me/v2/rpc/';  
-    var MOVIES_API_URL = 'https://api.myshows.me/v3/rpc/';
+    var DEFAULT_MIN_PROGRESS = 90;    
+    var API_URL = 'https://api.myshows.me/v3/rpc/';
     var isInitialized = false;  
     var MAP_KEY = 'myshows_hash_map';  
     var PROXY_URL = 'https://numparser.igorek1986.ru/myshows/auth';  
@@ -163,13 +162,8 @@
             
         var network = new Lampa.Reguest();    
             
-        options.headers = options.headers || {};    
-        // options.headers['Authorization'] = 'Bearer ' + token;  
-        if (url.includes('v3')) {
-            options.headers['authorization2'] = 'Bearer ' + token;
-        } else {
-            options.headers['Authorization'] = 'Bearer ' + token;
-        }  
+        options.headers = options.headers || {};     
+        options.headers['authorization2'] = 'Bearer ' + token; 
             
         network.silent(url, function(data) {    
             // Проверяем JSON-RPC ошибки    
@@ -514,7 +508,7 @@
     function getShowIdByExternalIds(imdbId, kinopoiskId, token, callback) {
         // Внутренняя функция для выполнения запроса
         function trySource(source, id, cb) {
-            makeAuthenticatedRequest(SERIES_API_URL, {
+            makeAuthenticatedRequest(API_URL, {
                 method: 'POST',
                 headers: JSON_HEADERS,
                 body: createJSONRPCRequest('shows.GetByExternalId', { id: id, source: source })
@@ -548,7 +542,7 @@
 
     // Получить список эпизодов по showId
     function getEpisodesByShowId(showId, token, callback) {      
-        makeAuthenticatedRequest(SERIES_API_URL, {      
+        makeAuthenticatedRequest(API_URL, {      
             method: 'POST',      
             headers: JSON_HEADERS,  
             body: createJSONRPCRequest('shows.GetById', { showId: showId, withEpisodes: true })        
@@ -573,7 +567,7 @@
             return;
         }
 
-        makeAuthenticatedRequest(MOVIES_API_URL, {
+        makeAuthenticatedRequest(API_URL, {
             method: 'POST',
             headers: JSON_HEADERS,
             body: createJSONRPCRequest('movies.GetCatalog', {
@@ -789,7 +783,7 @@
     function checkEpisodeMyShows(episodeId, token) {        
         if (!episodeId || !token) return;        
             
-        makeAuthenticatedRequest(SERIES_API_URL, {        
+        makeAuthenticatedRequest(API_URL, {        
             method: 'POST',        
             headers: JSON_HEADERS,  
             body: createJSONRPCRequest('manage.CheckEpisode', { id: episodeId, rating: 0 })             
@@ -810,7 +804,7 @@
         
         console.log('[MyShows] Пытаюсь отметить фильм (ID:', movieId + ')');
         
-        makeAuthenticatedRequest(MOVIES_API_URL, {
+        makeAuthenticatedRequest(API_URL, {
             method: 'POST',
             headers: JSON_HEADERS,
             body: createJSONRPCRequest('manage.SetMovieStatus', { 
@@ -874,7 +868,7 @@
             getShowIdByExternalIds(imdbId, kinopoiskId, token, function(showId) {          
                 if (!showId) return;
                         
-                makeAuthenticatedRequest(SERIES_API_URL, {          
+                makeAuthenticatedRequest(API_URL, {          
                     method: 'POST',          
                     headers: JSON_HEADERS,   
                     body: createJSONRPCRequest('manage.SetShowStatus', { id: showId, status: "watching" })              
@@ -919,16 +913,13 @@
         var isMovie = isMovieContent(card);
 
         if (isMovie) {
-            console.log('[MyShows] isMovie')
             // Обработка фильма
             if (percent >= minProgress) {
                 var originalTitle = card.original_title || card.title;
                 var year = getMovieYear(card)
                 getMovieIdByOriginalTitle(originalTitle, year, function(movieId) {
                     if (movieId) {
-                        console.log('[MyShows] checkMovieMyShows')
                         checkMovieMyShows(movieId, token);
-                        Lampa.Noty.show('Фильм отмечен как просмотренный на MyShows');
                     }
                 });
             }
@@ -1063,7 +1054,7 @@
 
     function fetchFromMyShowsAPI(callback) {  
         console.log('[MyShows] Fetching unwatched shows from MyShows API...');
-        makeAuthenticatedRequest(SERIES_API_URL, {  
+        makeAuthenticatedRequest(API_URL, {  
             method: 'POST',  
             headers: JSON_HEADERS,  
             body: createJSONRPCRequest('lists.Episodes', { list: 'unwatched' })  
@@ -1161,6 +1152,12 @@
                     }  
                     
                     callback(cachedResult);
+                    var updateDelay = 5000; 
+  
+                    // Проверяем, если это ТВ платформа  
+                    if (Lampa.Platform.tv()) {  
+                        updateDelay = 15000;
+                    }
                     
                     // Запускаем отложенную проверку только один раз при загрузке  
                     setTimeout(function() {  
@@ -1170,7 +1167,7 @@
                                 updateUIIfNeeded(cachedResult.shows, freshResult.shows);  
                             }  
                         });  
-                    }, 15000);  
+                    }, updateDelay);  
                     
                     return;    
                 }    
@@ -1180,7 +1177,7 @@
     }
 
     function updateUIIfNeeded(oldShows, newShows) {  
-        // Создаем карты для быстрого поиска  
+
         var oldShowsMap = {};  
         var newShowsMap = {};  
         
@@ -1194,34 +1191,22 @@
             newShowsMap[key] = show;  
         });  
         
-        // Добавляем новые сериалы  
-        for (var newKey in newShowsMap) {  
-            if (!oldShowsMap[newKey]) {  
-                console.log('[MyShows] Adding new show:', newKey);  
-                insertNewCardIntoMyShowsSection(newShowsMap[newKey]);  
-            }  
-        }  
-        
-        // Удаляем завершенные сериалы  
-        for (var oldKey in oldShowsMap) {  
-            if (!newShowsMap[oldKey]) {  
-                console.log('[MyShows] Removing completed show:', oldKey);  
-                updateCompletedShowCard(oldKey);  
-            }  
-        }  
-        
-        // Обновляем прогресс существующих сериалов  
+        var hasChanges = false; 
+        // Обновляем прогресс существующих сериалов
         for (var key in newShowsMap) {  
-            if (oldShowsMap[key]) {  
-                var oldShow = oldShowsMap[key];  
-                var newShow = newShowsMap[key];  
-                
-                if (oldShow.progress_marker !== newShow.progress_marker) {  
-                    console.log('[MyShows] Updating show progress:', key);  
-                    window.MyShows.updateAllMyShowsCards(key, newShow.progress_marker);  
-                }  
+            if (oldShowsMap[key] &&   
+                oldShowsMap[key].progress_marker !== newShowsMap[key].progress_marker) {  
+                hasChanges = true;  
+                break;  
             }  
-        }  
+        }    
+
+        if (hasChanges) {  
+            Lampa.Noty.show('Новые данные! Отмеченные вручную на MyShows. Перезагрузка');  
+            setTimeout(function() {  
+                window.location.reload();  
+            }, 2000);  
+        }
     }
 
     function enrichShowData(fullResponse, myshowsData) {    
@@ -1631,19 +1616,6 @@
             Lampa.Storage.remove('myshows_current_card');  
         }  
     });
-
-    function updateCardData(originalName, newData) {  
-        var existingCard = findExistingCard(originalName);  
-        if (existingCard && existingCard.card_data) {  
-            // Обновляем конкретные поля  
-            existingCard.card_data.progress_marker = newData.progress_marker;  
-            existingCard.card_data.watched_count = newData.watched_count;  
-            existingCard.card_data.total_count = newData.total_count;  
-            
-            // Или полная замена данных  
-            Object.assign(existingCard.card_data, newData);  
-        }  
-    }
 
     function updateCompletedShowCard(showName) {    
         var cards = document.querySelectorAll('.card');    
