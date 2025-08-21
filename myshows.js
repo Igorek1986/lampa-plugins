@@ -1201,19 +1201,17 @@
             }  
         }    
 
-        if (hasChanges) {  
-            Lampa.Noty.show('Новые данные! Отмеченные вручную на MyShows. Перезагрузка');  
-            setTimeout(function() {  
-                window.location.reload();  
-            }, 2000);  
-        }
+        // if (hasChanges) {  
+            // Lampa.Noty.show('Новые данные! Отмеченные вручную на MyShows. Перезагрузка');  
+            // setTimeout(function() {  
+            //     window.location.reload();  
+            // }, 2000);  
+        // }
     }
 
     function enrichShowData(fullResponse, myshowsData) {    
         // Используем полные данные TMDB как основу  
         var enriched = Object.assign({}, fullResponse);    
-        console.log('[SerialStatus] fullResponse', fullResponse);  
-        console.log('[SerialStatus] myshowsData', myshowsData);  
         
         // Добавляем данные MyShows  
         if (myshowsData) {  
