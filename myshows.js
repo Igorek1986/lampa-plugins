@@ -170,7 +170,7 @@
             if (data && data.error && data.error.code === 401) {    
                 tryAuthFromSettings(function(newToken) {    
                     if (newToken) {    
-                        options.headers['Authorization'] = 'Bearer ' + newToken;    
+                        options.headers['authorization2'] = 'Bearer ' + newToken;    
                             
                         var retryNetwork = new Lampa.Reguest();    
                         retryNetwork.silent(url, function(retryData) {    
@@ -191,7 +191,7 @@
             if (xhr.status === 401) {    
                 tryAuthFromSettings(function(newToken) {    
                     if (newToken) {    
-                        options.headers['Authorization'] = 'Bearer ' + newToken;    
+                        options.headers['authorization2'] = 'Bearer ' + newToken;    
                             
                         var retryNetwork = new Lampa.Reguest();    
                         retryNetwork.silent(url, function(retryData) {    
@@ -511,7 +511,7 @@
             makeAuthenticatedRequest(API_URL, {
                 method: 'POST',
                 headers: JSON_HEADERS,
-                body: createJSONRPCRequest('shows.GetByExternalId', { id: id, source: source })
+                body: createJSONRPCRequest('shows.GetByExternalId', { id: parseInt(id), source: source })
             }, function(data) {
                 cb(data && data.result ? data.result.id : null);
             }, function() {
