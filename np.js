@@ -536,7 +536,7 @@
                         callback({
                             title: CATEGORY_VISIBILITY.myshows_unwatched.title,
                             results: response.shows,
-                            // cardClass: window.MyShows.createMyShowsCard,
+                            cardClass: window.MyShows.createMyShowsCard,
                             nomore: true
                         });
                     });
@@ -940,23 +940,6 @@
             }
         });
 
-        // Lampa.SettingsApi.addParam({  
-        //     component: 'numparser_settings',  
-        //     param: {  
-        //         name: 'numparser_myshows_fastapi',  
-        //         type: 'trigger',  
-        //         default: false  
-        //     },  
-        //     field: {  
-        //         name: 'Использовать FastAPI для MyShows',  
-        //         description: 'Загружать данные MyShows через FastAPI вместо локального кеша'  
-        //     },  
-        //     onChange: function (value) {  
-        //         Lampa.Storage.set('numparser_myshows_fastapi', value === true || value === "true");  
-        //         // Перезагружаем страницу для применения изменений видимости категорий  
-        //         location.reload();  
-        //     }  
-        // });
         Lampa.SettingsApi.addParam({    
             component: 'numparser_settings',    
             param: {    

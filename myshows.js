@@ -2190,7 +2190,7 @@
                         };    
                         
                         // Сохраняем ссылку на данные для последующих модификаций  
-                        // window.myShowsData = myshowsCategory;  
+                        window.myShowsData = myshowsCategory;  
                         myShowsData = myshowsCategory;  
                         
                         data.unshift(myshowsCategory);    
