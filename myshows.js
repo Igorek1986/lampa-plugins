@@ -674,24 +674,11 @@
         });
     }
 
-    function getShowByShowId(showId, callback) {    
-        makeMyShowsJSONRPCRequest('shows.GetById', {   
-            showId: parseInt(showId)           
-        }, function(success, data) {  
-            if (success && data && data.result) {  
-                callback(data.result); // Передаем только result  
-            } else {  
-                callback(null);  
-            }  
-        });        
-    }
-
     // Получить список эпизодов по showId
     function getEpisodesByShowId(showId, token, callback) {    
         makeMyShowsJSONRPCRequest('shows.GetById', { 
             showId: parseInt(showId), withEpisodes: true         
         }, function(success, data) {
-            console.log('[MyShows] getEpisodesByShowId DATA', data.result.episodes)
             callback(data.result.episodes);
         });      
     }  
@@ -1721,33 +1708,6 @@
         });
     }
 
-    // function getReleasedEpisodesCount(seasonResponse, currentShow, totalEpisodes) {
-    //     if (!seasonResponse || !seasonResponse.episodes) return totalEpisodes;
-
-    //     var now = new Date();
-    //     var unreleased = seasonResponse.episodes.reduce(function (acc, ep) {
-    //         var myshowsEpisode = currentShow.unwatchedEpisodes.find(function (mep) {
-    //             return mep.seasonNumber === ep.season_number &&
-    //                 mep.episodeNumber === ep.episode_number;
-    //         });
-
-    //         var airDateStr = myshowsEpisode ? myshowsEpisode.airDate : ep.air_date;
-            
-    //         if (airDateStr) {
-    //             var airDate = new Date(airDateStr);
-                
-    //             // Считаем эпизод невыпущенным если дата в будущем ИЛИ сегодня
-    //             var isToday = airDate.toDateString() === now.toDateString();
-    //             if (airDate > now || isToday) {
-    //                 acc++;
-    //             }
-    //         }
-    //         return acc;
-    //     }, 0);
-
-    //     return totalEpisodes - unreleased;
-    // }
-
     function getReleasedEpisodesCount(seasonResponse, currentShow, totalEpisodes) {
         if (!seasonResponse || !seasonResponse.episodes) return totalEpisodes;
 
@@ -1932,20 +1892,8 @@
                         });  
                         
                         if (foundShow && foundShow.progress_marker) {  
-                            // Обновляем DOM данные карточки  
-                            var existingCard = findExistingCard(originalName);  
-                            if (existingCard && existingCard.card_data) {  
-                                existingCard.card_data.progress_marker = foundShow.progress_marker;  
-                                existingCard.card_data.watched_count = foundShow.watched_count;  
-                                existingCard.card_data.total_count = foundShow.total_count;  
-                            } else if (!existingCard) {  
-                                    insertNewCardIntoMyShowsSection(foundShow);  
-                                }  
-                            
                             // Обновляем UI  
                             updateAllMyShowsCards(originalName, foundShow.progress_marker, true)
-                        } else {
-                            removeCardDirectly(originalName);
                         }
                     }  
                 });  
@@ -1955,72 +1903,6 @@
             Lampa.Storage.remove('myshows_current_card');  
         }  
     });
-
-    function removeCardDirectly(showName) {    
-        console.log('[MyShows] func removeCardDirectly')  
-        var cards = document.querySelectorAll('.card');    
-        
-        for (var i = 0; i < cards.length; i++) {    
-            var cardElement = cards[i];    
-            var cardData = cardElement.card_data || {};    
-            
-            var cardName = cardData.original_name || cardData.name || cardData.title;    
-            if (cardName === showName) {    
-                var parentSection = cardElement.closest('.items-line');    
-                var allCards = parentSection.querySelectorAll('.card');    
-                var currentIndex = Array.from(allCards).indexOf(cardElement);    
-                
-                // Проверяем тип контента  
-                var isMovie = !cardData.original_name && !cardData.number_of_seasons && !cardData.first_air_date;  
-                
-                if (isMovie) {  
-                    // Для фильмов проверяем прогресс через Timeline  
-                    var movieHash = Lampa.Utils.hash(cardData.original_title || cardData.title);  
-                    var timelineData = Lampa.Timeline.view(movieHash);  
-                    var minProgress = parseInt(getProfileSetting('myshows_min_progress', 90));  
-                    
-                    console.log('[MyShows] Movie progress check in removeCardDirectly:', timelineData.percent, 'min required:', minProgress);  
-                    
-                    // Удаляем только если достигнут минимальный прогресс  
-                    if (timelineData.percent >= minProgress) {  
-                        console.log('[MyShows] Movie completed, removing card');  
-                        setTimeout(function() {      
-                            removeCompletedCard(cardElement, showName, parentSection, currentIndex);      
-                        }, 3000);  
-                    } else {  
-                        console.log('[MyShows] Movie not completed yet, keeping card');  
-                    }  
-                } else {  
-                    // Для сериалов удаляем как обычно  
-                    setTimeout(function() {      
-                        removeCompletedCard(cardElement, showName, parentSection, currentIndex);      
-                    }, 3000);  
-                }  
-                break;    
-            }    
-        }    
-}
-
-    function updateCardData(originalName, newData) {  
-        var cards = document.querySelectorAll('.card');  
-        for (var i = 0; i < cards.length; i++) {  
-            var cardElement = cards[i];  
-            var cardData = cardElement.card_data;  
-            
-            if (cardData) {  
-                var cardName = cardData.original_name || cardData.name || cardData.title;  
-                
-                if (cardName === originalName) {  
-                    // Обновляем данные карточки  
-                    Object.assign(cardData, newData);  
-                    
-                    // Принудительно вызываем событие visible для перерендера  
-                    cardElement.dispatchEvent(new Event('visible'));  
-                    break;  
-                }  
-            }  
-        }  
-    }
 
     function updateCompletedShowCard(showName) {    
         var cards = document.querySelectorAll('.card');    
@@ -2144,7 +2026,6 @@
     }
 
     function insertNewCardIntoMyShowsSection(showData, retryCount) {  
-        console.log('[MyShows] func insertNewCardIntoMyShowsSection')
         var currentFocusedElement = document.querySelector('.focus');  
         var currentFocusedCard = null;
         
@@ -2554,7 +2435,6 @@
     });
 
     function addToHistory(contentData) {
-        console.log('[MyShows] addToHistory')
         Lampa.Favorite.add('history', contentData)
     }
 
@@ -2687,24 +2567,8 @@
             })
         }
     }
-
-    function getMovieStatus(movieId, callback) {  
-        console.log('[MyShows] func getMovieStatus');  
-        loadCacheFromServer('movie_status', 'movies', function(moviesData) {  
-            if (moviesData) {  
-                var userMovie = moviesData.movies.find(function(item) {  
-                    return item.id === movieId;  
-                });  
-                callback(userMovie ? userMovie.watchStatus : 'remove');  
-            } else {  
-                callback('remove');  
-            }  
-        });  
-    }  
     
     function getMovieStatusByTitle(movieTitle, callback) {  
-        console.log('[MyShows] func getMovieStatusByTitle');  
-        console.log('[MyShows] func getMovieStatusByTitle movieTitle', movieTitle);  
         
         loadCacheFromServer('movie_status', 'movies', function(moviesData) {  
             if (moviesData && moviesData.movies) {  
