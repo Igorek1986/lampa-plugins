@@ -281,6 +281,10 @@
             setProfileSetting('myshows_view_in_main', true);      
         }    
 
+        if (!hasProfileSetting('myshows_button_view')) {      
+            setProfileSetting('myshows_button_view', true);      
+        }  
+
         if (!hasProfileSetting('myshows_sort_order')) {    
             setProfileSetting('myshows_sort_order', 'alphabet');    
         }  
@@ -310,6 +314,7 @@
         }  
             
         var myshowsViewInMain = getProfileSetting('myshows_view_in_main', true); 
+        var myshowsButtonView = getProfileSetting('myshows_button_view', true); 
         var sortOrderValue = getProfileSetting('myshows_sort_order', 'alphabet');  
         var addThresholdValue = parseInt(getProfileSetting('myshows_add_threshold', DEFAULT_ADD_THRESHOLD).toString());  
         var progressValue = getProfileSetting('myshows_min_progress', DEFAULT_MIN_PROGRESS).toString();    
@@ -320,6 +325,7 @@
 
             
         Lampa.Storage.set('myshows_view_in_main', myshowsViewInMain, true);  
+        Lampa.Storage.set('myshows_button_view', myshowsButtonView, true);  
         Lampa.Storage.set('myshows_sort_order', sortOrderValue, true);
         Lampa.Storage.set('myshows_add_threshold', addThresholdValue, true);  
         Lampa.Storage.set('myshows_min_progress', progressValue, true);    
@@ -478,6 +484,22 @@
         Lampa.SettingsApi.addParam({  
             component: 'myshows',  
             param: {  
+                name: 'myshows_button_view',  
+                type: 'trigger',  
+                default: getProfileSetting('myshows_button_view', true)  
+            },  
+            field: {  
+                name: 'Показывать кнопки в карточках',  
+                description: 'Отображать кнопки уплавления в карточка'  
+            },  
+            onChange: function(value) {  
+                setProfileSetting('myshows_button_view', value);  
+            }  
+        });
+
+        Lampa.SettingsApi.addParam({  
+            component: 'myshows',  
+            param: {  
             name: 'myshows_login',  
             type: 'input',  
             placeholder: 'Логин MyShows',  
@@ -527,6 +549,9 @@
                 // Обновляем значения полей
                 var myshowsViewInMain = settingsPanel.querySelector('select[data-name="myshows_view_in_main"]');  
                 if (myshowsViewInMain) myshowsViewInMain.value = getProfileSetting('myshows_view_in_main', true);
+
+                var myshowsButtonView = settingsPanel.querySelector('select[data-name="myshows_button_view"]');  
+                if (myshowsViewInMain) myshowsButtonView.value = getProfileSetting('myshows_button_view', true);
 
                 var sortSelect = settingsPanel.querySelector('select[data-name="myshows_sort_order"]');  
                 if (sortSelect) sortSelect.value = getProfileSetting('myshows_sort_order', 'alphabet');
@@ -2404,8 +2429,10 @@
                 if (!cachedStatus || cachedStatus === 'remove') {  
                     updateButtonStates('remove');  
                 }  
-                
-                createMyShowsButtons(e, cachedStatus);   
+
+                if (getProfileSetting('myshows_button_view', true)) {    
+                    createMyShowsButtons(e, cachedStatus);   
+                }
             });  
             
             // Асинхронно проверяем актуальность статуса    
@@ -2653,8 +2680,10 @@
                     if (!cachedStatus || cachedStatus === 'remove') {  
                         updateMovieButtonStates('remove');  
                     }  
-                    
-                    createMyShowsMovieButtons(e, cachedStatus);  
+
+                    if (getProfileSetting('myshows_button_view', true)) {    
+                        createMyShowsMovieButtons(e, cachedStatus);   
+                    }
                 });  
             }
         }  
