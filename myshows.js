@@ -907,6 +907,12 @@
             return;    
         }    
         
+        // Сортировка данных
+        var sortOrder = getProfileSetting('myshows_sort_order', 'alphabet');
+        if (cacheData.shows && cacheData.shows.length > 0) {
+            sortShows(cacheData.shows, sortOrder);
+        }
+        
         var hashedLogin = Lampa.Utils.hash(login);    
         var pathHash = Lampa.Utils.hash(unicId + profileId);    
         var url = BASE_URL + '/myshows/' + path + '/' + hashedLogin + '/' + pathHash;    
