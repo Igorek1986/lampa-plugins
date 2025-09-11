@@ -727,7 +727,7 @@
         makeMyShowsJSONRPCRequest('movies.GetCatalog', {
                 search: { "query": title },
                 page: 0,
-                pageSize: 10
+                pageSize: 50
         }, function(success, data) {
             if (success && data && data.result) {
                 getMovieCandidates(data.result, title, year, function(candidates) {
