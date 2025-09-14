@@ -65,16 +65,14 @@
                 return true;
             }
 
-            if (mediaType === 'tv') {
-                var historyEpisodes = getEpisodesFromHistory(item.id, favorite);
-                var timeTableEpisodes = getEpisodesFromTimeTable(item.id, timeTable);
-                var releasedEpisodes = mergeEpisodes(historyEpisodes, timeTableEpisodes);
-
-                return !allEpisodesWatched(
-                    item.original_title || item.original_name || item.title || item.name,
-                    releasedEpisodes
-                );
-            }
+            if (mediaType === 'tv') {  
+                var releasedEpisodes = getReleasedEpisodesFromTMDB(item);  
+                
+                return !allEpisodesWatched(  
+                    item.original_title || item.original_name || item.title || item.name,  
+                    releasedEpisodes  
+                );  
+            } 
 
             return true;
         });
@@ -143,92 +141,34 @@
         loadNextPage();
     }
 
-    // Основная функция фильтрации
-    function filterWatchedContent(results, category, page, source, totalPages, callback) {
-        console.log('[Numparser] Filtering content - initial:', results.length, 'items, category:', category, 'page:', page, 'source:', source, 'totalPages:', totalPages);
+    function getReleasedEpisodesFromTMDB(item) {  
+        var episodes = [];  
+        var lastEpisode = item.last_episode_to_air;  
         
-        if (!Lampa.Storage.get('numparser_hide_watched', true)) {
-            console.log('[Numparser] Filtering disabled, returning all results');
-            callback(results);
-            return;
-        }
-
-        var filtered = basicFilterWatchedContent(results);
-        console.log('[Numparser] After basic filtering:', filtered.length, 'items remaining');
+        if (!lastEpisode || !item.seasons) return episodes;  
         
-        // Если после фильтрации осталось меньше 20 элементов и есть еще страницы - догружаем
-        if (filtered.length < 20 && category && source && page < totalPages) {
-            console.log('[Numparser] Need to load more. Current:', filtered.length, 'items, loading additional pages...');
-            loadMoreUntilFullAsync(filtered, category, page, source, totalPages, callback);
-        } else {
-            console.log('[Numparser] No need to load more or cannot load. Returning:', filtered.length, 'items');
-            callback(filtered);
-        }
-    }
-
-    function getEpisodesFromHistory(id, favorite) {
-        var historyCard = favorite.card.filter(function (card) {
-            return card.id === id && Array.isArray(card.seasons) && card.seasons.length > 0;
-        })[0];
-
-        if (!historyCard) {
-            return [];
-        }
-
-        var realSeasons = historyCard.seasons.filter(function (season) {
-            return season.season_number > 0
-                && season.episode_count > 0
-                && season.air_date
-                && new Date(season.air_date) < new Date();
-        });
-
-        if (realSeasons.length === 0) {
-            return [];
-        }
-
-        var seasonEpisodes = [];
-        for (var seasonIndex = 0; seasonIndex < realSeasons.length; seasonIndex++) {
-            var season = realSeasons[seasonIndex];
-
-            for (var episodeIndex = 1; episodeIndex <= season.episode_count; episodeIndex++) {
-                seasonEpisodes.push({
-                    season_number: season.season_number,
-                    episode_number: episodeIndex
-                });
-            }
-        }
-
-        return seasonEpisodes;
-    }
-
-    function getEpisodesFromTimeTable(id, timeTable) {
-        if (!Array.isArray(timeTable)) return [];
-
-        var serial = timeTable.find(function (item) {
-            return item.id === id && Array.isArray(item.episodes);
-        });
-
-        return serial ? serial.episodes.filter(function (episode) {
-            return episode.season_number > 0 &&
-                episode.air_date &&
-                new Date(episode.air_date) < new Date();
-        }) : [];
-    }
-
-    function mergeEpisodes(arr1, arr2) {
-        var merged = arr1.concat(arr2);
-        var unique = [];
-
-        merged.forEach(function (episode) {
-            if (!unique.some(function (e) {
-                return e.season_number === episode.season_number &&
-                    e.episode_number === episode.episode_number;
-            })) {
-                unique.push(episode);
-            }
-        });
-
-        return unique;
+        // Генерируем все эпизоды до последнего выпущенного  
+        for (var season = 1; season <= lastEpisode.season_number; season++) {  
+            var maxEpisode = (season === lastEpisode.season_number)   
+                ? lastEpisode.episode_number   
+                : getEpisodeCountForSeason(item.seasons, season);  
+                
+            for (var episode = 1; episode <= maxEpisode; episode++) {  
+                episodes.push({  
+                    season_number: season,  
+                    episode_number: episode  
+                });  
+            }  
+        }  
+        
+        return episodes;  
+    }  
+    
+    function getEpisodeCountForSeason(seasons, seasonNumber) {  
+        var season = seasons.find(function(s) {   
+            return s.season_number === seasonNumber && s.episode_count > 0;   
+        });  
+        return season ? season.episode_count : 0;  
     }
 
     function allEpisodesWatched(title, episodes) {
