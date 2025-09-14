@@ -2323,10 +2323,22 @@
             e.object.activity.render().find('.full-start-new__buttons').append(btn);  
         });  
 
-        if (window.Lampa && window.Lampa.Controller) {  
+        if (window.Lampa && window.Lampa.Controller) {    
             var container = e.object.activity.render().find('.full-start-new__buttons');  
+            
+            // Получаем все видимые кнопки  
+            var allButtons = container.find('> *').filter(function(){  
+                return $(this).is(':visible')  
+            });  
+            
+            // Обновляем коллекцию Controller с новыми кнопками  
             Lampa.Controller.collectionSet(container);  
-        }  
+            
+            // Восстанавливаем фокус на первой кнопке  
+            if (allButtons.length > 0) {  
+                Lampa.Controller.collectionFocus(allButtons.eq(0)[0], container);  
+            }  
+        } 
     }
 
     function updateButtonStates(newStatus) {  
@@ -2524,10 +2536,22 @@
             e.object.activity.render().find('.full-start-new__buttons').append(btn);  
         });  
         
-        if (window.Lampa && window.Lampa.Controller) {  
+        if (window.Lampa && window.Lampa.Controller) {    
             var container = e.object.activity.render().find('.full-start-new__buttons');  
+            
+            // Получаем все видимые кнопки  
+            var allButtons = container.find('> *').filter(function(){  
+                return $(this).is(':visible')  
+            });  
+            
+            // Обновляем коллекцию Controller с новыми кнопками  
             Lampa.Controller.collectionSet(container);  
-        }  
+            
+            // Восстанавливаем фокус на первой кнопке  
+            if (allButtons.length > 0) {  
+                Lampa.Controller.collectionFocus(allButtons.eq(0)[0], container);  
+            }  
+        } 
     }
 
     function Movies(body, callback) {
