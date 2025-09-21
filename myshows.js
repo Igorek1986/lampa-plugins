@@ -1423,6 +1423,7 @@
                 // Обновляем кеш только если НЕ достигнут minProgress    
                 if (success && percent < minProgress) {
                     fetchFromMyShowsAPI(function(data) {});
+                    fetchShowStatus(function(data) {});
                 }
             });  
 
@@ -1431,7 +1432,8 @@
             setMyShowsStatus(card, 'watching', function(success) {
                 // Обновляем кеш только если НЕ достигнут minProgress    
                 if (success && percent < minProgress) {
-                    fetchFromMyShowsAPI(function(data) {})
+                    fetchFromMyShowsAPI(function(data) {});
+                    fetchShowStatus(function(data) {});
                 }
             });  
         }   
@@ -1441,7 +1443,6 @@
             checkEpisodeMyShows(episodeId, function(success) {
                 if (success) {
                     fetchFromMyShowsAPI(function(data) {})
-                    fetchShowStatus(function(data) {})
                 }
             });    
         }      
