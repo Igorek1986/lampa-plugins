@@ -1123,6 +1123,8 @@
     
             try {  
                 var myShowsDate;  
+                myShowsDate.setHours(0, 0, 0, 0);
+
                 
                 // Обработка разных форматов дат  
                 if (airDate.includes('.')) {  
@@ -1140,6 +1142,7 @@
                 var card = getCurrentCard();  
                 var tmdbDate = card && card.first_air_date ? new Date(card.first_air_date) :   
                             card && card.release_date ? new Date(card.release_date) : null;  
+                tmdbDate.setHours(0, 0, 0, 0); 
     
                 if (tmdbDate && myShowsDate.getTime() === tmdbDate.getTime()) {  
                     callback(candidate);  
@@ -1366,7 +1369,11 @@
                 var year = getMovieYear(card)
                 getMovieIdByOriginalTitle(originalTitle, year, function(movieId) {
                     if (movieId) {
-                        checkMovieMyShows(movieId, function(success) {});
+                        checkMovieMyShows(movieId, function(success) {
+                            if (success) {
+                                fetchStatusMovies(function(data) {})
+                            }
+                        });
                     }
                 });
             }
@@ -1434,6 +1441,7 @@
             checkEpisodeMyShows(episodeId, function(success) {
                 if (success) {
                     fetchFromMyShowsAPI(function(data) {})
+                    fetchShowStatus(function(data) {})
                 }
             });    
         }      
