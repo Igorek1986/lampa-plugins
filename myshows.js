@@ -1019,12 +1019,7 @@
         } else if (candidates.length == 1) {
             callback(candidates[0].id)
         } else getBestMovieCandidate(candidates, function(candidate) {
-            if (candidate) {
-                callback(candidate);
-                return;
-            } else {
-                callback(null);
-            }
+            callback(candidate ? candidate.id : null);    
         })
     }
 
@@ -1080,37 +1075,39 @@
         }    
     }
 
-    function getBestMovieCandidate(candidates, callback) {
-        for (var i = 0; i < candidates.length; i++) {
-            var candidate = candidates[i];
-            var releaseDate = candidate.releaseDate;
-
-            if (!releaseDate) {
-                continue;
-            }
-
-            try {
-                var parts = releaseDate.split('.')
-                if (parts.length !== 3) {
-                    callback(null);
-                    return;
-                }
-
-                var myShowsData = new Date(parts[2], parts[1]-1, parts[0]);
-                var card = getCurrentCard();
-                var tmdbData = card && card.release_date ? new Date(card.release_date) : null;
-
-                if (myShowsData.getTime() == tmdbData.getTime()) {
-                    callback(candidate);
-                    return;
-                } else {
-                    continue;
-                }
-            } catch(e) {
-                callback(null);
-            }
-        }
-        callback(null);
+    function getBestMovieCandidate(candidates, callback) {  
+        
+        for (var i = 0; i < candidates.length; i++) {  
+            var candidate = candidates[i];  
+            
+            if (!candidate.releaseDate) continue;  
+            
+            try {  
+                var parts = candidate.releaseDate.split('.');  
+                if (parts.length !== 3) continue;  
+                
+                var myShowsDate = new Date(parts[2], parts[1]-1, parts[0]);  
+                myShowsDate.setHours(0, 0, 0, 0);
+                
+                var card = getCurrentCard();  
+                if (!card || !card.release_date) continue;  
+                
+                var tmdbDate = new Date(card.release_date);  
+                tmdbDate.setHours(0, 0, 0, 0); 
+                
+                if (myShowsDate.getTime() === tmdbDate.getTime()) {  
+                    callback(candidate);  
+                    return;  
+                }  
+                
+            } catch(e) {  
+                console.log('[MyShows] Date parsing error:', e);  
+                continue;  
+            }  
+        }  
+        
+        console.log('[MyShows] No matching candidate found');  
+        callback(null);  
     }
 
     function getBestShowCandidate(candidates, callback) {  
