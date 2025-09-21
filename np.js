@@ -549,7 +549,7 @@
             }
 
             function makeRequest(category, title, callback) {
-                var page = params.page || 1;
+                var page = 1;
                 var url;
                 
                 if (category === 'unwatched_serials') {  
