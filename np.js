@@ -15,55 +15,35 @@
     var newProgress = MIN_PROGRESS;
     Lampa.Storage.set('base_url_numparser', BASE_URL);
 
-    // Базовая фильтрация без догрузки (синхронная)
-    function basicFilterWatchedContent(results) {
-        if (!Lampa.Storage.get('numparser_hide_watched', true)) {
-            return results;
-        }
 
-        var favorite = Lampa.Storage.get('favorite', '{}');
-        var timeTable = Lampa.Storage.cache('timetable', 300, []);
-
-        return results.filter(function (item) {
-            if (!item) return false;
-
-            var mediaType = (item.first_air_date || item.number_of_seasons) ? 'tv' : 'movie';
-            var checkItem = {
-                id: item.id,
-                media_type: mediaType,
-                original_title: item.original_title || item.original_name || '',
-                title: item.title || item.name || '',
-                original_language: item.original_language || 'en',
-                poster_path: item.poster_path || '',
-                backdrop_path: item.backdrop_path || ''
-            };
-
-            var favoriteItem = Lampa.Favorite.check(checkItem);
-            var watched = !!favoriteItem && !!favoriteItem.history;
-            var thrown = !!favoriteItem && favoriteItem.thrown;
-
-            if (thrown) return false;
-            if (!watched) return true;
-            if (watched && mediaType === 'movie') {
-                // Проверяем прогресс
-                var hashes = [];
-                if (item.id) hashes.push(Lampa.Utils.hash(String(item.id)));
-                if (item.original_title) hashes.push(Lampa.Utils.hash(item.original_title));
-                var hasProgress = false;
-                for (var i = 0; i < hashes.length; i++) {
-                    var view = Lampa.Storage.cache('file_view', 300, [])[hashes[i]];
-                    if (view) {
-                        hasProgress = true;
-                        if (!view.percent || view.percent >= MIN_PROGRESS) {
-                            return false;
-                        }
-                    }
-                }
-                // Если в истории, но прогресса нет вообще — скрыть
-                if (!hasProgress) return false;
-                // Если есть прогресс, но он меньше порога — показываем
-                return true;
-            }
+    function basicFilterWatchedContent(results) {  
+        if (!Lampa.Storage.get('numparser_hide_watched', true)) {  
+            return results;  
+        }  
+    
+        return results.filter(function (item) {  
+            if (!item) return false;  
+    
+            var mediaType = (item.first_air_date || item.number_of_seasons) ? 'tv' : 'movie';  
+            
+            // Проверяем статус "выброшено" через Favorite  
+            var favoriteItem = Lampa.Favorite.check(item);  
+            var thrown = !!favoriteItem && favoriteItem.thrown;  
+            if (thrown) return false;  
+    
+            if (mediaType === 'movie') {  
+                // Проверяем прогресс напрямую, без проверки истории  
+                var hashes = [];  
+                if (item.id) hashes.push(Lampa.Utils.hash(String(item.id)));  
+                if (item.original_title) hashes.push(Lampa.Utils.hash(item.original_title));  
+                
+                for (var i = 0; i < hashes.length; i++) {  
+                    var view = Lampa.Storage.cache('file_view', 300, [])[hashes[i]];  
+                    if (view && view.percent && view.percent >= MIN_PROGRESS) {  
+                        return false; // Скрыть просмотренный фильм  
+                    }  
+                }  
+            }  
 
             if (mediaType === 'tv') {  
                 var releasedEpisodes = getReleasedEpisodesFromTMDB(item);  
@@ -73,10 +53,11 @@
                     releasedEpisodes  
                 );  
             } 
-
-            return true;
-        });
+    
+            return true;  
+        });  
     }
+
     var isLoadingMore = {};
 
     // Асинхронная функция для догрузки страниц
@@ -351,6 +332,7 @@
                     if (item.release_date) dataItem.release_date = item.release_date;  
                     if (item.last_air_date) dataItem.last_air_date = item.last_air_date;  
                     if (item.last_episode_to_air) dataItem.last_episode_to_air = item.last_episode_to_air;  
+                    if (item.seasons) dataItem.seasons = item.seasons;  
                     if (item.progress_marker) dataItem.progress_marker = item.progress_marker;  
                     if (item.watched_count !== undefined) dataItem.watched_count = item.watched_count;  
                     if (item.total_count !== undefined) dataItem.total_count = item.total_count;  
