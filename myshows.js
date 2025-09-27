@@ -13,6 +13,7 @@
     };
     var AUTHORIZATION = 'authorization2'
     var syncInProgress = false;
+    var originalTimelineListener = null; 
     var watch_icon = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z" fill="currentColor"/></svg>';
     var later_icon = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z" fill="currentColor"/></svg>';
     var remove_icon = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" fill="currentColor"/></svg>';
@@ -534,6 +535,49 @@
             tryAuthFromSettings();  
             }  
         });  
+
+        Lampa.SettingsApi.addParam({  
+            component: 'myshows', // Ваш компонент настроек  
+            param: {  
+                type: 'button'  
+            },  
+            field: {  
+                name: 'Синхронизация с Lampac'  
+            },  
+            onChange: function() {  
+                Lampa.Select.show({  
+                    title: 'Синхронизация MyShows',  
+                    items: [  
+                        {  
+                            title: 'Синхронизировать',  
+                            subtitle: 'Добавить просмотренные фильмы и сериалы в историю Lampa',  
+                            confirm: true  
+                        },  
+                        {  
+                            title: 'Отмена'  
+                        }  
+                    ],  
+                    onSelect: function(item) {  
+                        if (item.confirm) {  
+                            Lampa.Noty.show('Начинаем синхронизацию...');  
+                            
+                            syncMyShows(function(success, message) {  
+                                if (success) {  
+                                    Lampa.Noty.show(message);  
+                                } else {  
+                                    Lampa.Noty.show('Ошибка: ' + message);  
+                                }  
+                            });  
+                        }  
+                        
+                        Lampa.Controller.toggle('settings_component');  
+                    },  
+                    onBack: function() {  
+                        Lampa.Controller.toggle('settings_component');  
+                    }  
+                });  
+            }  
+        });
     }  
 
     // Обновляем UI при смене профиля
@@ -1735,7 +1779,6 @@
             var targetSeason = lastSeason;  
         if (currentShow.unwatchedEpisodes && currentShow.unwatchedEpisodes.length > 0) {  
             targetSeason = currentShow.unwatchedEpisodes[0].seasonNumber;  
-            console.log('[MyShows] Using season from unwatched episodes:', targetSeason);  
         }  
         
         // Проверяем, есть ли эпизоды в целевом сезоне  
@@ -1744,7 +1787,6 @@
         });  
         
         if (seasonInfo && seasonInfo.episode_count === 0) {  
-            console.log('[MyShows] Season', targetSeason, 'has no episodes, skipping API call');  
             appendEnriched(fullResponse, foundShow, currentShow, totalEpisodes, totalEpisodes, index, status);  
             return;  
         }
@@ -2740,6 +2782,675 @@
             }
         }  
     });
+
+    // Cинхронизация
+    var wakeLockSentinel = null;  
+
+    function syncMyShows(callback) {    
+        syncInProgress = true;  
+        var keepAliveInterval = preventScreensaver(); 
+        
+        // Отключаем Timeline listener на время синхронизации    
+        if (Lampa.Timeline && Lampa.Timeline.listener) {    
+            console.log('[MyShows] Отключаем Timeline listener на время синхронизации  ');
+            originalTimelineListener = Lampa.Timeline.listener._listeners;    
+            Lampa.Timeline.listener._listeners = {};    
+        }    
+        
+        console.log('[MyShows] Starting sequential sync process');    
+        console.log('[MyShows] syncInProgress', syncInProgress);    
+        
+        // Получаем фильмы    
+        watchedMoviesData(function(movies, error) {    
+            if (error) {    
+                restoreTimelineListener();  
+                console.error('[MyShows] Movie sync error:', error);    
+                if (callback) callback(false, 'Ошибка синхронизации фильмов: ' + error);    
+                return;    
+            }    
+            
+            console.log('[MyShows] Got', movies.length, 'movies');    
+            
+            // Обрабатываем фильмы последовательно    
+            processMovies(movies, function(movieResult) {    
+                console.log('[MyShows] Movies processed:', movieResult.processed, 'errors:', movieResult.errors);    
+                
+                // Получаем сериалы    
+                getWatchedShows(function(shows, showError) {    
+                    if (showError) {    
+                        restoreTimelineListener();  
+                        console.error('[MyShows] Show sync error:', showError);    
+                        if (callback) callback(false, 'Ошибка синхронизации сериалов: ' + showError);    
+                        return;    
+                    }    
+                    
+                    console.log('[MyShows] Got', shows.length, 'shows');    
+                    
+                    // Обрабатываем сериалы последовательно    
+                    processShows(shows, function(showResult) {    
+                        console.log('[MyShows] Shows processed:', showResult.processed, 'errors:', showResult.errors);    
+                        
+                        // Добавляем все карточки в избранное    
+                        addAllCardsAtOnce(cardsToAdd);    
+                        
+                        var totalProcessed = movieResult.processed + showResult.processed;    
+                        var totalErrors = movieResult.errors + showResult.errors;    
+                        
+                        restoreTimelineListener();  
+                        
+                        // Обновляем кеши после завершения синхронизации    
+                        fetchStatusMovies(function(data) {    
+                            fetchShowStatus(function(data) {    
+                                if (callback) {  
+                                    callback(true, 'Синхронизация завершена. Обработано: ' + totalProcessed + ', ошибок: ' + totalErrors);  
+                                }  
+                            });    
+                        });  
+                    });    
+                });    
+            });    
+        });  
+        
+        function restoreTimelineListener() {  
+            // Восстанавливаем Timeline listener    
+            if (originalTimelineListener) {    
+                Lampa.Timeline.listener._listeners = originalTimelineListener;    
+                originalTimelineListener = null;    
+            }    
+
+            allowScreensaver(keepAliveInterval); 
+            
+            syncInProgress = false;  
+        }  
+    }
+
+    function processMovies(movies, callback) {  
+        var processed = 0;  
+        var errors = 0;  
+        var currentIndex = 0;  
+        
+        function processNextMovie() {  
+            if (currentIndex >= movies.length) {  
+                callback({processed: processed, errors: errors});  
+                return;  
+            }  
+            
+            var movie = movies[currentIndex];  
+            console.log('[MyShows] Processing movie', (currentIndex + 1), 'of', movies.length, ':', movie.title);  
+            
+            // Обновляем прогресс  
+            Lampa.Noty.show('Обрабатываю фильм: ' + movie.title + ' (' + (currentIndex + 1) + '/' + movies.length + ')');  
+            
+            // Ищем TMDB ID  
+            findTMDBId(movie.title, movie.titleOriginal, movie.year, movie.imdbId, movie.kinopoiskId, false, function(tmdbId, tmdbData) {  
+                if (tmdbId) {  
+                    // Получаем полную карточку  
+                    getTMDBCard(tmdbId, false, function(card, error) {  
+                        if (card) {  
+                            try {  
+                                // Обновляем Timeline  
+                                Lampa.Timeline.update({  
+                                    hash: Lampa.Utils.hash([movie.titleOriginal || movie.title].join('')),  
+                                    percent: 100,  
+                                    time: movie.runtime ? movie.runtime * 60 : 7200,  
+                                    duration: movie.runtime ? movie.runtime * 60 : 7200  
+                                });  
+                                
+                                // Добавляем в историю  
+                                cardsToAdd.push(card);  
+                                processed++;  
+                            } catch (e) {  
+                                console.error('[MyShows] Timeline error for movie:', movie.title, e);  
+                                errors++;  
+                            }  
+                        } else {  
+                            errors++;  
+                        }  
+                        
+                        currentIndex++;  
+                        // Небольшая задержка между обработкой  
+                        setTimeout(processNextMovie, 1);  
+                    });  
+                } else {  
+                    errors++;  
+                    currentIndex++;  
+                    setTimeout(processNextMovie, 50);  
+                }  
+            });  
+        }  
+        
+        processNextMovie();  
+    }
+
+    function processShows(shows, callback) {  
+        var processed = 0;  
+        var errors = 0;  
+        var currentShowIndex = 0;  
+        var tmdbCache = {}; // Кеш для TMDB данных сериалов  
+        
+        function processNextShow() {  
+            if (currentShowIndex >= shows.length) {  
+                callback({processed: processed, errors: errors});  
+                return;  
+            }  
+            
+            var show = shows[currentShowIndex];  
+            console.log('[MyShows] Processing show', (currentShowIndex + 1), 'of', shows.length, ':', show.title);  
+            
+            Lampa.Noty.show('Обрабатываю сериал: ' + show.title + ' (' + (currentShowIndex + 1) + '/' + shows.length + ')');  
+            
+            // Сначала получаем TMDB данные для сериала (один раз)  
+            findTMDBId(show.title, show.titleOriginal, show.year, show.imdbId, show.kinopoiskId, true, function(tmdbId, tmdbData) {  
+                if (tmdbId) {  
+                    getTMDBCard(tmdbId, true, function(card, error) {  
+                        if (card) {  
+                            // Кешируем TMDB данные для этого сериала  
+                            tmdbCache[show.myshowsId] = card;  
+                            
+                            // Теперь обрабатываем эпизоды последовательно  
+                            processShowEpisodes(show, card, function(episodeResult) {  
+                                processed += episodeResult.processed;  
+                                errors += episodeResult.errors;  
+                                
+                                currentShowIndex++;  
+                                setTimeout(processNextShow, 1);  
+                            });  
+                        } else {  
+                            errors++;  
+                            currentShowIndex++;  
+                            setTimeout(processNextShow, 50);  
+                        }  
+                    });  
+                } else {  
+                    errors++;  
+                    currentShowIndex++;  
+                    setTimeout(processNextShow, 50);  
+                }  
+            });  
+        }  
+        
+        processNextShow();  
+    }  
+
+    function processShowEpisodes(show, tmdbCard, callback) {  
+        console.log('[MyShows] Processing episodes for show:', show.title, 'Episodes count:', show.episodes ? show.episodes.length : 0);  
+        
+        var watchedEpisodeIds = show.watchedEpisodes.map(function(ep) { return ep.id; });  
+        var processedEpisodes = 0;  
+        var errorEpisodes = 0;  
+        var currentEpisodeIndex = 0;  
+        
+        function processNextEpisode() {  
+            if (currentEpisodeIndex >= show.episodes.length) {  
+                console.log('[MyShows] Finished processing show:', show.title, 'Processed:', processedEpisodes, 'Errors:', errorEpisodes);  
+                cardsToAdd.push(tmdbCard);  
+                callback({processed: processedEpisodes, errors: errorEpisodes});  
+                return;  
+            }  
+            
+            var episode = show.episodes[currentEpisodeIndex];  
+            console.log('[MyShows] Processing episode:', episode.seasonNumber + 'x' + episode.episodeNumber, 'for show:', show.title);  
+            
+            if (watchedEpisodeIds.indexOf(episode.id) !== -1) {  
+                try {  
+                    var hash = Lampa.Utils.hash([  
+                        episode.seasonNumber,  
+                        episode.seasonNumber > 10 ? ':' : '',  
+                        episode.episodeNumber,  
+                        show.titleOriginal || show.title  
+                    ].join(''));  
+                    
+                    console.log('[MyShows] Updating timeline for episode:', episode.seasonNumber + 'x' + episode.episodeNumber, 'Hash:', hash);  
+                    
+                    Lampa.Timeline.update({  
+                        hash: hash,  
+                        percent: 100,  
+                        time: episode.runtime ? episode.runtime * 60 : (show.runtime ? show.runtime * 60 : 2700),  
+                        duration: episode.runtime ? episode.runtime * 60 : (show.runtime ? show.runtime * 60 : 2700)  
+                    });  
+                    
+                    processedEpisodes++;  
+                    console.log('[MyShows] Successfully processed episode:', episode.seasonNumber + 'x' + episode.episodeNumber);  
+                } catch (timelineError) {  
+                    console.error('[MyShows] Timeline error for episode:', episode.seasonNumber + 'x' + episode.episodeNumber, timelineError);  
+                    errorEpisodes++;  
+                }  
+            } else {  
+                console.log('[MyShows] Episode not watched, skipping:', episode.seasonNumber + 'x' + episode.episodeNumber);  
+            }  
+            
+            currentEpisodeIndex++;  
+            setTimeout(processNextEpisode, 1);  
+        }  
+        
+        processNextEpisode();  
+    }
+
+    function getFirstEpisodeYear(show) {  
+        if (!show.episodes || show.episodes.length === 0) {  
+            return show.year;  
+        }  
+        
+        // Ищем первый эпизод с episodeNumber >= 1 (не специальный)  
+        var firstRealEpisode = show.episodes.find(function(episode) {  
+            return episode.seasonNumber === 1 && episode.episodeNumber >= 1 && !episode.isSpecial;  
+        });  
+        
+        if (firstRealEpisode && firstRealEpisode.airDate) {  
+            var airDate = new Date(firstRealEpisode.airDate);  
+            return airDate.getFullYear();  
+        }  
+        
+        // Fallback к году сериала  
+        return show.year;  
+    } 
+  
+    function findTMDBId(title, originalTitle, year, imdbId, kinopoiskId, isTV, callback, showData) {  
+        var network = new Lampa.Reguest();  
+        
+        console.log('[MyShows] Searching for:', title, 'Original:', originalTitle, 'IMDB:', imdbId, 'Year:', year);  
+        
+        // Шаг 1: Поиск по IMDB ID  
+        if (imdbId) {  
+            var imdbIdFormatted = imdbId.toString().replace('tt', '');  
+            var url = Lampa.TMDB.api('find/tt' + imdbIdFormatted + '?external_source=imdb_id&api_key=' + Lampa.TMDB.key());  
+            
+            network.timeout(1000 * 10);  
+            network.silent(url, function(results) {  
+                var items = isTV ? results.tv_results : results.movie_results;  
+                if (items && items.length > 0) {  
+                    console.log('[MyShows] Found by IMDB ID:', items[0].id, 'for', title);  
+                    callback(items[0].id, items[0]);  
+                    return;  
+                }  
+                console.log('[MyShows] No IMDB results, trying title search');  
+                searchByTitle();  
+            }, function(error) {  
+                console.error('[MyShows] IMDB search error:', error);  
+                searchByTitle();  
+            });  
+            return;  
+        }  
+        
+        searchByTitle();  
+        
+        function searchByTitle() {  
+            var searchQueries = [];  
+            if (originalTitle && originalTitle !== title) {  
+                searchQueries.push(originalTitle);  
+            }  
+            searchQueries.push(title);  
+            
+            var currentQueryIndex = 0;  
+            
+            function tryNextQuery() {  
+                if (currentQueryIndex >= searchQueries.length) {  
+                    console.log('[MyShows] Not found in TMDB, using fallback hash for:', title);  
+                    callback(Lampa.Utils.hash(originalTitle || title), null);  
+                    return;  
+                }  
+                
+                var searchQuery = searchQueries[currentQueryIndex];  
+                var searchType = isTV ? 'tv' : 'movie';  
+                
+                // Сначала пробуем с годом  
+                tryWithYear(searchQuery, year);  
+                
+                function tryWithYear(query, searchYear) {  
+                    var url = Lampa.TMDB.api('search/' + searchType + '?query=' + encodeURIComponent(query) + '&api_key=' + Lampa.TMDB.key());  
+                    
+                    if (searchYear) {  
+                        url += '&' + (isTV ? 'first_air_date_year' : 'year') + '=' + searchYear;  
+                    }  
+                    
+                    console.log('[MyShows] Title search:', url, 'Query:', query, 'Year:', searchYear || 'no year');  
+                    
+                    network.timeout(1000 * 10);  
+                    network.silent(url, function(results) {  
+                        console.log('[MyShows] Title search results:', query, 'year:', searchYear, results);  
+                        
+                        if (results && results.results && results.results.length > 0) {  
+                            // Ищем точное совпадение по названию  
+                            var exactMatch = null;  
+                            for (var i = 0; i < results.results.length; i++) {  
+                                var item = results.results[i];  
+                                var itemTitle = isTV ? (item.name || item.original_name) : (item.title || item.original_title);  
+                                
+                                if (itemTitle.toLowerCase() === query.toLowerCase()) {  
+                                    exactMatch = item;  
+                                    break;  
+                                }  
+                            }  
+                            
+                            // Если нашли точное совпадение, используем его  
+                            if (exactMatch) {  
+                                console.log('[MyShows] Found exact match:', exactMatch.id, exactMatch.title || exactMatch.name);  
+                                callback(exactMatch.id, exactMatch);  
+                                return;  
+                            }  
+                            
+                            // Если один результат, используем его  
+                            if (results.results.length === 1) {  
+                                var singleMatch = results.results[0];  
+                                console.log('[MyShows] Single result found:', singleMatch.id, singleMatch.title || singleMatch.name);  
+                                callback(singleMatch.id, singleMatch);  
+                                return;  
+                            }  
+                            
+                            // Если множественные результаты и поиск БЕЗ года, фильтруем по году первого эпизода  
+                            if (results.results.length > 1 && !searchYear && showData && isTV) {  
+                                var firstEpisodeYear = getFirstEpisodeYear(showData);  
+                                if (firstEpisodeYear) {  
+                                    console.log('[MyShows] Multiple results, filtering by S01E01 year:', firstEpisodeYear);  
+                                    
+                                    var yearFilteredResults = results.results.filter(function(item) {  
+                                        if (item.first_air_date) {  
+                                            var itemYear = new Date(item.first_air_date).getFullYear();  
+                                            return Math.abs(itemYear - firstEpisodeYear) <= 1; // Допуск ±1 год  
+                                        }  
+                                        return false;  
+                                    });  
+                                    
+                                    if (yearFilteredResults.length === 1) {  
+                                        var filteredMatch = yearFilteredResults[0];  
+                                        console.log('[MyShows] Found by S01E01 year filter:', filteredMatch.id, filteredMatch.name);  
+                                        callback(filteredMatch.id, filteredMatch);  
+                                        return;  
+                                    } else if (yearFilteredResults.length > 1) {  
+                                        // Берем первый из отфильтрованных  
+                                        var firstFiltered = yearFilteredResults[0];  
+                                        console.log('[MyShows] Using first from S01E01 filtered results:', firstFiltered.id, firstFiltered.name);  
+                                        callback(firstFiltered.id, firstFiltered);  
+                                        return;  
+                                    }  
+                                }  
+                            }  
+                            
+                            // Используем первый результат как fallback  
+                            var fallbackMatch = results.results[0];  
+                            console.log('[MyShows] Using first result as fallback:', fallbackMatch.id, fallbackMatch.title || fallbackMatch.name);  
+                            callback(fallbackMatch.id, fallbackMatch);  
+                            return;  
+                        }  
+                        
+                        // Если поиск с годом не дал результатов, пробуем без года  
+                        if (searchYear) {  
+                            console.log('[MyShows] No results with year, trying without year');  
+                            tryWithYear(query, null);  
+                            return;  
+                        }  
+                        
+                        // Если поиск без года тоже не дал результатов, пробуем год первого эпизода  
+                        if (showData && isTV && !searchYear) {  
+                            var firstEpisodeYear = getFirstEpisodeYear(showData);  
+                            if (firstEpisodeYear && firstEpisodeYear !== year) {  
+                                console.log('[MyShows] No results without year, trying S01E01 year:', firstEpisodeYear);  
+                                tryWithYear(query, firstEpisodeYear);  
+                                return;  
+                            }  
+                        }  
+                        
+                        // Переходим к следующему запросу  
+                        currentQueryIndex++;  
+                        tryNextQuery();  
+                        
+                    }, function(error) {  
+                        console.error('[MyShows] Title search error:', error);  
+                        
+                        // При ошибке также пробуем без года, если искали с годом  
+                        if (searchYear) {  
+                            tryWithYear(query, null);  
+                            return;  
+                        }  
+                        
+                        currentQueryIndex++;  
+                        tryNextQuery();  
+                    });  
+                }
+            }  
+            
+            tryNextQuery();  
+        }
+    }  
+
+    function getTMDBCard(tmdbId, isTV, callback) {  
+        // Добавляем проверку входных параметров  
+        if (!tmdbId || typeof tmdbId !== 'number') {  
+            console.log('[MyShows] Invalid TMDB ID:', tmdbId);  
+            callback(null, 'Invalid TMDB ID');  
+            return;  
+        }  
+        
+        var method = isTV ? 'tv' : 'movie';  
+        var params = {  
+            method: method,  
+            id: tmdbId  
+        };  
+        
+        // Используем API Lampa для получения полной информации о карточке  
+        Lampa.Api.full(params, function(response) {  
+            
+            // Извлекаем данные фильма/сериала из правильного места в ответе  
+            var movieData = response.movie || response.tv || response;  
+            
+            // Добавляем валидацию ответа - проверяем movieData, а не response  
+            if (movieData && movieData.id && (movieData.title || movieData.name)) {  
+                if (response.persons) movieData.credits = response.persons;  
+                if (response.videos) movieData.videos = response.videos;  
+                if (response.recomend) movieData.recommendations = response.recomend;  
+                if (response.simular) movieData.similar = response.simular;  
+                    callback(movieData, null);  
+                } else {  
+                    console.log('[MyShows] Invalid card response for ID:', tmdbId, response);  
+                    callback(null, 'Invalid card data');  
+                }  
+        }, function(error) {  
+            callback(null, error);  
+        });  
+    }
+
+    var cardsToAdd = [];
+
+    function addAllCardsAtOnce(cards) {  
+        try {  
+            console.log('[MyShows] Adding', cards.length, 'cards to favorites');  
+            
+            // Сортируем карточки по дате (от новых к старым)  
+            var sortedCards = cards.sort(function(a, b) {  
+                var dateA, dateB;  
+                
+                // Для сериалов используем last_air_date, для фильмов - release_date  
+                if (a.number_of_seasons || a.seasons) {  
+                    dateA = a.last_air_date || a.first_air_date || '0000-00-00';  
+                } else {  
+                    dateA = a.release_date || '0000-00-00';  
+                }  
+                
+                if (b.number_of_seasons || b.seasons) {  
+                    dateB = b.last_air_date || b.first_air_date || '0000-00-00';  
+                } else {  
+                    dateB = b.release_date || '0000-00-00';  
+                }  
+                
+                // Сортируем от новых к старым  
+                return new Date(dateB) - new Date(dateA);  
+            });  
+            
+            // Берем первые 100 карточек и делаем reverse для правильного порядка добавления  
+            var cardsToAddToHistory = sortedCards.slice(0, 100).reverse();  
+            
+            console.log('[MyShows] Adding', cardsToAddToHistory.length, 'cards to history with limit 100');  
+            
+            // Добавляем карточки - теперь самая старая добавится первой, а самая новая последней  
+            for (var i = 0; i < cardsToAddToHistory.length; i++) {  
+                Lampa.Favorite.add('history', cardsToAddToHistory[i], 100);  
+            }  
+            
+            console.log('[MyShows] Successfully added', cardsToAddToHistory.length, 'cards to history');  
+            
+        } catch (error) {  
+            console.error('[MyShows] Error adding cards:', error);  
+        }  
+    }
+
+    function watchedMoviesData(callback) {  
+        getWatchedMovies(function(watchedMoviesData) {  
+            if (watchedMoviesData && watchedMoviesData.result) {  
+                var movies = watchedMoviesData.result.map(function(movie) {  
+                    return {  
+                        myshowsId: movie.id,  
+                        title: movie.title,  
+                        titleOriginal: movie.titleOriginal,  
+                        year: movie.year,  
+                        runtime: movie.runtime,  
+                        imdbId: movie.imdbId,  
+                        kinopoiskId: movie.kinopoiskId  
+                    };  
+                });  
+                
+                console.log('[MyShows] ===== СПИСОК ФИЛЬМОВ =====');  
+                console.log('[MyShows] Всего фильмов:', movies.length);  
+                console.log('[MyShows] ===== КОНЕЦ СПИСКА ФИЛЬМОВ =====');  
+                
+                callback(movies, null);  
+            } else {  
+                callback(null, 'Ошибка получения фильмов');  
+            }  
+        });  
+    }
+    
+    function getWatchedShows(callback) {  
+        makeAuthenticatedRequest({  
+            method: 'POST',  
+            headers: JSON_HEADERS,  
+            body: createJSONRPCRequest('profile.Shows', {  
+                page: 0,  
+                pageSize: 1000  
+            })  
+        }, function(showsData) {  
+            if (!showsData || !showsData.result || showsData.result.length === 0) {  
+                callback([], null);  
+                return;  
+            }  
+            
+            var shows = [];  
+            var processedShows = 0;  
+            var totalShows = showsData.result.length;  
+            var currentIndex = 0;  
+            
+            // Обрабатываем сериалы последовательно с задержками  
+            function processNextShow() {  
+                if (currentIndex >= totalShows) {  
+                    console.log('[MyShows] ===== СПИСОК СЕРИАЛОВ =====');  
+                    console.log('[MyShows] Всего сериалов с просмотренными эпизодами:', shows.length);  
+                    console.log('[MyShows] ===== КОНЕЦ СПИСКА СЕРИАЛОВ =====');  
+                    callback(shows, null);  
+                    return;  
+                }  
+                
+                var userShow = showsData.result[currentIndex];  
+                var showId = userShow.show.id;  
+                var showTitle = userShow.show.title;  
+
+                Lampa.Noty.show('Получаю просмотренные эпизоды для сериала: ' + showTitle + ' (' + (currentIndex + 1) + '/' + totalShows + ')');
+                
+                // Получаем детали сериала  
+                makeAuthenticatedRequest({  
+                    method: 'POST',  
+                    headers: JSON_HEADERS,  
+                    body: createJSONRPCRequest('shows.GetById', {  
+                        showId: showId  
+                    })  
+                }, function(showDetailsData) {  
+                    
+                    // Получаем просмотренные эпизоды  
+                    makeAuthenticatedRequest({  
+                        method: 'POST',  
+                        headers: JSON_HEADERS,  
+                        body: createJSONRPCRequest('profile.Episodes', {  
+                            showId: showId
+                        })  
+                    }, function(episodesData) {  
+                        
+                        if (showDetailsData && showDetailsData.result &&   
+                            episodesData && episodesData.result && episodesData.result.length > 0) {  
+                            
+                            var showData = showDetailsData.result;  
+                            var watchedEpisodes = episodesData.result;  
+                            
+                            shows.push({  
+                                myshowsId: showData.id,  
+                                title: showData.title,  
+                                titleOriginal: showData.titleOriginal,  
+                                year: showData.year,  
+                                imdbId: showData.imdbId,  
+                                kinopoiskId: showData.kinopoiskId,  
+                                totalSeasons: showData.totalSeasons,  
+                                runtime: showData.runtime,  
+                                episodes: showData.episodes || [],  
+                                watchedEpisodes: watchedEpisodes  
+                            });  
+                        }  
+                        
+                        currentIndex++;  
+                        // Добавляем задержку между запросами  
+                        setTimeout(processNextShow, 10);  
+                        
+                    }, function(error) {  
+                        console.log('[MyShows] Error getting episodes for show', showId, error);  
+                        currentIndex++;  
+                        setTimeout(processNextShow, 100);  
+                    });  
+                    
+                }, function(error) {  
+                    console.log('[MyShows] Error getting show details for', showId, error);  
+                    currentIndex++;  
+                    setTimeout(processNextShow, 100);  
+                });  
+            }  
+            
+            processNextShow();  
+            
+        }, function(error) {  
+            console.log('[MyShows] Error getting shows:', error);  
+            callback(null, 'Ошибка получения сериалов');  
+        });  
+    }
+  
+    function preventScreensaver() {  
+        // Предотвращаем скринсейвер через Wake Lock API (если поддерживается)  
+        if ('wakeLock' in navigator) {  
+            navigator.wakeLock.request('screen').then(function(sentinel) {  
+                wakeLockSentinel = sentinel;  
+                console.log('[MyShows] Screen wake lock activated');  
+            }).catch(function(err) {  
+                console.log('[MyShows] Wake lock failed:', err);  
+            });  
+        }  
+        
+        // Альтернативный метод - периодическая активность  
+        var keepAliveInterval = setInterval(function() {  
+            // Создаем невидимое движение мыши  
+            document.dispatchEvent(new MouseEvent('mousemove', {  
+                clientX: 1,  
+                clientY: 1  
+            }));  
+        }, 30000); // Каждые 30 секунд  
+        
+        return keepAliveInterval;  
+    }  
+    
+    function allowScreensaver(keepAliveInterval) {  
+        if (wakeLockSentinel) {  
+            wakeLockSentinel.release();  
+            wakeLockSentinel = null;  
+            console.log('[MyShows] Screen wake lock released');  
+        }  
+        
+        if (keepAliveInterval) {  
+            clearInterval(keepAliveInterval);  
+        }  
+    }
 
     // Инициализация плеера  
     if (window.Lampa && Lampa.Player && Lampa.Player.listener) {  
