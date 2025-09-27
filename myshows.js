@@ -852,26 +852,32 @@
         });  
     }
 
-    function fetchShowStatus(callback) {
-        makeMyShowsJSONRPCRequest('profile.Shows', {
-        }, function(success, data) {
-            if (success && data && data.result) {
-                var filteredShows = data.result.map(function(item) {  
-                    return {  
-                        id: item.show.id,  
-                        title: item.show.title,  
-                        titleOriginal: item.show.titleOriginal,  
-                        watchStatus: item.watchStatus  
-                    };  
-                });  
+    function fetchShowStatus(callback) {  
+        makeMyShowsJSONRPCRequest('profile.Shows', {  
+        }, function(success, data) {  
+            if (success && data && data.result) {  
+                var filteredShows = data.result.map(function(item) {    
+                    var status = item.watchStatus;  
+                    
+                    if (status === 'finished') {  
+                        status = 'watching';  
+                    }  
+                    
+                    return {    
+                        id: item.show.id,    
+                        title: item.show.title,    
+                        titleOriginal: item.show.titleOriginal,    
+                        watchStatus: status    
+                    };    
+                });    
                 
-                callback({shows: filteredShows});
-                saveCacheToServer({ shows: filteredShows }, 'serial_status', function() {})
-
-            } else {
-                callback(null);
-            }
-        }) 
+                callback({shows: filteredShows});  
+                saveCacheToServer({ shows: filteredShows }, 'serial_status', function() {})  
+    
+            } else {  
+                callback(null);  
+            }  
+        })   
     }
 
     // Получить непросмотренные серии
