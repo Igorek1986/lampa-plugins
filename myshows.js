@@ -1732,8 +1732,24 @@
     }
 
     function fetchSeasonDetails(foundShow, fullResponse, currentShow, totalEpisodes, lastSeason, index, status) {
-        var seasonUrl = 'https://api.themoviedb.org/3/tv/' + foundShow.id + '/season/' + lastSeason +
-            '?api_key=' + Lampa.TMDB.key() +
+            var targetSeason = lastSeason;  
+        if (currentShow.unwatchedEpisodes && currentShow.unwatchedEpisodes.length > 0) {  
+            targetSeason = currentShow.unwatchedEpisodes[0].seasonNumber;  
+            console.log('[MyShows] Using season from unwatched episodes:', targetSeason);  
+        }  
+        
+        // Проверяем, есть ли эпизоды в целевом сезоне  
+        var seasonInfo = foundShow.seasons && foundShow.seasons.find(function(s) {  
+            return s.season_number === targetSeason;  
+        });  
+        
+        if (seasonInfo && seasonInfo.episode_count === 0) {  
+            console.log('[MyShows] Season', targetSeason, 'has no episodes, skipping API call');  
+            appendEnriched(fullResponse, foundShow, currentShow, totalEpisodes, totalEpisodes, index, status);  
+            return;  
+        }
+        var seasonUrl = 'https://api.themoviedb.org/3/tv/' + foundShow.id + '/season/' + targetSeason +  
+            '?api_key=' + Lampa.TMDB.key() +  
             '&language=' + Lampa.Storage.get('tmdb_lang', 'ru');
 
         var seasonNetwork = new Lampa.Reguest();
