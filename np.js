@@ -122,28 +122,67 @@
         loadNextPage();
     }
 
-    function getReleasedEpisodesFromTMDB(item) {  
-        var episodes = [];  
-        var lastEpisode = item.last_episode_to_air;  
+    function getReleasedEpisodesFromTMDB(item) {      
+        var episodes = [];      
         
-        if (!lastEpisode || !item.seasons) return episodes;  
-        
-        // Генерируем все эпизоды до последнего выпущенного  
-        for (var season = 1; season <= lastEpisode.season_number; season++) {  
-            var maxEpisode = (season === lastEpisode.season_number)   
-                ? lastEpisode.episode_number   
-                : getEpisodeCountForSeason(item.seasons, season);  
-                
-            for (var episode = 1; episode <= maxEpisode; episode++) {  
-                episodes.push({  
-                    season_number: season,  
-                    episode_number: episode  
-                });  
-            }  
+        if (!item) {  
+            return episodes;  
         }  
         
-        return episodes;  
-    }  
+        // Проверяем наличие last_episode_to_myshows    
+        if (item.last_episode_to_myshows) {    
+            
+            var lastEp = item.last_episode_to_myshows;    
+            
+            // Если есть данные seasons, используем их  
+            if (item.seasons && Array.isArray(item.seasons)) {  
+                for (var season = 1; season <= lastEp.season_number; season++) {      
+                    var maxEpisode = (season === lastEp.season_number)       
+                        ? lastEp.episode_number       
+                        : getEpisodeCountForSeason(item.seasons, season);      
+                        
+                    for (var episode = 1; episode <= maxEpisode; episode++) {      
+                        episodes.push({      
+                            season_number: season,      
+                            episode_number: episode      
+                        });      
+                    }      
+                }  
+            } else {  
+                // Если нет seasons, генерируем только для последнего сезона  
+                for (var episode = 1; episode <= lastEp.episode_number; episode++) {  
+                    episodes.push({  
+                        season_number: lastEp.season_number,  
+                        episode_number: episode  
+                    });  
+                }  
+            }  
+             
+            return episodes;    
+        }    
+        
+        // Fallback на TMDB (остальной код без изменений)   
+        var lastEpisode = item.last_episode_to_air;      
+        
+        if (!lastEpisode || !item.seasons) {    
+            return episodes;    
+        }    
+        
+        for (var season = 1; season <= lastEpisode.season_number; season++) {      
+            var maxEpisode = (season === lastEpisode.season_number)       
+                ? lastEpisode.episode_number       
+                : getEpisodeCountForSeason(item.seasons, season);      
+                
+            for (var episode = 1; episode <= maxEpisode; episode++) {      
+                episodes.push({      
+                    season_number: season,      
+                    episode_number: episode      
+                });      
+            }      
+        }      
+        
+        return episodes;      
+    }
     
     function getEpisodeCountForSeason(seasons, seasonNumber) {  
         var season = seasons.find(function(s) {   
@@ -337,6 +376,7 @@
                     if (item.watched_count !== undefined) dataItem.watched_count = item.watched_count;  
                     if (item.total_count !== undefined) dataItem.total_count = item.total_count;  
                     if (item.released_count !== undefined) dataItem.released_count = item.released_count;  
+                    if (item.last_episode_to_myshows !== undefined) dataItem.last_episode_to_myshows = item.last_episode_to_myshows;  
 
                     dataItem.promo_title = dataItem.title || dataItem.name || dataItem.original_title || dataItem.original_name;  
                     dataItem.promo = dataItem.overview;  
