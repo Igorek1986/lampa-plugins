@@ -881,68 +881,107 @@
     }
 
     // Получить непросмотренные серии
-    function fetchFromMyShowsAPI(callback) {  
-        makeMyShowsJSONRPCRequest('lists.Episodes', { list: 'unwatched'   
-        }, function(success, response) {  
-            if (!response || !response.result) {  
-                callback({ error: response ? response.error : 'Empty response' });  
-                return;  
-            }  
+    function fetchFromMyShowsAPI(callback) {    
+        makeMyShowsJSONRPCRequest('lists.Episodes', { list: 'unwatched'     
+        }, function(success, response) {    
+            if (!response || !response.result) {    
+                callback({ error: response ? response.error : 'Empty response' });    
+                return;    
+            }    
     
-            // Группируем эпизоды по сериалам и подсчитываем количество  
-            var showsData = {};  
-            var shows = [];  
+            var showsData = {};    
+            var shows = [];    
+            var myshowsIndex = {};  
             
-            for (var i = 0; i < response.result.length; i++) {  
-                var item = response.result[i];  
-                if (item.show) {  
-                    var showId = item.show.id;  
+            
+            for (var i = 0; i < response.result.length; i++) {    
+                var item = response.result[i];    
+                if (item.show) {    
+                    var showId = item.show.id;    
                     
-                    if (!showsData[showId]) {  
-                        showsData[showId] = {  
-                            show: item.show,  
-                            unwatchedCount: 0,  
-                            episodes: []  
-                        };  
+                    if (!showsData[showId]) {    
+                        showsData[showId] = {    
+                            show: item.show,    
+                            unwatchedCount: 0,    
+                            episodes: []    
+                        };    
+                    }    
+                    
+                    showsData[showId].unwatchedCount++;    
+                    showsData[showId].episodes.push(item.episode);    
+                }    
+            }    
+            
+            // Преобразуем в массив и создаём last_episode_to_myshows  
+            for (var showId in showsData) {    
+                var showData = showsData[showId];  
+                
+                // Первый элемент unwatchedEpisodes - это последний вышедший эпизод  
+                var lastEpisode = showData.episodes[0];  
+                var last_episode_to_myshows = null;  
+                
+                if (lastEpisode) {  
+                    last_episode_to_myshows = {  
+                        season_number: lastEpisode.seasonNumber,  
+                        episode_number: lastEpisode.episodeNumber,  
+                        air_date: lastEpisode.airDate,  
+                        air_date_utc: lastEpisode.airDateUTC  
+                    };  
+                }  
+                
+                var key = (showData.show.titleOriginal || showData.show.title).toLowerCase();  
+                myshowsIndex[key] = {  
+                    myshowsId: showData.show.id,  
+                    unwatchedCount: showData.unwatchedCount,  
+                    unwatchedEpisodes: showData.episodes,  
+                    last_episode_to_myshows: last_episode_to_myshows  
+                };  
+                
+                shows.push({    
+                    myshowsId: showData.show.id,    
+                    title: showData.show.title,    
+                    originalTitle: showData.show.titleOriginal,    
+                    year: showData.show.year,    
+                    unwatchedCount: showData.unwatchedCount,    
+                    unwatchedEpisodes: showData.episodes,  
+                    last_episode_to_myshows: last_episode_to_myshows  
+                });    
+            }    
+            
+            // Получаем данные TMDB и объединяем  
+            getTMDBDetails(shows, function(result) {    
+                if (result && result.shows) {  
+                    
+                    for (var i = 0; i < result.shows.length; i++) {  
+                        var tmdbShow = result.shows[i];  
+                        var key = (tmdbShow.original_title || tmdbShow.original_name ||   
+                                tmdbShow.title || tmdbShow.name).toLowerCase();  
+                        
+                        if (myshowsIndex[key]) {  
+                            tmdbShow.myshowsId = myshowsIndex[key].myshowsId;  
+                            tmdbShow.unwatchedCount = myshowsIndex[key].unwatchedCount;  
+                            // tmdbShow.unwatchedEpisodes = myshowsIndex[key].unwatchedEpisodes;  
+                            tmdbShow.last_episode_to_myshows = myshowsIndex[key].last_episode_to_myshows;  
+
+                        }  
                     }  
                     
-                    showsData[showId].unwatchedCount++;  
-                    showsData[showId].episodes.push(item.episode);  
-                }  
-            }  
-            
-            // Преобразуем в массив для отображения  
-            for (var showId in showsData) {  
-                var showData = showsData[showId];  
-                shows.push({  
-                    myshowsId: showData.show.id,  
-                    title: showData.show.title,  
-                    originalTitle: showData.show.titleOriginal,  
-                    year: showData.show.year,  
-                    unwatchedCount: showData.unwatchedCount,  
-                    unwatchedEpisodes: showData.episodes  
-                });  
-            }  
-            
-            // Сразу переходим к поиску в TMDB  
-            getTMDBDetails(shows, function(result) {  
-                if (result && result.shows) {  
-                    // Сохраняем в серверный кеш  
-                    var cacheData = {  
-                        shows: result.shows,  
-                    };  
-                    saveCacheToServer(cacheData, 'unwatched_serials', function(result) {});  
+                    var cacheData = {    
+                        shows: result.shows,    
+                    };    
+                    
 
-                    var useFastAPI = Lampa.Storage.get('numparser_myshows_fastapi', false);  
-                    if (useFastAPI) {  
-                        console.log('[MyShows] Сохраняем данные в FastAPI');  
-                        saveToFastAPI(cacheData, 'unwatched_serials');  
-                    }
-                }  
-                callback(result);  
-            });  
-        });  
-    } 
+                    saveCacheToServer(cacheData, 'unwatched_serials', function(result) {});    
+    
+                    var useFastAPI = Lampa.Storage.get('numparser_myshows_fastapi', false);    
+                    if (useFastAPI) {     
+                        saveToFastAPI(cacheData, 'unwatched_serials');    
+                    }  
+                }    
+                callback(result);    
+            });    
+        });    
+    }
 
     var BASE_URL = Lampa.Storage.get('base_url_numparser');
 
