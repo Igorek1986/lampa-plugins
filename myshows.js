@@ -157,8 +157,11 @@
                 if (successCallback) {    
                     successCallback(data.token);    
                 } else {    
-                    Lampa.Noty.show('Auth success!');    
-                }    
+                    Lampa.Noty.show('Auth success! Reboot after 3 seconds...');    
+                    setTimeout(function() {  
+                        window.location.reload(); 
+                    }, 3000);
+                }     
             } else {    
                 if (successCallback) {    
                     successCallback(null);    
