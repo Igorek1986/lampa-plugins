@@ -1675,13 +1675,11 @@
         }  
     }
 
-    function enrichShowData(fullResponse, myshowsData) {    
-        // Используем полные данные TMDB как основу  
-        var enriched = Object.assign({}, fullResponse);    
+    function enrichShowData(fullResponse, myshowsData) {  
+        var enriched = Object.assign({}, fullResponse);  
         
-        // Добавляем данные MyShows  
         if (myshowsData) {  
-            enriched.progress_marker = myshowsData.progress_marker;  
+            enriched.progress_marker = myshowsData.progress_marker;  // ✅ Сохраняем маркер  
             enriched.watched_count = myshowsData.watched_count;  
             enriched.total_count = myshowsData.total_count;  
             enriched.released_count = myshowsData.released_count;  
@@ -1719,7 +1717,7 @@
                 .map(function (key) { return data[key]; })
                 .filter(Boolean);
 
-            var sortOrder = getProfileSetting('myshows_sort_order', 'alphabet');
+            var sortOrder = getProfileSetting('myshows_sort_order', 'progress');
 
             sortShows(matchedShows, sortOrder);
 
@@ -1948,31 +1946,44 @@
         }, 150);  
     }  
 
-    function updateAllMyShowsCards(originalName, newProgressMarker, withAnimation) {    
-        var cards = document.querySelectorAll('.card');    
-        for (var i = 0; i < cards.length; i++) {    
-            var cardElement = cards[i];    
-            var cardData = cardElement.card_data || {};    
-
-            if ((cardData.original_title || cardData.original_name || cardData.name || cardData.title) === originalName &&     
-                cardData.progress_marker) {    
+    function updateAllMyShowsCards(originalName, newProgressMarker, withAnimation) {  
+        var cards = document.querySelectorAll('.card');  
+        
+        for (var i = 0; i < cards.length; i++) {  
+            var cardElement = cards[i];  
+            
+            // ✅ Проверяем оба варианта хранения данных  
+            var cardData = cardElement.card_data || cardElement.data || {};  
+            
+            var cardName = cardData.original_title || cardData.original_name ||   
+                        cardData.name || cardData.title;  
+            
+            if (cardName === originalName && cardData.progress_marker) {  
+                // Обновляем данные  
+                cardData.progress_marker = newProgressMarker;  
                 
-                // Обновляем данные карточки    
-                cardData.progress_marker = newProgressMarker;    
+                // Обновляем DOM  
+                var progressElement = cardElement.querySelector('.card__marker--progress span');  
                 
-                if (withAnimation) {  
-                    // Обновляем с анимацией только если флаг установлен  
-                    updateCardWithAnimation(cardElement, newProgressMarker);    
-                } else {  
-                    // Обновляем без анимации - просто меняем текст  
-                    var progressElement = cardElement.querySelector('.card__marker--progress span');  
-                    if (progressElement) {  
+                if (progressElement) {  
+                    if (withAnimation) {  
+                        updateCardWithAnimation(cardElement, newProgressMarker);  
+                    } else {  
                         progressElement.textContent = newProgressMarker;  
                     }  
+                } else {  
+                    // Если маркера нет, создаем его  
+                    var cardView = cardElement.querySelector('.card__view');  
+                    if (cardView) {  
+                        var marker = document.createElement('div');  
+                        marker.className = 'card__marker card__marker--progress';  
+                        marker.innerHTML = '<span>' + newProgressMarker + '</span>';  
+                        cardView.appendChild(marker);  
+                    }  
                 }  
-            }    
-        }    
-    };
+            }  
+        }  
+    }
 
     Lampa.Listener.follow('activity', function(event) {  
         if (event.type === 'start' && event.component === 'full') {  
@@ -2193,85 +2204,64 @@
             }      
         } 
         
-        if (targetSection) {    
-            var scrollElement = targetSection.querySelector('.scroll');    
+        if (targetSection) {  
+            var scrollElement = targetSection.querySelector('.scroll');  
             
-            if (scrollElement && scrollElement.Scroll) {    
-                
+            if (scrollElement && scrollElement.Scroll) {  
                 var scroll = scrollElement.Scroll;  
-
-                try {    
-                    var newCard = new Lampa.Card(showData, {    
-                        object: { source: 'tmdb' },    
-                        card_category: true    
-                    });    
+                
+                try {  
+                    // ✅ Используем Lampa.Maker для Lampa 3.0+  
+                    var isLampa3 = Lampa.Manifest && Lampa.Manifest.app_digital >= 300;  
                     
-                    // Переопределяем метод favorite    
-                    var originalFavorite = newCard.favorite;    
-                    newCard.favorite = function() {    
-                        originalFavorite.call(this);    
-                        
-                        if (showData.progress_marker) {    
-                            var marker = this.card.querySelector('.card__marker');    
-                            
-                            if (!marker) {    
-                                marker = document.createElement('div');    
-                                marker.className = 'card__marker card__marker--progress';    
-                                marker.innerHTML = '<span></span>';    
-                                this.card.querySelector('.card__view').appendChild(marker);    
-                            }    
-                            
-                            marker.querySelector('span').textContent = showData.progress_marker;    
-                            marker.classList.add('card__marker--progress');    
-                        }    
-                    };    
+                    var newCard;  
+                    if (isLampa3) {  
+                        newCard = Lampa.Maker.make('Card', {  
+                            title: showData.name || showData.title,  
+                            original_title: showData.original_name || showData.original_title,  
+                            poster_path: showData.poster_path,  
+                            id: showData.id,  
+                            progress_marker: showData.progress_marker,  // ✅ Передаем маркер  
+                            watched_count: showData.watched_count,  
+                            total_count: showData.total_count,  
+                            released_count: showData.released_count  
+                        }, function(module) {  
+                            return module.toggle(module.MASK.base, 'Callback');  
+                        });  
+                    } else {  
+                        // Для старых версий используйте ваш старый код  
+                        newCard = new Lampa.Card(showData, {  
+                            object: { source: 'tmdb' },  
+                            card_category: true  
+                        });  
+                    }  
                     
-                    newCard.onEnter = function(target, card_data) {    
-                        Lampa.Activity.push({    
-                            url: card_data.url,    
-                            component: 'full',    
-                            id: card_data.id,    
-                            method: isMovieContent(card_data) ? 'movie' : 'tv',   
-                            card: card_data,    
-                            source: card_data.source || 'tmdb'    
-                        });    
-                    };    
+                    // Настройка обработчика клика  
+                    newCard.use({  
+                        onEnter: function(target, card_data) {  
+                            Lampa.Activity.push({  
+                                url: card_data.url,  
+                                component: 'full',  
+                                id: card_data.id,  
+                                method: 'tv',  
+                                card: card_data,  
+                                source: 'tmdb'  
+                            });  
+                        }  
+                    });  
                     
-                    newCard.create();    
-                    newCard.favorite();    
-                    
-                    var cardElement = newCard.render(true);    
+                    var cardElement = newCard.render(true);  
                     
                     if (cardElement) {  
                         scroll.append(cardElement);  
                         
-                        // Добавляем карточку в систему навигации  
                         if (window.Lampa && window.Lampa.Controller) {  
                             window.Lampa.Controller.collectionAppend(cardElement);  
-                            
-                            // Восстанавливаем фокус на предыдущий элемент  
-                            setTimeout(function() {  
-                                if (currentFocusedCard && window.Lampa.Controller.enabled()) {  
-                                    // Находим индекс предыдущего элемента  
-                                    var allCards = document.querySelectorAll('.card');  
-                                    var targetIndex = -1;  
-                                    
-                                    for (var i = 0; i < allCards.length; i++) {  
-                                        if (allCards[i] === currentFocusedCard) {  
-                                            targetIndex = i;  
-                                            break;  
-                                        }  
-                                    }  
-                                    
-                                    if (targetIndex >= 0) {  
-                                        // Устанавливаем фокус на сохраненный элемент  
-                                        window.Lampa.Controller.focus(currentFocusedCard);  
-                                    }  
-                                }  
-                            }, 100);  
                         }  
-                    } 
-                } catch (error) {}  
+                    }  
+                } catch (error) {  
+                    console.error('[MyShows] Error creating card:', error);  
+                }  
             }  
         }  
     }
@@ -3553,4 +3543,63 @@
             }  
         }  
     });
+
+    // Добавьте это в ваш плагин MyShows после инициализации  
+    function init() {  
+        if (typeof Lampa === 'undefined' || !Lampa.Storage) {  
+            setTimeout(init, 100);  
+            return;  
+        }  
+    
+        var isLampa3 = Lampa.Manifest && Lampa.Manifest.app_digital >= 300;  
+    
+        if (isLampa3 && Lampa.Maker && Lampa.Maker.map) {  
+            try {  
+                var cardMap = Lampa.Maker.map('Card');  
+                
+                if (cardMap && cardMap.Card && cardMap.Card.onVisible) {  
+                    var originalOnVisible = cardMap.Card.onVisible;  
+                    
+                    cardMap.Card.onVisible = function() {  
+                        originalOnVisible.call(this);  
+                        
+                        // Добавляем маркер прогресса для MyShows карточек  
+                        if (this.html) {  
+                            addProgressMarkerToCard(this.html, this.data);  
+                        }  
+                    };  
+                }  
+            } catch (error) {  
+                console.error('[MyShows] Error intercepting Card.onVisible:', error);  
+            }  
+        }  
+    }  
+    
+    function addProgressMarkerToCard(htmlElement, cardData) {  
+        // Получаем DOM-элемент  
+        var cardElement = htmlElement;  
+        if (htmlElement && htmlElement.get) {  
+            cardElement = htmlElement.get(0);  
+        }  
+        
+        if (!cardElement) return;  
+        
+        var cardView = cardElement.querySelector('.card__view');  
+        if (!cardView) return;  
+        
+        // Проверяем, есть ли progress_marker в данных карточки  
+        if (!cardData || !cardData.progress_marker) return;  
+        
+        // Проверяем, не добавлен ли уже маркер  
+        if (cardView.querySelector('.card__marker--progress')) return;  
+        
+        // Создаем маркер прогресса  
+        var marker = document.createElement('div');  
+        marker.className = 'card__marker card__marker--progress';  
+        marker.innerHTML = '<span>' + cardData.progress_marker + '</span>';  
+        
+        cardView.appendChild(marker);  
+    }  
+    
+    init();
 })();
