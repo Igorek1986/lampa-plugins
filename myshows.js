@@ -553,7 +553,7 @@
                     items: [  
                         {  
                             title: 'Синхронизировать',  
-                            subtitle: 'Добавить просмотренные фильмы и сериалы в историю Lampa',  
+                            subtitle: 'Добавить просмотренные фильмы и сериалы в историю Lampa. (Требуется модуль TimecodeUser)',  
                             confirm: true  
                         },  
                         {  
@@ -1589,49 +1589,27 @@
             Lampa.Storage.set(MAP_KEY, cleaned);       
         }      
     }
-    
-    function prepareProgressMarkers(data) {    
-        var items = data.shows || data.results || [];  
-        
-        items.forEach(function(show) {    
-            if (show.progress_marker) {    
-                show._prebuiltMarker = '<div class="card__marker card__marker--progress"><span>' +     
-                                    show.progress_marker + '</span></div>';    
-            }    
-        });  
-        
-        return data;    
-    }
 
     function getUnwatchedShowsWithDetails(callback, show) {   
         var useFastAPI = Lampa.Storage.get('numparser_myshows_fastapi', false);  
       
         if (useFastAPI) { 
             fetchFromMyShowsAPI(function(freshResult) {
-                // Добавляем предварительную подготовку маркеров для кешированных данных  
-                callback(prepareProgressMarkers(freshResult));
             }); 
         } else {
             // Логика с кешем    
             loadCacheFromServer('unwatched_serials', 'shows', function(cachedResult) {    
                 if (cachedResult) {      
-                    // Добавляем предварительную подготовку маркеров для кешированных данных  
-                    prepareProgressMarkers(cachedResult);
-                    
                     callback(cachedResult);   
                 } else {
                     fetchFromMyShowsAPI(function(freshResult) {
-                        // Добавляем предварительную подготовку маркеров для кешированных данных  
-                        callback(prepareProgressMarkers(freshResult));
                     });    
                 } 
             });    
         } 
     }
 
-
     function updateUIIfNeeded(oldShows, newShows) {  
-        // Создаем карты для быстрого поиска  
         var oldShowsMap = {};  
         var newShowsMap = {};  
         
@@ -1649,7 +1627,19 @@
         for (var newKey in newShowsMap) {  
             if (!oldShowsMap[newKey]) {  
                 console.log('[MyShows] Adding new show:', newKey);  
-                insertNewCardIntoMyShowsSection(newShowsMap[newKey]);  
+                
+                // ✅ Проверяем, есть ли карточка в DOM  
+                var existingCard = findExistingCard(newKey);  
+                if (!existingCard) {  
+                    insertNewCardIntoMyShowsSection(newShowsMap[newKey]);  
+                } else {  
+                    console.log('[MyShows] Card already exists in DOM:', newKey);  
+                    // Обновляем данные существующей карточки  
+                    existingCard.card_data = existingCard.card_data || {};  
+                    existingCard.card_data.progress_marker = newShowsMap[newKey].progress_marker;  
+                    existingCard.card_data.next_episode = newShowsMap[newKey].next_episode;  
+                    addProgressMarkerToCard(existingCard, existingCard.card_data);  
+                }  
             }  
         }  
         
@@ -1661,15 +1651,16 @@
             }  
         }  
         
-        // Обновляем прогресс существующих сериалов  
+        // Обновляем прогресс существующих  
         for (var key in newShowsMap) {  
             if (oldShowsMap[key]) {  
                 var oldShow = oldShowsMap[key];  
                 var newShow = newShowsMap[key];  
                 
-                if (oldShow.progress_marker !== newShow.progress_marker) {  
-                    console.log('[MyShows] Updating show progress:', key);  
-                    updateAllMyShowsCards(key, newShow.progress_marker);  
+                if (oldShow.progress_marker !== newShow.progress_marker ||   
+                    oldShow.next_episode !== newShow.next_episode) {  
+                    console.log('[MyShows] Updating show:', key);  
+                    updateAllMyShowsCards(key, newShow.progress_marker, newShow.next_episode);  
                 }  
             }  
         }  
@@ -1683,6 +1674,7 @@
             enriched.watched_count = myshowsData.watched_count;  
             enriched.total_count = myshowsData.total_count;  
             enriched.released_count = myshowsData.released_count;  
+            enriched.next_episode = myshowsData.next_episode; 
         }  
         
         // Даты (теперь из полных данных TMDB)  
@@ -1869,18 +1861,39 @@
         return totalEpisodes - unreleased;
     }
 
-    function appendEnriched(fullResponse, foundShow, currentShow, totalEpisodes, releasedEpisodes, index, status) {
-        var watchedEpisodes = Math.max(0, releasedEpisodes - currentShow.unwatchedCount);
-
-        var myshowsData = {
-            progress_marker: watchedEpisodes + '/' + totalEpisodes,
-            watched_count: watchedEpisodes,
-            total_count: totalEpisodes,
-            released_count: releasedEpisodes
-        };
-
-        var enrichedShow = enrichShowData(fullResponse, myshowsData);
-        status.append('tmdb_' + index, enrichedShow);
+    function appendEnriched(fullResponse, foundShow, currentShow, totalEpisodes, releasedEpisodes, index, status) {  
+        var watchedEpisodes = Math.max(0, releasedEpisodes - currentShow.unwatchedCount);  
+        
+        // ✅ Находим следующую непросмотренную серию  
+        var nextEpisode = null;  
+        if (currentShow.unwatchedEpisodes && currentShow.unwatchedEpisodes.length > 0) {  
+            var lastUnwatched = currentShow.unwatchedEpisodes[currentShow.unwatchedEpisodes.length - 1];  
+            
+            // ✅ Форматируем "s04e07" → "S04 E07"  
+            var shortName = lastUnwatched.shortName; // "s04e07"  
+            if (shortName) {  
+                // Используем регулярное выражение для разбора формата sXXeYY  
+                var match = shortName.match(/s(\d+)e(\d+)/i);  
+                if (match) {  
+                    var season = match[1].padStart(2, '0');  // "04"  
+                    var episode = match[2].padStart(2, '0'); // "07"  
+                    nextEpisode = 'S' + season + '/E' + episode; // "S04 E07"  
+                } else {  
+                    nextEpisode = shortName.toUpperCase(); // Запасной вариант  
+                }  
+            }  
+        }  
+    
+        var myshowsData = {  
+            progress_marker: watchedEpisodes + '/' + totalEpisodes,  
+            watched_count: watchedEpisodes,  
+            total_count: totalEpisodes,  
+            released_count: releasedEpisodes,  
+            next_episode: nextEpisode  // ✅ Добавляем следующую серию  
+        };  
+    
+        var enrichedShow = enrichShowData(fullResponse, myshowsData);  
+        status.append('tmdb_' + index, enrichedShow);  
     }
 
     function getTotalEpisodesCount(tmdbShow) {  
@@ -1896,95 +1909,101 @@
         return total;  
     }
 
-    function createMyShowsCard(item, params) {    
-        var card = new Lampa.Card(item, params);    
-        
-        var originalFavorite = card.favorite;    
-        card.favorite = function() {    
-            originalFavorite.call(this);    
-            
-            // Используем предварительно подготовленный HTML  
-            if (item._prebuiltMarker) {    
-                var cardView = this.card.querySelector('.card__view');  
-                if (cardView) {  
-                    cardView.insertAdjacentHTML('beforeend', item._prebuiltMarker);  
-                }  
-            }    
-        };    
-        
-        return card;    
-    }
-
     window.MyShows = {
         getUnwatchedShowsWithDetails: getUnwatchedShowsWithDetails,
-        createMyShowsCard: createMyShowsCard,
-        prepareProgressMarkers: prepareProgressMarkers,
         saveToFastAPI: saveToFastAPI,
 
     };
 
-    // Функция обновления с визуальным эффектом  
-    function updateCardWithAnimation(cardElement, newProgressMarker) {  
-        var progressMarker = cardElement.querySelector('.card__marker--progress span');  
-        if (!progressMarker) return;  
+    function updateCardWithAnimation(cardElement, newText, markerClass) {  
+        if (!cardElement || !markerClass) return;  
         
-        var oldText = progressMarker.textContent;  
-        if (oldText === newProgressMarker) return;  
+        if (typeof newText !== 'string') {  
+            console.warn('[MyShows] Invalid newText type:', typeof newText, newText);  
+            return;  
+        }  
+        
+        // ✅ ИСПРАВЛЕНО: Работаем с самим маркером, а не с <span>  
+        var marker = cardElement.querySelector('.' + markerClass);  
+        if (!marker) {  
+            console.log('[MyShows] Marker not found:', markerClass);  
+            return;  
+        }  
+        
+        var oldText = marker.textContent;  
+        if (oldText === newText) return;  
+        
+        console.log('[MyShows] Updating marker:', markerClass, 'from', oldText, 'to', newText);  
         
         // Добавляем CSS анимацию  
-        progressMarker.style.transition = 'all 0.5s ease';  
-        progressMarker.style.transform = 'scale(1.5)';  
-        progressMarker.style.color = '#FFD700';  
+        marker.style.transition = 'all 0.5s ease';  
+        marker.style.transform = 'scale(1.5)';  
+        marker.style.color = '#FFD700';  
         
         setTimeout(function() {  
-            progressMarker.textContent = newProgressMarker;  
+            marker.textContent = newText;  
             
             setTimeout(function() {  
-                progressMarker.style.transform = 'scale(1)';  
-                progressMarker.style.color = '#fff';  
-            }, 150);  
-        }, 150);  
-    }  
+                marker.style.transform = 'scale(1)';  
+                marker.style.color = '';  
+            }, 500);  
+        }, 250);  
+    }
 
-    function updateAllMyShowsCards(originalName, newProgressMarker, withAnimation) {  
+    function updateAllMyShowsCards(showName, newProgressMarker, newNextEpisode) {  
+        console.log('[MyShows] updateAllMyShowsCards called:', {  
+            showName: showName,  
+            progress: newProgressMarker,  
+            nextEpisode: newNextEpisode,  
+            nextEpisodeType: typeof newNextEpisode  
+        });  
+        
         var cards = document.querySelectorAll('.card');  
         
-        for (var i = 0; i < cards.length; i++) {  
-            var cardElement = cards[i];  
-            
-            // ✅ Проверяем оба варианта хранения данных  
-            var cardData = cardElement.card_data || cardElement.data || {};  
+        cards.forEach(function(cardElement) {  
+            var cardData = cardElement.card_data;  
+            if (!cardData) return;  
             
             var cardName = cardData.original_title || cardData.original_name ||   
                         cardData.name || cardData.title;  
             
-            if (cardName === originalName && cardData.progress_marker) {  
-                // Обновляем данные  
-                cardData.progress_marker = newProgressMarker;  
+            if (cardName === showName) {  
+                console.log('[MyShows] Found card to update:', cardName);  
                 
-                // Обновляем DOM  
-                var progressElement = cardElement.querySelector('.card__marker--progress span');  
-                
-                if (progressElement) {  
-                    if (withAnimation) {  
-                        updateCardWithAnimation(cardElement, newProgressMarker);  
-                    } else {  
-                        progressElement.textContent = newProgressMarker;  
-                    }  
-                } else {  
-                    // Если маркера нет, создаем его  
-                    var cardView = cardElement.querySelector('.card__view');  
-                    if (cardView) {  
-                        var marker = document.createElement('div');  
-                        marker.className = 'card__marker card__marker--progress';  
-                        marker.innerHTML = '<span>' + newProgressMarker + '</span>';  
-                        cardView.appendChild(marker);  
-                    }  
+                // ✅ Обновляем данные в card_data  
+                if (newProgressMarker) {  
+                    cardData.progress_marker = newProgressMarker;  
                 }  
+                if (newNextEpisode && typeof newNextEpisode === 'string') {  
+                    cardData.next_episode = newNextEpisode;  
+                }  
+                
+                // ✅ Подписываемся на события (если ещё не подписаны)  
+                if (!cardElement.dataset.myshowsListeners) {  
+                    cardElement.addEventListener('visible', function() {  
+                        console.log('[MyShows] Card visible event fired (existing)');  
+                        addProgressMarkerToCard(cardElement, cardElement.card_data);  
+                    });  
+                    
+                    cardElement.addEventListener('update', function() {  
+                        console.log('[MyShows] Card update event fired (existing)');  
+                        addProgressMarkerToCard(cardElement, cardElement.card_data);  
+                    });  
+                    
+                    cardElement.dataset.myshowsListeners = 'true';  
+                }  
+                
+                // ✅ Обновляем визуально  
+                addProgressMarkerToCard(cardElement, cardData);  
+                
+                // ✅ Триггерим событие update  
+                var event = new Event('update');  
+                cardElement.dispatchEvent(event);  
             }  
-        }  
+        });  
     }
 
+    
     Lampa.Listener.follow('activity', function(event) {  
         if (event.type === 'start' && event.component === 'full') {  
             // Сохраняем карточку, в которую зашли  
@@ -2024,7 +2043,11 @@
                                 var existingCard = findExistingCard(originalName);  
                                 
                                 if (existingCard && foundShow.progress_marker) {  
-                                    updateAllMyShowsCards(originalName, foundShow.progress_marker, true)
+                                    updateAllMyShowsCards(  
+                                        originalName,   
+                                        foundShow.progress_marker,   
+                                        foundShow.next_episode  
+                                    ); 
                                 } else if (!existingCard) {  
                                     insertNewCardIntoMyShowsSection(foundShow);  
                                 }  
@@ -2047,7 +2070,7 @@
                         
                         if (foundShow && foundShow.progress_marker) {  
                             // Обновляем UI  
-                            updateAllMyShowsCards(originalName, foundShow.progress_marker, true)
+                            updateAllMyShowsCards(originalName, foundShow.progress_marker, foundShow.next_episode);
                         }
                     }  
                 });  
@@ -2058,41 +2081,43 @@
         }  
     });
 
-    function updateCompletedShowCard(showName) {    
-        var cards = document.querySelectorAll('.card');    
-        console.log('[MyShows] Searching for card:', showName, 'Total cards:', cards.length);
+    function updateCompletedShowCard(showName) {  
+        var cards = document.querySelectorAll('.card');  
         
-        for (var i = 0; i < cards.length; i++) {    
-            var cardElement = cards[i];    
-            var cardData = cardElement.card_data || {};    
+        for (var i = 0; i < cards.length; i++) {  
+            var cardElement = cards[i];  
+            var cardData = cardElement.card_data || {};  
             
-            var cardName = cardData.original_title || cardData.original_name || cardData.name || cardData.title;    
-            console.log('[MyShows] Card', i, 'name:', cardName, 'has progress_marker:', !!cardData.progress_marker);
+            var cardName = cardData.original_title || cardData.original_name || cardData.name || cardData.title;  
+            
             if (cardName === showName && cardData.progress_marker) {  
-                console.log('[MyShows] Found matching card for:', showName);   
-                var releasedEpisodes = cardData.released_count;    
-                var totalEpisodes = cardData.total_count;    
+                console.log('[MyShows] Found matching card for:', showName);  
                 
-                if (releasedEpisodes && totalEpisodes) {    
-                    var newProgressMarker = releasedEpisodes + '/' + totalEpisodes;    
-                    cardData.progress_marker = newProgressMarker;    
+                // ✅ Помечаем карточку как удаляемую  
+                cardElement.dataset.removing = 'true';  
+                
+                var releasedEpisodes = cardData.released_count;  
+                var totalEpisodes = cardData.total_count;  
+                
+                if (releasedEpisodes && totalEpisodes) {  
+                    var newProgressMarker = releasedEpisodes + '/' + totalEpisodes;  
+                    cardData.progress_marker = newProgressMarker;  
                     
-                    updateCardWithAnimation(cardElement, newProgressMarker);    
+                    // ✅ ИСПРАВЛЕНО: Передаём класс маркера  
+                    updateCardWithAnimation(cardElement, newProgressMarker, 'myshows-progress');  
                     
-                    // Сохраняем информацию о навигации перед удалением  
                     var parentSection = cardElement.closest('.items-line');  
                     var allCards = parentSection.querySelectorAll('.card');  
                     var currentIndex = Array.from(allCards).indexOf(cardElement);  
                     
-                    // Удаляем карточку через 3 секунды после обновления    
-                    setTimeout(function() {    
-                        removeCompletedCard(cardElement, showName, parentSection, currentIndex);    
-                    }, 3000);    
-                }    
-                break;    
-            }    
-        }    
-    }    
+                    setTimeout(function() {  
+                        removeCompletedCard(cardElement, showName, parentSection, currentIndex);  
+                    }, 3000);  
+                }  
+                break;  
+            }  
+        }  
+    } 
 
     function removeCompletedCard(cardElement, showName, parentSection, cardIndex) {  
         
@@ -2180,130 +2205,188 @@
     }
 
     function insertNewCardIntoMyShowsSection(showData, retryCount) {  
-        var currentFocusedElement = document.querySelector('.focus');  
-        var currentFocusedCard = null;
+        console.log('[MyShows] insertNewCardIntoMyShowsSection called with:', {  
+            name: showData.name || showData.title,  
+            progress_marker: showData.progress_marker,  
+            next_episode: showData.next_episode  
+        });  
         
-        if (currentFocusedElement && currentFocusedElement.closest('.card')) {  
-            currentFocusedCard = currentFocusedElement.closest('.card');  
-        }
-
         if (typeof retryCount === 'undefined') {  
             retryCount = 0;  
-        }   
+        }  
         
-        var titleElements = document.querySelectorAll('.items-line__title');      
-        var targetSection = null;      
+        if (retryCount > 5) {  
+            console.error('[MyShows] Max retries reached for:', showData.name || showData.title);  
+            return;  
+        }  
         
+        var titleElements = document.querySelectorAll('.items-line__title');  
+        var targetSection = null;  
         
-        for (var i = 0; i < titleElements.length; i++) {      
-            var titleText = titleElements[i].textContent || titleElements[i].innerText;      
+        for (var i = 0; i < titleElements.length; i++) {  
+            var titleText = titleElements[i].textContent || titleElements[i].innerText;  
             
-            if (titleText.indexOf('MyShows') !== -1) {      
-                targetSection = titleElements[i].closest('.items-line');      
-                break;      
-            }      
-        } 
-        
-        if (targetSection) {  
-            var scrollElement = targetSection.querySelector('.scroll');  
-            
-            if (scrollElement && scrollElement.Scroll) {  
-                var scroll = scrollElement.Scroll;  
-                
-                try {  
-                    // ✅ Используем Lampa.Maker для Lampa 3.0+  
-                    var isLampa3 = Lampa.Manifest && Lampa.Manifest.app_digital >= 300;  
-                    
-                    var newCard;  
-                    if (isLampa3) {  
-                        newCard = Lampa.Maker.make('Card', {  
-                            title: showData.name || showData.title,  
-                            original_title: showData.original_name || showData.original_title,  
-                            poster_path: showData.poster_path,  
-                            id: showData.id,  
-                            progress_marker: showData.progress_marker,  // ✅ Передаем маркер  
-                            watched_count: showData.watched_count,  
-                            total_count: showData.total_count,  
-                            released_count: showData.released_count  
-                        }, function(module) {  
-                            return module.toggle(module.MASK.base, 'Callback');  
-                        });  
-                    } else {  
-                        // Для старых версий используйте ваш старый код  
-                        newCard = new Lampa.Card(showData, {  
-                            object: { source: 'tmdb' },  
-                            card_category: true  
-                        });  
-                    }  
-                    
-                    // Настройка обработчика клика  
-                    newCard.use({  
-                        onEnter: function(target, card_data) {  
-                            Lampa.Activity.push({  
-                                url: card_data.url,  
-                                component: 'full',  
-                                id: card_data.id,  
-                                method: 'tv',  
-                                card: card_data,  
-                                source: 'tmdb'  
-                            });  
-                        }  
-                    });  
-                    
-                    var cardElement = newCard.render(true);  
-                    
-                    if (cardElement) {  
-                        scroll.append(cardElement);  
-                        
-                        if (window.Lampa && window.Lampa.Controller) {  
-                            window.Lampa.Controller.collectionAppend(cardElement);  
-                        }  
-                    }  
-                } catch (error) {  
-                    console.error('[MyShows] Error creating card:', error);  
-                }  
+            if (titleText.indexOf('MyShows') !== -1) {  
+                targetSection = titleElements[i].closest('.items-line');  
+                break;  
             }  
+        }  
+        
+        if (!targetSection) {  
+            console.warn('[MyShows] MyShows section not found, retrying in 500ms... (attempt ' + (retryCount + 1) + ')');  
+            setTimeout(function() {  
+                insertNewCardIntoMyShowsSection(showData, retryCount + 1);  
+            }, 500);  
+            return;  
+        }  
+        
+        console.log('[MyShows] Found MyShows section');  
+        
+        var scrollElement = targetSection.querySelector('.scroll');  
+        
+        if (!scrollElement) {  
+            console.error('[MyShows] Scroll element not found');  
+            return;  
+        }  
+        
+        if (!scrollElement.Scroll) {  
+            console.warn('[MyShows] Scroll.Scroll not available, retrying in 500ms... (attempt ' + (retryCount + 1) + ')');  
+            setTimeout(function() {  
+                insertNewCardIntoMyShowsSection(showData, retryCount + 1);  
+            }, 500);  
+            return;  
+        }  
+        
+        var scroll = scrollElement.Scroll;  
+        console.log('[MyShows] Scroll object available');  
+        
+        try {  
+            // ✅ ИСПРАВЛЕНО: Используем прямой конструктор Card  
+            var newCard = new Lampa.Card(showData, {  
+                object: { source: 'tmdb' },  
+                card_category: true  
+            });  
+            
+            console.log('[MyShows] Card created');  
+            
+            // ✅ Создаём карточку через create()  
+            newCard.create();  
+            
+            // ✅ Настраиваем обработчики  
+            newCard.onEnter = function(target, card_data) {  
+                Lampa.Activity.push({  
+                    url: card_data.url,  
+                    component: 'full',  
+                    id: card_data.id,  
+                    method: 'tv',  
+                    card: card_data,  
+                    source: 'tmdb'  
+                });  
+            };  
+            
+            // ✅ Получаем DOM-элемент  
+            var cardElement = newCard.render(true);  
+            
+            if (cardElement) {  
+                console.log('[MyShows] Card rendered');  
+                
+                // ✅ Сохраняем кастомные данные  
+                cardElement.card_data = cardElement.card_data || {};  
+                cardElement.card_data.progress_marker = showData.progress_marker;  
+                cardElement.card_data.next_episode = showData.next_episode;  
+                cardElement.card_data.watched_count = showData.watched_count;  
+                cardElement.card_data.total_count = showData.total_count;  
+                cardElement.card_data.released_count = showData.released_count;  
+                
+                // ✅ Подписываемся на события  
+                cardElement.addEventListener('visible', function() {  
+                    console.log('[MyShows] New card visible event fired');  
+                    addProgressMarkerToCard(cardElement, cardElement.card_data);  
+                });  
+                
+                cardElement.addEventListener('update', function() {  
+                    console.log('[MyShows] New card update event fired');  
+                    addProgressMarkerToCard(cardElement, cardElement.card_data);  
+                });  
+                
+                // ✅ Добавляем в scroll  
+                scroll.append(cardElement);  
+                console.log('[MyShows] Card appended to scroll');  
+                
+                if (window.Lampa && window.Lampa.Controller) {  
+                    window.Lampa.Controller.collectionAppend(cardElement);  
+                    console.log('[MyShows] Card added to controller collection');  
+                }  
+                
+                console.log('[MyShows] Card successfully added to DOM');  
+            } else {  
+                console.error('[MyShows] Card element is null after render');  
+            }  
+        } catch (error) {  
+            console.error('[MyShows] Error creating card:', error);  
         }  
     }
 
-    function addProgressMarkerStyles() {      
-        var style = document.createElement('style');      
-        style.textContent = `      
-            .card__marker--progress {      
-                position: absolute;      
-                left: 0em;      
-                bottom: 0.4em;      
-                padding: 0.2em 0.4em;      
-                font-size: 1.3em;      
-                border-radius: 0.5em;      
-                font-weight: bold;      
-                z-index: 2;      
-                box-shadow: 0 2px 8px rgba(0,0,0,0.15);      
-                letter-spacing: 0.04em;      
-                line-height: 1.1;      
-                background: #4CAF50;      
-                color: #fff;      
-            }      
-            
-            /* Поддержка glass-стиля как у других маркеров */  
-            body.glass--style.platform--browser .card .card__marker--progress,  
-            body.glass--style.platform--nw .card .card__marker--progress,  
-            body.glass--style.platform--apple .card .card__marker--progress {  
-                background-color: rgba(76, 175, 80, 0.8);  
-                -webkit-backdrop-filter: blur(1em);  
-                backdrop-filter: blur(1em);  
-            }  
-            
-            .card__marker--progress span {    
-                transition: all 0.3s ease;    
-                display: inline-block;    
+    function addProgressMarkerStyles() {          
+        var style = document.createElement('style');          
+        style.textContent = `          
+            .myshows-progress {    
+                position: absolute;    
+                left: 0em;    
+                bottom: 0em;    
+                padding: 0.2em 0.4em;    
+                font-size: 1.2em;    
+                border-radius: 0.5em;    
+                font-weight: bold;    
+                z-index: 2;    
+                box-shadow: 0 2px 8px rgba(0,0,0,0.15);    
+                background: #4CAF50;    
+                color: #fff;  
+                transition: all 0.3s ease;  /* ✅ Добавьте transition */  
             }    
             
-            .card__marker::before {      
-                display: none;      
-            }     
-        `;      
-        document.head.appendChild(style);      
+            .myshows-next-episode {    
+                position: absolute;    
+                left: 0em;    
+                bottom: 1.5em;    
+                padding: 0.2em 0.4em;    
+                font-size: 1.2em;    
+                border-radius: 0.5em;    
+                font-weight: bold;    
+                z-index: 2;    
+                box-shadow: 0 2px 8px rgba(0,0,0,0.15);    
+                letter-spacing: 0.04em;    
+                line-height: 1.1;    
+                background: #2196F3;    
+                color: #fff;  
+                transition: all 0.3s ease;  /* ✅ Добавьте transition */  
+            }    
+            
+            /* Поддержка glass-стиля */    
+            body.glass--style.platform--browser .card .myshows-progress,    
+            body.glass--style.platform--nw .card .myshows-progress,    
+            body.glass--style.platform--apple .card .myshows-progress {    
+                background-color: rgba(76, 175, 80, 0.8);    
+                -webkit-backdrop-filter: blur(1em);    
+                backdrop-filter: blur(1em);    
+            }    
+            
+            body.glass--style.platform--browser .card .myshows-next-episode,    
+            body.glass--style.platform--nw .card .myshows-next-episode,    
+            body.glass--style.platform--apple .card .myshows-next-episode {    
+                background-color: rgba(33, 150, 243, 0.8);    
+                -webkit-backdrop-filter: blur(1em);    
+                backdrop-filter: blur(1em);    
+            }    
+            
+            /* ✅ Анимация */  
+            .myshows-progress.marker-update,  
+            .myshows-next-episode.marker-update {  
+                transform: scale(1.3);    
+                font-weight: 900;    
+            }  
+        `;          
+        document.head.appendChild(style);          
     }
 
     function addMyShowsData(data, oncomplite) {    
@@ -2318,7 +2401,6 @@
                             results: result.shows,  
                             source: 'tmdb',    
                             line_type: 'myshows_unwatched',    
-                            cardClass: createMyShowsCard,
                             nomore: true   
                         };    
                         
@@ -2822,246 +2904,317 @@
     });
 
     // Cинхронизация
-    var wakeLockSentinel = null;  
+    function syncMyShows(callback) {      
+        syncInProgress = true;    
+        
+        console.log('[MyShows] Starting sequential sync process');      
+        console.log('[MyShows] syncInProgress', syncInProgress);      
+        
+        // Массив для накопления всех таймкодов  
+        var allTimecodes = [];  
+        
+        // Получаем фильмы      
+        watchedMoviesData(function(movies, error) {      
+            if (error) {      
+                // restoreTimelineListener();    
+                console.error('[MyShows] Movie sync error:', error);      
+                if (callback) callback(false, 'Ошибка синхронизации фильмов: ' + error);      
+                return;      
+            }      
+            
+            console.log('[MyShows] Got', movies.length, 'movies');      
+            
+            // Обрабатываем фильмы последовательно      
+            processMovies(movies, allTimecodes, function(movieResult) {      
+                console.log('[MyShows] Movies processed:', movieResult.processed, 'errors:', movieResult.errors);      
+                
+                // Получаем сериалы      
+                getWatchedShows(function(shows, showError) {      
+                    if (showError) {      
+                        // restoreTimelineListener();    
+                        console.error('[MyShows] Show sync error:', showError);      
+                        if (callback) callback(false, 'Ошибка синхронизации сериалов: ' + showError);      
+                        return;      
+                    }      
+                    
+                    console.log('[MyShows] Got', shows.length, 'shows');      
+                    
+                    // Обрабатываем сериалы последовательно      
+                    processShows(shows, allTimecodes, function(showResult) {      
+                        console.log('[MyShows] Shows processed:', showResult.processed, 'errors:', showResult.errors);      
+                        
+                        var totalProcessed = movieResult.processed + showResult.processed;      
+                        var totalErrors = movieResult.errors + showResult.errors;      
+                        
+                        if (allTimecodes.length > 0) {  
+                            console.log('[MyShows] Syncing', allTimecodes.length, 'timecodes to database');  
+                            Lampa.Noty.show('Синхронизация таймкодов: ' + allTimecodes.length + ' записей');  
+                            
+                            syncTimecodesToDatabase(allTimecodes, function(syncSuccess) {  
+                                if (syncSuccess) {  
+                                    console.log('[MyShows] Timecodes synced successfully');  
+                                    
+                                    // Добавляем все карточки в избранное      
+                                    addAllCardsAtOnce(cardsToAdd);      
+                                    
+                                    // Обновляем кеши после завершения синхронизации      
+                                    fetchStatusMovies(function(data) {      
+                                        fetchShowStatus(function(data) {      
+                                            if (callback) {    
+                                                callback(true, 'Синхронизация завершена. Обработано: ' + totalProcessed + ', ошибок: ' + totalErrors);    
+                                            }    
 
-    function syncMyShows(callback) {    
-        syncInProgress = true;  
-        var keepAliveInterval = preventScreensaver(); 
+                                            // ✅ ДОБАВЛЕНО: Показываем уведомление и перезагружаем  
+                                            Lampa.Noty.show('Синхронизация завершена! Приложение будет перезагружено через 3 секунды...');  
+                                            
+                                            setTimeout(function() {  
+                                                // Перезагружаем приложение  
+                                                window.location.reload();  
+                                            }, 3000); 
+                                        });      
+                                    });  
+                                } else {  
+                                    if (callback) {  
+                                        callback(false, 'Ошибка записи таймкодов в базу данных');  
+                                    }  
+                                }  
+                            });  
+                        } else {  
+                            // Нет таймкодов для синхронизации  
+                            addAllCardsAtOnce(cardsToAdd);      
+                            
+                            fetchStatusMovies(function(data) {      
+                                fetchShowStatus(function(data) {      
+                                    if (callback) {    
+                                        callback(true, 'Синхронизация завершена. Обработано: ' + totalProcessed + ', ошибок: ' + totalErrors);    
+                                    }    
+                                });      
+                            });  
+                        }  
+                    });      
+                });      
+            });      
+        });    
+    } 
+
+    // ✅ НОВАЯ ФУНКЦИЯ: Пакетная запись таймкодов в базу данных  
+    function syncTimecodesToDatabase(timecodes, callback) {  
+        var network = new Lampa.Reguest();  
         
-        // Отключаем Timeline listener на время синхронизации    
-        if (Lampa.Timeline && Lampa.Timeline.listener) {    
-            console.log('[MyShows] Отключаем Timeline listener на время синхронизации  ');
-            originalTimelineListener = Lampa.Timeline.listener._listeners;    
-            Lampa.Timeline.listener._listeners = {};    
-        }    
+        var uid = Lampa.Storage.get('lampac_unic_id', '');    
+        var profileId = Lampa.Storage.get('lampac_profile_id', '');    
         
-        console.log('[MyShows] Starting sequential sync process');    
-        console.log('[MyShows] syncInProgress', syncInProgress);    
+        if (!uid) {    
+            console.error('[MyShows] No lampac_unic_id found');    
+            callback(false);    
+            return;    
+        }  
         
-        // Получаем фильмы    
-        watchedMoviesData(function(movies, error) {    
-            if (error) {    
-                restoreTimelineListener();  
-                console.error('[MyShows] Movie sync error:', error);    
-                if (callback) callback(false, 'Ошибка синхронизации фильмов: ' + error);    
+        // ✅ Добавляем uid и profile_id в URL  
+        var url = window.location.origin + '/timecode/batch_add?uid=' + encodeURIComponent(uid);  
+        if (profileId) {  
+            url += '&profile_id=' + encodeURIComponent(profileId);  
+        }   
+        
+        var payload = {    
+            timecodes: timecodes    
+        };  
+        
+        console.log('[MyShows] Sending batch timecode request to:', url);    
+        console.log('[MyShows] Payload:', payload); 
+        
+        network.timeout(1000 * 60); // 60 секунд таймаут  
+        network.native(url, function(response) {  
+            console.log('[MyShows] Batch sync response:', response);  
+            
+            if (response && response.success) {  
+                console.log('[MyShows] Successfully synced', response.added, 'added,', response.updated, 'updated');  
+                callback(true);  
+            } else {  
+                console.error('[MyShows] Batch sync failed:', response);  
+                callback(false);  
+            }  
+            }, function(error) {  
+                console.error('[MyShows] Batch sync error:', error);  
+                callback(false);  
+            }, JSON.stringify(payload), {  
+                headers: {  
+                    'Content-Type': 'application/json'  
+                }  
+            });
+    }  
+
+    // ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ: processMovies теперь накапливает таймкоды  
+    function processMovies(movies, allTimecodes, callback) {    
+        var processed = 0;    
+        var errors = 0;    
+        var currentIndex = 0;    
+        
+        function processNextMovie() {    
+            if (currentIndex >= movies.length) {    
+                callback({processed: processed, errors: errors});    
                 return;    
             }    
             
-            console.log('[MyShows] Got', movies.length, 'movies');    
+            var movie = movies[currentIndex];    
+            console.log('[MyShows] Processing movie', (currentIndex + 1), 'of', movies.length, ':', movie.title);    
             
-            // Обрабатываем фильмы последовательно    
-            processMovies(movies, function(movieResult) {    
-                console.log('[MyShows] Movies processed:', movieResult.processed, 'errors:', movieResult.errors);    
-                
-                // Получаем сериалы    
-                getWatchedShows(function(shows, showError) {    
-                    if (showError) {    
-                        restoreTimelineListener();  
-                        console.error('[MyShows] Show sync error:', showError);    
-                        if (callback) callback(false, 'Ошибка синхронизации сериалов: ' + showError);    
-                        return;    
-                    }    
-                    
-                    console.log('[MyShows] Got', shows.length, 'shows');    
-                    
-                    // Обрабатываем сериалы последовательно    
-                    processShows(shows, function(showResult) {    
-                        console.log('[MyShows] Shows processed:', showResult.processed, 'errors:', showResult.errors);    
-                        
-                        // Добавляем все карточки в избранное    
-                        addAllCardsAtOnce(cardsToAdd);    
-                        
-                        var totalProcessed = movieResult.processed + showResult.processed;    
-                        var totalErrors = movieResult.errors + showResult.errors;    
-                        
-                        restoreTimelineListener();  
-                        
-                        // Обновляем кеши после завершения синхронизации    
-                        fetchStatusMovies(function(data) {    
-                            fetchShowStatus(function(data) {    
-                                if (callback) {  
-                                    callback(true, 'Синхронизация завершена. Обработано: ' + totalProcessed + ', ошибок: ' + totalErrors);  
-                                }  
-                            });    
-                        });  
-                    });    
-                });    
-            });    
-        });  
-        
-        function restoreTimelineListener() {  
-            // Восстанавливаем Timeline listener    
-            if (originalTimelineListener) {    
-                Lampa.Timeline.listener._listeners = originalTimelineListener;    
-                originalTimelineListener = null;    
-            }    
-
-            allowScreensaver(keepAliveInterval); 
+            Lampa.Noty.show('Обрабатываю фильм: ' + movie.title + ' (' + (currentIndex + 1) + '/' + movies.length + ')');    
             
-            syncInProgress = false;  
-        }  
-    }
-
-    function processMovies(movies, callback) {  
-        var processed = 0;  
-        var errors = 0;  
-        var currentIndex = 0;  
-        
-        function processNextMovie() {  
-            if (currentIndex >= movies.length) {  
-                callback({processed: processed, errors: errors});  
-                return;  
-            }  
-            
-            var movie = movies[currentIndex];  
-            console.log('[MyShows] Processing movie', (currentIndex + 1), 'of', movies.length, ':', movie.title);  
-            
-            // Обновляем прогресс  
-            Lampa.Noty.show('Обрабатываю фильм: ' + movie.title + ' (' + (currentIndex + 1) + '/' + movies.length + ')');  
-            
-            // Ищем TMDB ID  
-            findTMDBId(movie.title, movie.titleOriginal, movie.year, movie.imdbId, movie.kinopoiskId, false, function(tmdbId, tmdbData) {  
-                if (tmdbId) {  
-                    // Получаем полную карточку  
-                    getTMDBCard(tmdbId, false, function(card, error) {  
-                        if (card) {  
-                            try {  
-                                // Обновляем Timeline  
-                                Lampa.Timeline.update({  
-                                    hash: Lampa.Utils.hash([movie.titleOriginal || movie.title].join('')),  
-                                    percent: 100,  
-                                    time: movie.runtime ? movie.runtime * 60 : 7200,  
-                                    duration: movie.runtime ? movie.runtime * 60 : 7200  
+            // Ищем TMDB ID    
+            findTMDBId(movie.title, movie.titleOriginal, movie.year, movie.imdbId, movie.kinopoiskId, false, function(tmdbId, tmdbData) {    
+                if (tmdbId) {    
+                    // Получаем полную карточку    
+                    getTMDBCard(tmdbId, false, function(card, error) {    
+                        if (card) {    
+                            try {    
+                                // ✅ ВМЕСТО Lampa.Timeline.update() - добавляем в массив для пакетной записи  
+                                var hash = Lampa.Utils.hash([movie.titleOriginal || movie.title].join(''));  
+                                var duration = movie.runtime ? movie.runtime * 60 : 7200;  
+                                
+                                allTimecodes.push({  
+                                    card_id: tmdbId + '_movie',  
+                                    item: hash.toString(),  
+                                    data: JSON.stringify({  
+                                        duration: duration,  
+                                        time: duration,  
+                                        percent: 100  
+                                    })  
                                 });  
                                 
-                                // Добавляем в историю  
-                                cardsToAdd.push(card);  
-                                processed++;  
-                            } catch (e) {  
-                                console.error('[MyShows] Timeline error for movie:', movie.title, e);  
-                                errors++;  
-                            }  
-                        } else {  
-                            errors++;  
-                        }  
+                                // Добавляем в историю    
+                                cardsToAdd.push(card);    
+                                processed++;    
+                            } catch (e) {    
+                                console.error('[MyShows] Error processing movie:', movie.title, e);    
+                                errors++;    
+                            }    
+                        } else {    
+                            errors++;    
+                        }    
                         
-                        currentIndex++;  
-                        // Небольшая задержка между обработкой  
-                        setTimeout(processNextMovie, 1);  
-                    });  
-                } else {  
-                    errors++;  
-                    currentIndex++;  
-                    setTimeout(processNextMovie, 50);  
-                }  
-            });  
-        }  
+                        currentIndex++;    
+                        setTimeout(processNextMovie, 1);    
+                    });    
+                } else {    
+                    errors++;    
+                    currentIndex++;    
+                    setTimeout(processNextMovie, 50);    
+                }    
+            });    
+        }    
         
-        processNextMovie();  
-    }
+        processNextMovie();    
+    } 
 
-    function processShows(shows, callback) {  
-        var processed = 0;  
-        var errors = 0;  
-        var currentShowIndex = 0;  
-        var tmdbCache = {}; // Кеш для TMDB данных сериалов  
+    // ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ: processShows теперь накапливает таймкоды  
+    function processShows(shows, allTimecodes, callback) {    
+        var processed = 0;    
+        var errors = 0;    
+        var currentShowIndex = 0;    
+        var tmdbCache = {};  
         
-        function processNextShow() {  
-            if (currentShowIndex >= shows.length) {  
-                callback({processed: processed, errors: errors});  
-                return;  
-            }  
+        function processNextShow() {    
+            if (currentShowIndex >= shows.length) {    
+                callback({processed: processed, errors: errors});    
+                return;    
+            }    
             
-            var show = shows[currentShowIndex];  
-            console.log('[MyShows] Processing show', (currentShowIndex + 1), 'of', shows.length, ':', show.title);  
+            var show = shows[currentShowIndex];    
+            console.log('[MyShows] Processing show', (currentShowIndex + 1), 'of', shows.length, ':', show.title);    
             
-            Lampa.Noty.show('Обрабатываю сериал: ' + show.title + ' (' + (currentShowIndex + 1) + '/' + shows.length + ')');  
+            Lampa.Noty.show('Обрабатываю сериал: ' + show.title + ' (' + (currentShowIndex + 1) + '/' + shows.length + ')');    
             
-            // Сначала получаем TMDB данные для сериала (один раз)  
-            findTMDBId(show.title, show.titleOriginal, show.year, show.imdbId, show.kinopoiskId, true, function(tmdbId, tmdbData) {  
-                if (tmdbId) {  
-                    getTMDBCard(tmdbId, true, function(card, error) {  
-                        if (card) {  
-                            // Кешируем TMDB данные для этого сериала  
-                            tmdbCache[show.myshowsId] = card;  
+            findTMDBId(show.title, show.titleOriginal, show.year, show.imdbId, show.kinopoiskId, true, function(tmdbId, tmdbData) {    
+                if (tmdbId) {    
+                    getTMDBCard(tmdbId, true, function(card, error) {    
+                        if (card) {    
+                            tmdbCache[show.myshowsId] = card;    
                             
-                            // Теперь обрабатываем эпизоды последовательно  
-                            processShowEpisodes(show, card, function(episodeResult) {  
-                                processed += episodeResult.processed;  
-                                errors += episodeResult.errors;  
+                            // ✅ Обрабатываем эпизоды и добавляем таймкоды в массив  
+                            processShowEpisodes(show, card, tmdbId, allTimecodes, function(episodeResult) {    
+                                processed += episodeResult.processed;    
+                                errors += episodeResult.errors;    
                                 
-                                currentShowIndex++;  
-                                setTimeout(processNextShow, 1);  
-                            });  
-                        } else {  
-                            errors++;  
-                            currentShowIndex++;  
-                            setTimeout(processNextShow, 50);  
-                        }  
-                    });  
-                } else {  
-                    errors++;  
-                    currentShowIndex++;  
-                    setTimeout(processNextShow, 50);  
-                }  
-            });  
-        }  
+                                currentShowIndex++;    
+                                setTimeout(processNextShow, 1);    
+                            });    
+                        } else {    
+                            errors++;    
+                            currentShowIndex++;    
+                            setTimeout(processNextShow, 50);    
+                        }    
+                    });    
+                } else {    
+                    errors++;    
+                    currentShowIndex++;    
+                    setTimeout(processNextShow, 50);    
+                }    
+            });    
+        }    
         
-        processNextShow();  
-    }  
+        processNextShow();    
+    } 
 
-    function processShowEpisodes(show, tmdbCard, callback) {  
-        console.log('[MyShows] Processing episodes for show:', show.title, 'Episodes count:', show.episodes ? show.episodes.length : 0);  
+    // ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ: processShowEpisodes теперь накапливает таймкоды  
+    function processShowEpisodes(show, tmdbCard, tmdbId, allTimecodes, callback) {    
+        console.log('[MyShows] Processing episodes for show:', show.title, 'Episodes count:', show.episodes ? show.episodes.length : 0);    
         
-        var watchedEpisodeIds = show.watchedEpisodes.map(function(ep) { return ep.id; });  
-        var processedEpisodes = 0;  
-        var errorEpisodes = 0;  
-        var currentEpisodeIndex = 0;  
+        var watchedEpisodeIds = show.watchedEpisodes.map(function(ep) { return ep.id; });    
+        var processedEpisodes = 0;    
+        var errorEpisodes = 0;    
+        var currentEpisodeIndex = 0;    
         
-        function processNextEpisode() {  
-            if (currentEpisodeIndex >= show.episodes.length) {  
-                console.log('[MyShows] Finished processing show:', show.title, 'Processed:', processedEpisodes, 'Errors:', errorEpisodes);  
-                cardsToAdd.push(tmdbCard);  
-                callback({processed: processedEpisodes, errors: errorEpisodes});  
-                return;  
-            }  
+        function processNextEpisode() {    
+            if (currentEpisodeIndex >= show.episodes.length) {    
+                console.log('[MyShows] Finished processing show:', show.title, 'Processed:', processedEpisodes, 'Errors:', errorEpisodes);    
+                cardsToAdd.push(tmdbCard);    
+                callback({processed: processedEpisodes, errors: errorEpisodes});    
+                return;    
+            }    
             
-            var episode = show.episodes[currentEpisodeIndex];  
-            console.log('[MyShows] Processing episode:', episode.seasonNumber + 'x' + episode.episodeNumber, 'for show:', show.title);  
+            var episode = show.episodes[currentEpisodeIndex];    
+            console.log('[MyShows] Processing episode:', episode.seasonNumber + 'x' + episode.episodeNumber, 'for show:', show.title);    
             
-            if (watchedEpisodeIds.indexOf(episode.id) !== -1) {  
-                try {  
-                    var hash = Lampa.Utils.hash([  
-                        episode.seasonNumber,  
-                        episode.seasonNumber > 10 ? ':' : '',  
-                        episode.episodeNumber,  
-                        show.titleOriginal || show.title  
-                    ].join(''));  
+            if (watchedEpisodeIds.indexOf(episode.id) !== -1) {    
+                try {    
+                    // ✅ ВМЕСТО Lampa.Timeline.update() - добавляем в массив для пакетной записи  
+                    var hash = Lampa.Utils.hash([    
+                        episode.seasonNumber,    
+                        episode.seasonNumber > 10 ? ':' : '',    
+                        episode.episodeNumber,    
+                        show.titleOriginal || show.title    
+                    ].join(''));    
                     
-                    console.log('[MyShows] Updating timeline for episode:', episode.seasonNumber + 'x' + episode.episodeNumber, 'Hash:', hash);  
+                    var duration = episode.runtime ? episode.runtime * 60 : (show.runtime ? show.runtime * 60 : 2700);  
                     
-                    Lampa.Timeline.update({  
-                        hash: hash,  
-                        percent: 100,  
-                        time: episode.runtime ? episode.runtime * 60 : (show.runtime ? show.runtime * 60 : 2700),  
-                        duration: episode.runtime ? episode.runtime * 60 : (show.runtime ? show.runtime * 60 : 2700)  
+                    console.log('[MyShows] Adding timecode for episode:', episode.seasonNumber + 'x' + episode.episodeNumber, 'Hash:', hash);    
+                    
+                    allTimecodes.push({  
+                        card_id: tmdbId + '_tv',  
+                        item: hash.toString(),  
+                        data: JSON.stringify({  
+                            duration: duration,  
+                            time: duration,  
+                            percent: 100  
+                        })  
                     });  
                     
-                    processedEpisodes++;  
-                    console.log('[MyShows] Successfully processed episode:', episode.seasonNumber + 'x' + episode.episodeNumber);  
-                } catch (timelineError) {  
-                    console.error('[MyShows] Timeline error for episode:', episode.seasonNumber + 'x' + episode.episodeNumber, timelineError);  
-                    errorEpisodes++;  
-                }  
-            } else {  
-                console.log('[MyShows] Episode not watched, skipping:', episode.seasonNumber + 'x' + episode.episodeNumber);  
-            }  
+                    processedEpisodes++;    
+                    console.log('[MyShows] Successfully processed episode:', episode.seasonNumber + 'x' + episode.episodeNumber);    
+                } catch (timelineError) {    
+                    console.error('[MyShows] Error processing episode:', episode.seasonNumber + 'x' + episode.episodeNumber, timelineError);    
+                    errorEpisodes++;    
+                }    
+            } else {    
+                console.log('[MyShows] Episode not watched, skipping:', episode.seasonNumber + 'x' + episode.episodeNumber);    
+            }    
             
-            currentEpisodeIndex++;  
-            setTimeout(processNextEpisode, 1);  
-        }  
+            currentEpisodeIndex++;    
+            setTimeout(processNextEpisode, 1);    
+        }    
         
-        processNextEpisode();  
+        processNextEpisode();    
     }
 
     function getFirstEpisodeYear(show) {  
@@ -3372,7 +3525,7 @@
             }  
             
             var shows = [];  
-            var processedShows = 0;  
+            // var processedShows = 0;  
             var totalShows = showsData.result.length;  
             var currentIndex = 0;  
             
@@ -3454,41 +3607,6 @@
             callback(null, 'Ошибка получения сериалов');  
         });  
     }
-  
-    function preventScreensaver() {  
-        // Предотвращаем скринсейвер через Wake Lock API (если поддерживается)  
-        if ('wakeLock' in navigator) {  
-            navigator.wakeLock.request('screen').then(function(sentinel) {  
-                wakeLockSentinel = sentinel;  
-                console.log('[MyShows] Screen wake lock activated');  
-            }).catch(function(err) {  
-                console.log('[MyShows] Wake lock failed:', err);  
-            });  
-        }  
-        
-        // Альтернативный метод - периодическая активность  
-        var keepAliveInterval = setInterval(function() {  
-            // Создаем невидимое движение мыши  
-            document.dispatchEvent(new MouseEvent('mousemove', {  
-                clientX: 1,  
-                clientY: 1  
-            }));  
-        }, 30000); // Каждые 30 секунд  
-        
-        return keepAliveInterval;  
-    }  
-    
-    function allowScreensaver(keepAliveInterval) {  
-        if (wakeLockSentinel) {  
-            wakeLockSentinel.release();  
-            wakeLockSentinel = null;  
-            console.log('[MyShows] Screen wake lock released');  
-        }  
-        
-        if (keepAliveInterval) {  
-            clearInterval(keepAliveInterval);  
-        }  
-    }
 
     // Инициализация плеера  
     if (window.Lampa && Lampa.Player && Lampa.Player.listener) {  
@@ -3513,6 +3631,7 @@
         addMyShowsToCUB();  
         addMyShowsButtonStyles();  
         addMyShowsMovieButtonStyles();  
+        init();
     } else {    
         Lampa.Listener.follow('app', function (event) {    
             if (event.type === 'ready') {    
@@ -3525,6 +3644,7 @@
                 addMyShowsToCUB();  
                 addMyShowsButtonStyles();  
                 addMyShowsMovieButtonStyles();  
+                init();
             }    
         });    
     }
@@ -3544,62 +3664,100 @@
         }  
     });
 
-    // Добавьте это в ваш плагин MyShows после инициализации  
     function init() {  
         if (typeof Lampa === 'undefined' || !Lampa.Storage) {  
             setTimeout(init, 100);  
             return;  
         }  
-    
-        var isLampa3 = Lampa.Manifest && Lampa.Manifest.app_digital >= 300;  
-    
-        if (isLampa3 && Lampa.Maker && Lampa.Maker.map) {  
-            try {  
-                var cardMap = Lampa.Maker.map('Card');  
+        
+        // ✅ Глобальный обработчик для ВСЕХ карточек (включая те, что ещё не отрендерены)  
+        document.addEventListener('visible', function(e) {  
+            var cardElement = e.target;  
+            
+            // Проверяем, что это карточка из секции MyShows  
+            if (cardElement && cardElement.classList.contains('card')) {  
+                var cardData = cardElement.card_data;  
                 
-                if (cardMap && cardMap.Card && cardMap.Card.onVisible) {  
-                    var originalOnVisible = cardMap.Card.onVisible;  
-                    
-                    cardMap.Card.onVisible = function() {  
-                        originalOnVisible.call(this);  
-                        
-                        // Добавляем маркер прогресса для MyShows карточек  
-                        if (this.html) {  
-                            addProgressMarkerToCard(this.html, this.data);  
-                        }  
-                    };  
+                // Проверяем наличие кастомных данных MyShows  
+                if (cardData && (cardData.progress_marker || cardData.next_episode)) {  
+                    console.log('[MyShows] Card visible, adding markers:', cardData.original_title || cardData.title);  
+                    addProgressMarkerToCard(cardElement, cardData);  
                 }  
-            } catch (error) {  
-                console.error('[MyShows] Error intercepting Card.onVisible:', error);  
             }  
-        }  
+        }, true); // true = capture phase для перехвата события до его обработки  
+        
+        // ✅ Обновляем карточки при изменении timeline  
+        Lampa.Listener.follow('timeline', function(e) {  
+            setTimeout(function() {  
+                var cards = document.querySelectorAll('.card');  
+                cards.forEach(function(cardElement) {  
+                    var cardData = cardElement.card_data;  
+                    if (cardData && (cardData.progress_marker || cardData.next_episode)) {  
+                        addProgressMarkerToCard(cardElement, cardData);  
+                    }  
+                });  
+            }, 100);  
+        });  
     }  
-    
+
     function addProgressMarkerToCard(htmlElement, cardData) {  
-        // Получаем DOM-элемент  
         var cardElement = htmlElement;  
-        if (htmlElement && htmlElement.get) {  
-            cardElement = htmlElement.get(0);  
+        
+        if (htmlElement && (htmlElement.get || htmlElement.jquery)) {  
+            cardElement = htmlElement.get ? htmlElement.get(0) : htmlElement[0];  
         }  
         
         if (!cardElement) return;  
         
+        if (!cardData) {  
+            cardData = cardElement.card_data || cardElement.data;  
+        }  
+        
+        if (!cardData) return;  
+        
         var cardView = cardElement.querySelector('.card__view');  
         if (!cardView) return;  
         
-        // Проверяем, есть ли progress_marker в данных карточки  
-        if (!cardData || !cardData.progress_marker) return;  
+        // ✅ Маркер прогресса  
+        if (cardData.progress_marker) {  
+            var progressMarker = cardView.querySelector('.myshows-progress');  
+            
+            if (progressMarker) {  
+                if (progressMarker.textContent !== cardData.progress_marker) {  
+                    progressMarker.classList.add('marker-update');  
+                    progressMarker.textContent = cardData.progress_marker;  
+                    
+                    setTimeout(function() {  
+                        progressMarker.classList.remove('marker-update');  
+                    }, 300);  
+                }  
+            } else {  
+                progressMarker = document.createElement('div');  
+                progressMarker.className = 'myshows-progress';  
+                progressMarker.textContent = cardData.progress_marker;  
+                cardView.appendChild(progressMarker);  
+            }  
+        }  
         
-        // Проверяем, не добавлен ли уже маркер  
-        if (cardView.querySelector('.card__marker--progress')) return;  
-        
-        // Создаем маркер прогресса  
-        var marker = document.createElement('div');  
-        marker.className = 'card__marker card__marker--progress';  
-        marker.innerHTML = '<span>' + cardData.progress_marker + '</span>';  
-        
-        cardView.appendChild(marker);  
-    }  
-    
-    init();
+        // ✅ Маркер следующей серии  
+        if (cardData.next_episode) {  
+            var nextEpisodeMarker = cardView.querySelector('.myshows-next-episode');  
+            
+            if (nextEpisodeMarker) {  
+                if (nextEpisodeMarker.textContent !== cardData.next_episode) {  
+                    nextEpisodeMarker.classList.add('marker-update');  
+                    nextEpisodeMarker.textContent = cardData.next_episode;  
+                    
+                    setTimeout(function() {  
+                        nextEpisodeMarker.classList.remove('marker-update');  
+                    }, 300);  
+                }  
+            } else {  
+                nextEpisodeMarker = document.createElement('div');  
+                nextEpisodeMarker.className = 'myshows-next-episode';  
+                nextEpisodeMarker.textContent = cardData.next_episode;  
+                cardView.appendChild(nextEpisodeMarker);  
+            }  
+        }  
+    }
 })();
