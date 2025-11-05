@@ -16,110 +16,228 @@
     Lampa.Storage.set('base_url_numparser', BASE_URL);
 
 
-    function basicFilterWatchedContent(results) {  
-        if (!Lampa.Storage.get('numparser_hide_watched', true)) {  
-            return results;  
-        }  
-    
-        return results.filter(function (item) {  
-            if (!item) return false;  
-    
-            var mediaType = (item.first_air_date || item.number_of_seasons) ? 'tv' : 'movie';  
-            
-            // Проверяем статус "выброшено" через Favorite  
-            var favoriteItem = Lampa.Favorite.check(item);  
-            var thrown = !!favoriteItem && favoriteItem.thrown;  
-            if (thrown) return false;  
-    
-            if (mediaType === 'movie') {  
-                // Проверяем прогресс напрямую, без проверки истории  
-                var hashes = [];  
-                if (item.id) hashes.push(Lampa.Utils.hash(String(item.id)));  
-                if (item.original_title) hashes.push(Lampa.Utils.hash(item.original_title));  
-                
-                for (var i = 0; i < hashes.length; i++) {  
-                    var view = Lampa.Storage.cache('file_view', 300, [])[hashes[i]];  
-                    if (view && view.percent && view.percent >= MIN_PROGRESS) {  
-                        return false; // Скрыть просмотренный фильм  
-                    }  
-                }  
+    // ✅ НОВАЯ ЛОГИКА: Глобальное хранилище таймкодов  
+    var globalTimecodes = null;  
+    var timecodesLoading = false;  
+    var timecodesCallbacks = [];  
+  
+    // Функция загрузки всех таймкодов пользователя  
+    function loadAllTimecodes(callback) {  
+        // ✅ Проверяем, что callback - это функция  
+        if (callback && typeof callback === 'function') {  
+            if (globalTimecodes !== null) {  
+                callback(globalTimecodes);  
+                return;  
             }  
-
-            if (mediaType === 'tv') {  
-                var releasedEpisodes = getReleasedEpisodesFromTMDB(item);  
+            
+            timecodesCallbacks.push(callback);  
+            
+            if (timecodesLoading) {  
+                return;  
+            }  
+        } else {  
+            // Если callback не передан, просто загружаем данные  
+            if (globalTimecodes !== null) {  
+                return;  
+            }  
+            
+            if (timecodesLoading) {  
+                return;  
+            }  
+        }  
+        
+        timecodesLoading = true;   
+        console.log('[Numparser] Loading all timecodes from /timecode/all_views');  
+  
+        var uid = Lampa.Storage.get('account_email') || Lampa.Storage.get('user_uid') || Lampa.Storage.get('lampac_unic_id', '');  
+        var profileId = Lampa.Storage.get('lampac_profile_id', '');  
+  
+        if (!uid) {  
+            console.log('[Numparser] No user ID found, skipping timecode loading');  
+            globalTimecodes = {};  
+            timecodesLoading = false;  
+              
+            // Вызываем все ожидающие callbacks  
+            timecodesCallbacks.forEach(function(cb) {  
+                cb(globalTimecodes);  
+            });  
+            timecodesCallbacks = [];  
+            return;  
+        }  
+  
+        var url = window.location.origin + '/timecode/all_views?uid=' + encodeURIComponent(uid);  
+        if (profileId) {  
+            url += '&profile_id=' + encodeURIComponent(profileId);  
+        }  
+  
+        var network = new Lampa.Reguest();  
+        network.silent(url, function(response) {  
+            console.log('[Numparser] Timecodes loaded:', Object.keys(response || {}).length, 'cards');  
+            globalTimecodes = response || {};  
+            timecodesLoading = false;  
+  
+            // Вызываем все ожидающие callbacks  
+            timecodesCallbacks.forEach(function(cb) {  
+                cb(globalTimecodes);  
+            });  
+            timecodesCallbacks = [];  
+        }, function(error) {  
+            console.error('[Numparser] Error loading timecodes:', error);  
+            globalTimecodes = {};  
+            timecodesLoading = false;  
+  
+            // Вызываем все ожидающие callbacks с пустым объектом  
+            timecodesCallbacks.forEach(function(cb) {  
+                cb(globalTimecodes);  
+            });  
+            timecodesCallbacks = [];  
+        });  
+    }  
+  
+    // ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ ФИЛЬТРАЦИИ  
+    function basicFilterWatchedContent(results, callback) {      
+        if (!Lampa.Storage.get('numparser_hide_watched', true)) {      
+            callback(results);      
+            return;      
+        }      
+        
+        // ✅ Загружаем таймкоды, если их еще нет  
+        loadAllTimecodes(function() {  
+            var filtered = results.filter(function (item) {      
+                if (!item) return false;      
+            
+                var mediaType = (item.first_air_date || item.number_of_seasons) ? 'tv' : 'movie';      
+                    
+                // Проверяем статус "выброшено" через Favorite      
+                var favoriteItem = Lampa.Favorite.check(item);      
+                var thrown = !!favoriteItem && favoriteItem.thrown;      
+                if (thrown) return false;      
+            
+                if (mediaType === 'movie') {      
+                    var cardId = item.id + '_movie';    
+                        
+                    if (globalTimecodes && globalTimecodes[cardId]) {    
+                        var timecodes = globalTimecodes[cardId];    
+                            
+                        for (var key in timecodes) {    
+                            try {    
+                                var data = JSON.parse(timecodes[key]);    
+                                if (data.percent >= MIN_PROGRESS) {    
+                                    return false;  
+                                }    
+                            } catch (e) {    
+                                console.error('[Numparser] Error parsing timecode:', e);    
+                            }    
+                        }    
+                    }    
+                }      
+        
+                if (mediaType === 'tv') {        
+                    var cardId = item.id + '_tv';      
+                    var releasedEpisodes = getReleasedEpisodesFromTMDB(item);      
+                        
+                    if (!releasedEpisodes || !releasedEpisodes.length) {      
+                        return true;      
+                    }      
                 
-                return !allEpisodesWatched(  
-                    item.original_title || item.original_name || item.title || item.name,  
-                    releasedEpisodes  
-                );  
-            } 
-    
-            return true;  
+                    if (globalTimecodes && globalTimecodes[cardId]) {      
+                        var timecodes = globalTimecodes[cardId];      
+                        var originalTitle = item.original_name || item.original_title || item.name || item.title;  
+                            
+                        var allWatched = releasedEpisodes.every(function(episode) {      
+                            // ✅ Формируем хеш как в Lampa: season + episode + original_title  
+                            var hashString = episode.season_number.toString() +   
+                                        episode.episode_number.toString() +   
+                                        originalTitle;  
+                            var episodeHash = Lampa.Utils.hash(hashString);  
+                                
+                            // ✅ Проверяем наличие хеша в таймкодах  
+                            if (timecodes[episodeHash]) {  
+                                try {      
+                                    var data = JSON.parse(timecodes[episodeHash]);      
+                                    if (data.percent >= MIN_PROGRESS) {      
+                                        return true; // Эпизод просмотрен  
+                                    }      
+                                } catch (e) {  
+                                    console.error('[Numparser] Error parsing timecode for hash:', episodeHash, e);  
+                                }      
+                            }      
+                            return false; // Эпизод не просмотрен  
+                        });      
+                            
+                        return !allWatched; // Скрыть, если все эпизоды просмотрены  
+                    }      
+                }   
+            
+                return true;      
+            });  
+            
+            // ✅ Возвращаем отфильтрованные результаты через callback  
+            callback(filtered);  
         });  
     }
-
+  
     var isLoadingMore = {};
 
     // Асинхронная функция для догрузки страниц
-    function loadMoreUntilFullAsync(currentResults, category, currentPage, source, totalPages, callback) {
-        var results = currentResults.slice();
-        var page = currentPage;
-        var maxPages = 10;
-
-        console.log('[Numparser] Loading more - current:', results.length, 'needed:', 20 - results.length, 
-                    'page:', page, 'totalPages:', totalPages, 'maxPages:', maxPages, 'category:', category);
-
-        function loadNextPage() {
-            console.log('[Numparser] Loading page', page, 'current results:', results.length, 'totalPages:', totalPages);
+    function loadMoreUntilFullAsync(currentResults, category, currentPage, source, totalPages, callback) {  
+        var results = currentResults.slice();  
+        var page = currentPage;  
+        var maxPages = 10;  
+    
+        console.log('[Numparser] Loading more - current:', results.length, 'needed:', 20 - results.length,   
+                    'page:', page, 'totalPages:', totalPages, 'maxPages:', maxPages, 'category:', category);  
+    
+        function loadNextPage() {  
+            console.log('[Numparser] Loading page', page, 'current results:', results.length, 'totalPages:', totalPages);  
             
-            if (results.length >= 20 || page >= totalPages || page >= maxPages) {
-                console.log('[Numparser] Stopping loading - reached limit. Results:', results.length, 
-                            'Page:', page, 'TotalPages:', totalPages, 'MaxPages:', maxPages);
-                callback(results.slice(0, 20));
-                return;
-            }
-
-            page++;
-
-            isLoadingMore[category + '_' + page] = true;
+            if (results.length >= 20 || page >= totalPages || page >= maxPages) {  
+                console.log('[Numparser] Stopping loading - reached limit. Results:', results.length,   
+                            'Page:', page, 'TotalPages:', totalPages, 'MaxPages:', maxPages);  
+                callback(results.slice(0, 20));  
+                return;  
+            }  
+    
+            page++;  
+            isLoadingMore[category + '_' + page] = true;  
             
-            var params = {
-                url: category,
-                page: page,
-                source: source
-            };
-
-            console.log('[Numparser] Requesting page', page, 'of category', category);
-            Lampa.Api.sources[source].list(params, function(response) {
-                delete isLoadingMore[category + '_' + page];
-                if (response && response.results && Array.isArray(response.results)) {
-                    console.log('[Numparser] Received page', page, 'with', response.results.length, 
-                            'items. Response total_pages:', response.total_pages);
+            var params = {  
+                url: category,  
+                page: page,  
+                source: source  
+            };  
+    
+            console.log('[Numparser] Requesting page', page, 'of category', category);  
+            Lampa.Api.sources[source].list(params, function(response) {  
+                delete isLoadingMore[category + '_' + page];  
+                
+                if (response && response.results && Array.isArray(response.results)) {  
+                    console.log('[Numparser] Received page', page, 'with', response.results.length,   
+                            'items. Response total_pages:', response.total_pages);  
                     
-                    var filtered = basicFilterWatchedContent(response.results);
-                    console.log('[Numparser] After filtering new page:', filtered.length, 'items remain');
-
-                    // var currentActivity = Lampa.Activity.active();  
-                    // var isCategoryFull = currentActivity && currentActivity.component === 'category_full'; 
-                    
-                    results = results.concat(filtered);
-                    console.log('[Numparser] Total results after concatenation:', results.length);
-                    
-                    if ( results.length < 20 && page < totalPages && page < maxPages) {
-                        console.log('[Numparser] Need more items. Current:', results.length, 'Loading next page...');
-                        loadNextPage();
-                    } else {
-                        console.log('[Numparser] Loading complete. Final result:', results.length, 'items');
-                        callback(results.slice(0, 20));
-                    }
-                } else {
-                    console.log('[Numparser] No valid response received for page', page);
-                    callback(results.slice(0, 20));
-                }
-            });
-        }
-
-        loadNextPage();
+                    // ✅ ИСПРАВЛЕНО: Асинхронный вызов с callback  
+                    basicFilterWatchedContent(response.results, function(filtered) {  
+                        console.log('[Numparser] After filtering new page:', filtered.length, 'items remain');  
+                        
+                        results = results.concat(filtered);  
+                        console.log('[Numparser] Total results after concatenation:', results.length);  
+                        
+                        if (results.length < 20 && page < totalPages && page < maxPages) {  
+                            console.log('[Numparser] Need more items. Current:', results.length, 'Loading next page...');  
+                            loadNextPage();  
+                        } else {  
+                            console.log('[Numparser] Loading complete. Final result:', results.length, 'items');  
+                            callback(results.slice(0, 20));  
+                        }  
+                    });  
+                } else {  
+                    console.log('[Numparser] No valid response received for page', page);  
+                    callback(results.slice(0, 20));  
+                }  
+            });  
+        }  
+    
+        loadNextPage();  
     }
 
     function getReleasedEpisodesFromTMDB(item) {      
@@ -388,24 +506,26 @@
                 total_results: json.total_results || json.total || 0  
             };  
 
-            console.log('[Numparser] Before filtering in normalizeData:', normalized.results.length, 'items');
+            console.log('[Numparser] Before filtering in normalizeData:', normalized.results.length, 'items');  
             
-            if (Lampa.Storage.get('numparser_hide_watched', true)) {  
-                var filtered = basicFilterWatchedContent(normalized.results);  
-                
-                // Догружаем только если это НЕ внутренний запрос  
-                if (!isInternal && !isCategoryFull && filtered.length < 20 && normalized.total_pages > 1) {  
-                    loadMoreUntilFullAsync(filtered, category, page, source, normalized.total_pages, function(results) {  
-                        normalized.results = results;  
-                        callback(normalized);  
-                    });  
-                } else {  
-                    normalized.results = filtered;  
-                    callback(normalized);  
-                }  
-            } else {  
-                callback(normalized);  
-            } 
+            if (Lampa.Storage.get('numparser_hide_watched', true)) {    
+                // ✅ ПРАВИЛЬНО - асинхронный вызов с callback  
+                basicFilterWatchedContent(normalized.results, function(filtered) {  
+                    // Догружаем только если это НЕ внутренний запрос    
+                    if (!isInternal && !isCategoryFull && filtered.length < 20 && normalized.total_pages > 1) {  
+                    // if (!isInternal && filtered.length < 20 && normalized.total_pages > 1) {    
+                        loadMoreUntilFullAsync(filtered, category, page, source, normalized.total_pages, function(results) {    
+                            normalized.results = results;    
+                            callback(normalized);    
+                        });    
+                    } else {    
+                        normalized.results = filtered;    
+                        callback(normalized);    
+                    }  
+                });  
+            } else {    
+                callback(normalized);    
+            }
         }
 
         self.get = function (url, params, onComplete, onError) {
@@ -481,8 +601,9 @@
 
             var partsData = [];
 
+            var hasMyShowsCredentials = Lampa.Storage.get('myshows_login', '') && Lampa.Storage.get('myshows_password', ''); 
             // Основные категории с проверкой видимости
-            if (CATEGORY_VISIBILITY.myshows_unwatched.visible) {
+            if (CATEGORY_VISIBILITY.myshows_unwatched.visible && hasMyShowsCredentials) {
                 partsData.push(function (callback) {
                     if (!window.MyShows || !window.MyShows.getUnwatchedShowsWithDetails) {
                         callback({skip: true});
@@ -498,7 +619,7 @@
                         callback({
                             title: CATEGORY_VISIBILITY.myshows_unwatched.title,
                             results: response.shows,
-                            cardClass: window.MyShows.createMyShowsCard,
+                            // cardClass: window.MyShows.createMyShowsCard,
                             nomore: true
                         });
                     });
@@ -622,9 +743,9 @@
                         _original_results: json.results || []
                     };
 
-                    if (category === 'unwatched_serials' && window.MyShows && window.MyShows.createMyShowsCard) {  
-                        result.cardClass = window.MyShows.createMyShowsCard;  
-                    }  
+                    // if (category === 'unwatched_serials' && window.MyShows && window.MyShows.createMyShowsCard) {  
+                    //     result.cardClass = window.MyShows.createMyShowsCard;  
+                    // }  
 
                     callback(result);
                 }, function (error) {
@@ -773,7 +894,53 @@
         };
     }
 
+    // === Поддержка профилей ===
+    function getProfileKey(baseKey) {
+        var profileId = Lampa.Storage.get('lampac_profile_id', 'default');
+        return baseKey + '_profile' + profileId;
+    }
+
+    function getProfileSetting(key, defaultValue) {
+        return Lampa.Storage.get(getProfileKey(key), defaultValue);
+    }
+
+    function setProfileSetting(key, value) {
+        Lampa.Storage.set(getProfileKey(key), value);
+    }
+
+    function hasProfileSetting(key) {
+        var profileKey = getProfileKey(key);
+        return window.localStorage.getItem(profileKey) !== null;
+    }
+
+    // Загружаем профильные настройки
+    function loadNumparserProfileSettings() {
+        if (!hasProfileSetting('numparser_hide_watched')) {
+            setProfileSetting('numparser_hide_watched', true);
+        }
+
+        if (!hasProfileSetting('numparser_min_progress')) {
+            setProfileSetting('numparser_min_progress', DEFAULT_MIN_PROGRESS);
+        }
+
+        if (!hasProfileSetting('numparser_source_name')) {
+            setProfileSetting('numparser_source_name', DEFAULT_SOURCE_NAME);
+        }
+
+        if (!hasProfileSetting('numparser_myshows_fastapi')) {
+            setProfileSetting('numparser_myshows_fastapi', false);
+        }
+
+        // Восстанавливаем значения в Lampa.Storage, чтобы UI знал актуальные данные
+        Lampa.Storage.set('numparser_hide_watched', getProfileSetting('numparser_hide_watched', true), true);
+        Lampa.Storage.set('numparser_min_progress', getProfileSetting('numparser_min_progress', DEFAULT_MIN_PROGRESS), true);
+        Lampa.Storage.set('numparser_source_name', getProfileSetting('numparser_source_name', DEFAULT_SOURCE_NAME), true);
+        Lampa.Storage.set('numparser_myshows_fastapi', getProfileSetting('numparser_myshows_fastapi', false), true);
+    }
+
     function startPlugin() {
+        loadNumparserProfileSettings();
+
         if (window.numparser_plugin) return;
         window.numparser_plugin = true;
 
@@ -825,16 +992,15 @@
             param: {
                 name: 'numparser_hide_watched',
                 type: 'trigger',
-                //   default: Lampa.Storage.get('numparser_hide_watched', true)
-                default: Lampa.Storage.get('numparser_hide_watched', "true") === "true"
+                default: getProfileSetting('numparser_hide_watched', true),
             },
             field: {
                 name: 'Скрыть просмотренные',
-                description: 'Скрывать просмотренные фильмы и сериалы'
+                description: 'Скрывать просмотренные фильмы и сериалы (Требуется модуль TimecodeUser)'
             },
 
             onChange: function (value) {
-                Lampa.Storage.set('numparser_hide_watched', value === true || value === "true");
+                setProfileSetting('numparser_hide_watched', value === true || value === "true");
 
                 var active = Lampa.Activity.active();
                 if (active && active.activity_line && active.activity_line.listener && typeof active.activity_line.listener.send === 'function') {
@@ -868,7 +1034,7 @@
                     '95': '95%',
                     '100': '100%'
                 },
-                default: DEFAULT_MIN_PROGRESS.toString()
+                default: getProfileSetting('numparser_min_progress', DEFAULT_MIN_PROGRESS).toString(),
             },
             field: {
                 name: 'Порог просмотра',
@@ -876,7 +1042,7 @@
             },
             onChange: function (value) {
                 newProgress = parseInt(value);
-                Lampa.Storage.set('numparser_min_progress', newProgress);
+                setProfileSetting('numparser_min_progress', newProgress);
                 MIN_PROGRESS = newProgress;
             }
         });
@@ -889,7 +1055,7 @@
                 type: 'input',
                 placeholder: 'Введите название',
                 values: '',
-                default: DEFAULT_SOURCE_NAME
+                default: getProfileSetting('numparser_source_name', DEFAULT_SOURCE_NAME),
             },
             field: {
                 name: 'Название источника',
@@ -897,6 +1063,7 @@
             },
             onChange: function (value) {
                 newName = value;
+                setProfileSetting('numparser_source_name', value);
                 $('.num_text').text(value);
                 Lampa.Settings.update();
             }
@@ -907,7 +1074,7 @@
             param: {    
                 name: 'numparser_myshows_fastapi',    
                 type: 'trigger',    
-                default: false    
+                default: getProfileSetting('numparser_myshows_fastapi', false),   
             },    
             field: {    
                 name: 'Использовать FastAPI для MyShows',    
@@ -915,7 +1082,8 @@
             },    
             onChange: function (value) {      
                 var useFastAPI = value === true || value === "true";    
-                
+                setProfileSetting('numparser_myshows_fastapi', useFastAPI); // ✅ сохраняем настройку в профиль
+
                 if (useFastAPI) {    
                     if (window.MyShows && window.MyShows.getUnwatchedShowsWithDetails && window.MyShows.saveToFastAPI) {    
                         Lampa.Loading.start();    
@@ -928,24 +1096,20 @@
                                 
                                 window.MyShows.saveToFastAPI(localData, 'unwatched_serials', function() {    
                                     console.log('[NUMParser] Сохранение завершено, переключаемся на FastAPI');  
-                                    Lampa.Storage.set('numparser_myshows_fastapi', true);    
                                     Lampa.Loading.stop();    
                                     location.reload();    
                                 });     
                             } else {    
                                 console.log('[NUMParser] Нет локальных данных для копирования');  
-                                Lampa.Storage.set('numparser_myshows_fastapi', true);    
                                 Lampa.Loading.stop();    
                                 location.reload();    
                             }    
                         });    
                     } else {    
                         console.log('[NUMParser] MyShows плагин недоступен');  
-                        Lampa.Storage.set('numparser_myshows_fastapi', true);    
                         location.reload();    
                     }    
                 } else {    
-                    Lampa.Storage.set('numparser_myshows_fastapi', false);    
                     location.reload();    
                 }    
             } 
@@ -953,21 +1117,20 @@
 
         Object.keys(CATEGORY_VISIBILITY).forEach(function (option) {
             // Проверяем настройку FastAPI для категорий MyShows  
-            var myshows_fastapi = Lampa.Storage.get('numparser_myshows_fastapi', false);  
+            var myshows_fastapi = getProfileSetting('numparser_myshows_fastapi', false);
             
-            // Пропускаем неактивную категорию MyShows     
             if (option === 'myshows_unwatched' && myshows_fastapi) {    
                 CATEGORY_VISIBILITY.myshows_unwatched.visible = false;
-                return; // Если FastAPI включен, пропускаем локальную категорию    
+                return;    
             }    
             if (option === 'unwatched_serials' && !myshows_fastapi) {  
                 CATEGORY_VISIBILITY.unwatched_serials.visible = false;
-                return; // Если FastAPI выключен, пропускаем FastAPI категорию    
+                return;    
             }   
             
-            var settingName = 'numparser_settings' + option + '_visible';
+            var settingName = 'numparser_settings_' + option + '_visible';
+            var visible = getProfileSetting(settingName, true);
 
-            var visible = Lampa.Storage.get(settingName, "true").toString() === "true";
             CATEGORY_VISIBILITY[option].visible = visible;
 
             Lampa.SettingsApi.addParam({
@@ -981,7 +1144,9 @@
                     name: CATEGORY_VISIBILITY[option].title,
                 },
                 onChange: function (value) {
-                    CATEGORY_VISIBILITY[option].visible = value === "true";
+                    var newVisible = value === true || value === "true";
+                    CATEGORY_VISIBILITY[option].visible = newVisible;
+                    setProfileSetting(settingName, newVisible);
                 }
             });
         });
@@ -1005,14 +1170,41 @@
                 page: 1
             });
         });
+
+        // === Обновляем настройки при смене профиля ===
+        Lampa.Listener.follow('profile', function(e) {
+            if (e.type === 'changed') {
+                loadNumparserProfileSettings();
+
+                // Если панель настроек открыта — обновим значения
+                setTimeout(function() {
+                    var settingsPanel = document.querySelector('[data-component="numparser_settings"]');
+                    if (settingsPanel) {
+                        var hideWatched = settingsPanel.querySelector('select[data-name="numparser_hide_watched"]');
+                        if (hideWatched) hideWatched.value = getProfileSetting('numparser_hide_watched', true);
+
+                        var minProgress = settingsPanel.querySelector('select[data-name="numparser_min_progress"]');
+                        if (minProgress) minProgress.value = getProfileSetting('numparser_min_progress', DEFAULT_MIN_PROGRESS).toString();
+
+                        var sourceName = settingsPanel.querySelector('input[data-name="numparser_source_name"]');
+                        if (sourceName) sourceName.value = getProfileSetting('numparser_source_name', DEFAULT_SOURCE_NAME);
+
+                        var fastapi = settingsPanel.querySelector('select[data-name="numparser_myshows_fastapi"]');
+                        if (fastapi) fastapi.value = getProfileSetting('numparser_myshows_fastapi', false);
+                    }
+                }, 100);
+            }
+        });
     }
 
     if (window.appready) {
         startPlugin();
+        // loadAllTimecodes();
     } else {
         Lampa.Listener.follow('app', function (event) {
             if (event.type === 'ready') {
                 startPlugin();
+                // loadAllTimecodes();
             }
         });
     }
