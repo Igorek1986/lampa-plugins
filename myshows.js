@@ -37,6 +37,12 @@
 
             var profileId = Lampa.Storage.get('lampac_profile_id', 'default');  
             var uri = accountUrl('/storage/set?path=myshows/' + path + '&pathfile=' + profileId);  
+
+            // 🟢 Для Android — если uri относительный, добавляем window.location.origin
+            if (Lampa.Platform.is('android') && !/^https?:\/\//i.test(uri)) {
+                uri = window.location.origin + (uri.startsWith('/') ? uri : '/' + uri);
+                console.log('[MyShows][Android] 🧩 Fixed URI via window.location.origin:', uri);
+            }
             
             var network = new Lampa.Reguest();  
             network.native(uri, function(response) {  
