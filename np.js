@@ -896,7 +896,7 @@
 
     // === Поддержка профилей ===
     function getProfileKey(baseKey) {
-        var profileId = Lampa.Storage.get('lampac_profile_id', 'default');
+        var profileId = Lampa.Storage.get('lampac_profile_id', '');
         return baseKey + '_profile' + profileId;
     }
 
