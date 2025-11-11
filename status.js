@@ -71,7 +71,7 @@
     
     // ✅ Функции для работы с профиль-специфичными настройками
     function getProfileKey(baseKey) {    
-        var profileId = Lampa.Storage.get('lampac_profile_id', 'default');    
+        var profileId = Lampa.Storage.get('lampac_profile_id', '');    
         return baseKey + '_profile' + profileId;    
     }    
     
@@ -113,7 +113,7 @@
           
         var processedCards = new WeakSet();      
       
-        log('Profile ID:', Lampa.Storage.get('lampac_profile_id', 'default'));    
+        log('Profile ID:', Lampa.Storage.get('lampac_profile_id', ''));    
         log('Settings key:', getProfileKey(BASE_KEY));    
         log('Plugin enabled:', getProfileSetting(BASE_KEY, GLOBAL_DEFAULT));      
       
@@ -143,7 +143,7 @@
                 onChange: function(value) {        
                     var isEnabled = value === true || value === 'true';  
                     setProfileSetting(BASE_KEY, isEnabled);  // ✅ Сохраняем через профильную функцию  
-                    log('Settings changed for profile:', Lampa.Storage.get('lampac_profile_id', 'default'), 'value:', isEnabled);      
+                    log('Settings changed for profile:', Lampa.Storage.get('lampac_profile_id', ''), 'value:', isEnabled);      
                 }        
             });        
                   

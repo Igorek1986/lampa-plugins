@@ -35,7 +35,7 @@
             // var data = JSON.stringify(cacheData);  
             var data = JSON.stringify(cacheData, null, 2);  
 
-            var profileId = Lampa.Storage.get('lampac_profile_id', 'default');  
+            var profileId = Lampa.Storage.get('lampac_profile_id', '');  
             var uri = accountUrl('/storage/set?path=myshows/' + path + '&pathfile=' + profileId);  
 
             // 🟢 Для Android — если uri относительный, добавляем window.location.origin
@@ -68,7 +68,7 @@
   
     // Загрузка кеша 
     function loadCacheFromServer(path, propertyName, callback) {      
-        var profileId = Lampa.Storage.get('lampac_profile_id', 'default');      
+        var profileId = Lampa.Storage.get('lampac_profile_id', '');      
         var uri = accountUrl('/storage/get?path=myshows/' + path + '&pathfile=' + profileId);      
             
         var network = new Lampa.Reguest();      
@@ -274,7 +274,7 @@
   
     // Функции для работы с профиль-специфичными настройками  
     function getProfileKey(baseKey) {  
-        var profileId = Lampa.Storage.get('lampac_profile_id', 'default');  
+        var profileId = Lampa.Storage.get('lampac_profile_id', '');  
         return baseKey + '_profile' + profileId;  
     }  
   
