@@ -26,9 +26,12 @@ https://igorek1986.github.io/lampa-plugins/reset.js
 
 #### 📚 [Description](https://igorek1986.github.io/lampa-plugins/docs/reset)
 
-### 4. **MyShows AutoCheck**
+### 4. **MyShows**
 ```bash
 https://igorek1986.github.io/lampa-plugins/myshows.js
 ```
 
 #### 📚 [Description](https://igorek1986.github.io/lampa-plugins/docs/myshows)
+
+
+### **Сказать спасибо** [Юmoney](https://yoomoney.ru/fundraise/1DVU3GIL23V.251112)
