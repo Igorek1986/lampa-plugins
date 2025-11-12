@@ -96,7 +96,7 @@
   
     // ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ ФИЛЬТРАЦИИ  
     function basicFilterWatchedContent(results, callback) {      
-        if (!Lampa.Storage.get('numparser_hide_watched', true)) {      
+        if (!Lampa.Storage.get('numparser_hide_watched')) {      
             callback(results);      
             return;      
         }      
@@ -508,7 +508,7 @@
 
             console.log('[Numparser] Before filtering in normalizeData:', normalized.results.length, 'items');  
             
-            if (Lampa.Storage.get('numparser_hide_watched', true)) {    
+            if (Lampa.Storage.get('numparser_hide_watched')) {    
                 // ✅ ПРАВИЛЬНО - асинхронный вызов с callback  
                 basicFilterWatchedContent(normalized.results, function(filtered) {  
                     // Догружаем только если это НЕ внутренний запрос    
@@ -916,7 +916,7 @@
     // Загружаем профильные настройки
     function loadNumparserProfileSettings() {
         if (!hasProfileSetting('numparser_hide_watched')) {
-            setProfileSetting('numparser_hide_watched', true);
+            setProfileSetting('numparser_hide_watched', "true");
         }
 
         if (!hasProfileSetting('numparser_min_progress')) {
@@ -928,14 +928,14 @@
         }
 
         if (!hasProfileSetting('numparser_myshows_fastapi')) {
-            setProfileSetting('numparser_myshows_fastapi', false);
+            setProfileSetting('numparser_myshows_fastapi', "false");
         }
 
         // Восстанавливаем значения в Lampa.Storage, чтобы UI знал актуальные данные
-        Lampa.Storage.set('numparser_hide_watched', getProfileSetting('numparser_hide_watched', true), true);
-        Lampa.Storage.set('numparser_min_progress', getProfileSetting('numparser_min_progress', DEFAULT_MIN_PROGRESS), true);
-        Lampa.Storage.set('numparser_source_name', getProfileSetting('numparser_source_name', DEFAULT_SOURCE_NAME), true);
-        Lampa.Storage.set('numparser_myshows_fastapi', getProfileSetting('numparser_myshows_fastapi', false), true);
+        Lampa.Storage.set('numparser_hide_watched', getProfileSetting('numparser_hide_watched', "true"), "true");
+        Lampa.Storage.set('numparser_min_progress', getProfileSetting('numparser_min_progress', DEFAULT_MIN_PROGRESS), "true");
+        Lampa.Storage.set('numparser_source_name', getProfileSetting('numparser_source_name', DEFAULT_SOURCE_NAME), "true");
+        Lampa.Storage.set('numparser_myshows_fastapi', getProfileSetting('numparser_myshows_fastapi', "false"), "true");
     }
 
     function startPlugin() {
@@ -992,7 +992,7 @@
             param: {
                 name: 'numparser_hide_watched',
                 type: 'trigger',
-                default: getProfileSetting('numparser_hide_watched', true),
+                default: getProfileSetting('numparser_hide_watched', "true"),
             },
             field: {
                 name: 'Скрыть просмотренные',
@@ -1074,7 +1074,7 @@
             param: {    
                 name: 'numparser_myshows_fastapi',    
                 type: 'trigger',    
-                default: getProfileSetting('numparser_myshows_fastapi', false),   
+                default: getProfileSetting('numparser_myshows_fastapi', "false"),   
             },    
             field: {    
                 name: 'Использовать FastAPI для MyShows',    
@@ -1117,7 +1117,7 @@
 
         Object.keys(CATEGORY_VISIBILITY).forEach(function (option) {
             // Проверяем настройку FastAPI для категорий MyShows  
-            var myshows_fastapi = getProfileSetting('numparser_myshows_fastapi', false);
+            var myshows_fastapi = getProfileSetting('numparser_myshows_fastapi', "false");
             
             if (option === 'myshows_unwatched' && myshows_fastapi) {    
                 CATEGORY_VISIBILITY.myshows_unwatched.visible = false;
@@ -1129,7 +1129,7 @@
             }   
             
             var settingName = 'numparser_settings_' + option + '_visible';
-            var visible = getProfileSetting(settingName, true);
+            var visible = getProfileSetting(settingName, "true");
 
             CATEGORY_VISIBILITY[option].visible = visible;
 
@@ -1181,7 +1181,7 @@
                     var settingsPanel = document.querySelector('[data-component="numparser_settings"]');
                     if (settingsPanel) {
                         var hideWatched = settingsPanel.querySelector('select[data-name="numparser_hide_watched"]');
-                        if (hideWatched) hideWatched.value = getProfileSetting('numparser_hide_watched', true);
+                        if (hideWatched) hideWatched.value = getProfileSetting('numparser_hide_watched', "true");
 
                         var minProgress = settingsPanel.querySelector('select[data-name="numparser_min_progress"]');
                         if (minProgress) minProgress.value = getProfileSetting('numparser_min_progress', DEFAULT_MIN_PROGRESS).toString();
@@ -1190,7 +1190,7 @@
                         if (sourceName) sourceName.value = getProfileSetting('numparser_source_name', DEFAULT_SOURCE_NAME);
 
                         var fastapi = settingsPanel.querySelector('select[data-name="numparser_myshows_fastapi"]');
-                        if (fastapi) fastapi.value = getProfileSetting('numparser_myshows_fastapi', false);
+                        if (fastapi) fastapi.value = getProfileSetting('numparser_myshows_fastapi', "false");
                     }
                 }, 100);
             }
