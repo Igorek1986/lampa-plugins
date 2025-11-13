@@ -2086,6 +2086,51 @@
         }  
     });
 
+        Lampa.Listener.follow('full', function(event) {  
+            if (event.type === 'complite' && event.data && event.data.movie) {  
+                var movie = event.data.movie;  
+                var originalName = movie.original_name || movie.name || movie.title;  
+                
+                // Загружаем данные MyShows  
+                loadCacheFromServer('unwatched_serials', 'shows', function(cachedResult) {  
+                    if (cachedResult && cachedResult.shows) {  
+                        var foundShow = cachedResult.shows.find(function(show) {  
+                            return (show.original_name || show.name || show.title) === originalName;  
+                        });  
+                        
+                        if (foundShow && foundShow.progress_marker) {  
+                            addProgressMarkerToFullCard(event.body, foundShow);  
+                        }  
+                    }  
+                });  
+            }  
+        });
+
+        function addProgressMarkerToFullCard(bodyElement, showData) {  
+            var posterElement = bodyElement.find('.full-start-new__poster');  
+            
+            if (!posterElement.length) return;  
+            
+            // Удаляем старые маркеры, если есть  
+            posterElement.find('.myshows-progress, .myshows-next-episode').remove();  
+            
+            // Добавляем маркер прогресса  
+            if (showData.progress_marker) {  
+                var progressMarker = document.createElement('div');  
+                progressMarker.className = 'myshows-progress';  
+                progressMarker.textContent = showData.progress_marker;  
+                posterElement.append(progressMarker);  
+            }  
+            
+            // Добавляем маркер следующей серии  
+            if (showData.next_episode) {  
+                var nextEpisodeMarker = document.createElement('div');  
+                nextEpisodeMarker.className = 'myshows-next-episode';  
+                nextEpisodeMarker.textContent = showData.next_episode;  
+                posterElement.append(nextEpisodeMarker);  
+            }  
+        }
+
     function updateCompletedShowCard(showName) {  
         var cards = document.querySelectorAll('.card');  
         
@@ -2366,6 +2411,57 @@
                 color: #fff;  
                 transition: all 0.3s ease;  /* ✅ Добавьте transition */  
             }    
+
+            .full-start-new__poster {  
+                position: relative;  
+            }  
+            
+            .full-start-new__poster .myshows-progress,  
+            .full-start-new__poster .myshows-next-episode {  
+                position: absolute;  
+                left: 0.5em;  
+                z-index: 3;  
+            }  
+            
+            .full-start-new__poster .myshows-progress {  
+                bottom: 0.5em;  
+            }  
+            
+            .full-start-new__poster .myshows-next-episode {  
+                bottom: 2em;  
+            }
+
+
+            /* Мобильная версия для full-карточки */  
+            body.true--mobile.orientation--portrait .full-start-new__poster .myshows-progress {  
+                bottom: 15em;  
+            }  
+            
+            body.true--mobile.orientation--portrait .full-start-new__poster .myshows-next-episode {  
+                bottom: 17em;  
+            }  
+            
+            /* Планшеты (альбомная ориентация) или широкие экраны */  
+            body.true--mobile.orientation--landscape .full-start-new__poster .myshows-progress {  
+                bottom: 2.5em;  
+            }  
+            
+            body.true--mobile.orientation--landscape .full-start-new__poster .myshows-next-episode {  
+                bottom: 4em;  
+            }  
+            
+            /* Дополнительно: медиа-запрос для планшетов по ширине экрана */  
+            @media screen and (min-width: 580px) and (max-width: 1024px) {  
+                body.true--mobile .full-start-new__poster .myshows-progress {  
+                    bottom: 2.5em;  
+                    font-size: 1.1em;  
+                }  
+                
+                body.true--mobile .full-start-new__poster .myshows-next-episode {  
+                    bottom: 4em;  
+                    font-size: 1.1em;  
+                }  
+            }
             
             /* Поддержка glass-стиля */    
             body.glass--style.platform--browser .card .myshows-progress,    
