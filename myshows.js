@@ -2017,6 +2017,45 @@
                 Lampa.Storage.set('myshows_current_card', currentCard);  
             }  
         }  
+
+        if (event.type === 'start' && event.component === 'full') {  
+            var currentCard = event.object && event.object.card;  
+            if (currentCard) {  
+                var originalName = currentCard.original_name || currentCard.original_title || currentCard.title;  
+                
+                // Проверяем, возвращаемся ли к той же карточке  
+                var previousCard = Lampa.Storage.get('myshows_current_card', null);  
+                var wasWatching = Lampa.Storage.get('myshows_was_watching', false);  
+                
+                // Сохраняем текущую карточку  
+                Lampa.Storage.set('myshows_current_card', currentCard);  
+                
+                // ✅ Если возвращаемся к той же карточке после просмотра  
+                if (previousCard &&   
+                    (previousCard.original_name || previousCard.original_title || previousCard.title) === originalName &&  
+                    wasWatching) {  
+                    
+                    console.log('[MyShows] Returning to same card after watching');  
+                    Lampa.Storage.set('myshows_was_watching', false);  
+                    
+                    // Ждём обновления данных на сервере  
+                    setTimeout(function() {  
+                        loadCacheFromServer('unwatched_serials', 'shows', function(cachedResult) {  
+                            if (cachedResult && cachedResult.shows) {  
+                                var foundShow = cachedResult.shows.find(function(show) {  
+                                    return (show.original_name || show.name || show.title) === originalName;  
+                                });  
+                                
+                                if (foundShow && (foundShow.progress_marker || foundShow.next_episode)) {  
+                                    console.log('[MyShows] Updating markers on full page');  
+                                    updateMarkersOnFullCard(foundShow.progress_marker, foundShow.next_episode);  
+                                }  
+                            }  
+                        });  
+                    }, 2000);  
+                }  
+            }  
+        }  
         
         if (event.type === 'archive' && (event.component === 'main' || event.component === 'category')) {  
             var lastCard = Lampa.Storage.get('myshows_last_card', null);  
@@ -2106,30 +2145,80 @@
             }  
         });
 
-        function addProgressMarkerToFullCard(bodyElement, showData) {  
-            var posterElement = bodyElement.find('.full-start-new__poster');  
+    function addProgressMarkerToFullCard(bodyElement, showData) {  
+        var posterElement = bodyElement.find('.full-start-new__poster');  
+        
+        if (!posterElement.length) return;  
+        
+        // Удаляем старые маркеры, если есть  
+        posterElement.find('.myshows-progress, .myshows-next-episode').remove();  
+        
+        // Добавляем маркер прогресса  
+        if (showData.progress_marker) {  
+            var progressMarker = document.createElement('div');  
+            progressMarker.className = 'myshows-progress';  
+            progressMarker.textContent = showData.progress_marker;  
+            posterElement.append(progressMarker);  
+        }  
+        
+        // Добавляем маркер следующей серии  
+        if (showData.next_episode) {  
+            var nextEpisodeMarker = document.createElement('div');  
+            nextEpisodeMarker.className = 'myshows-next-episode';  
+            nextEpisodeMarker.textContent = showData.next_episode;  
+            posterElement.append(nextEpisodeMarker);  
+        }  
+    }
+
+    function updateMarkersOnFullCard(progressMarker, nextEpisode) {  
+        console.log('[MyShows] updateMarkersOnFullCard called');  
+        
+        var posterElement = $('.full-start-new__poster');  
+        
+        if (!posterElement.length) {  
+            console.warn('[MyShows] Full poster not found via jQuery');  
+            return;  
+        }  
+        
+        // Удаляем старые маркеры  
+        posterElement.find('.myshows-progress, .myshows-next-episode').remove();  
+        
+        // Добавляем маркер прогресса с анимацией  
+        if (progressMarker) {  
+            var progressDiv = document.createElement('div');  
+            progressDiv.className = 'myshows-progress';  
+            progressDiv.textContent = progressMarker;  
+            posterElement.append(progressDiv);  
             
-            if (!posterElement.length) return;  
+            // ✅ Добавляем анимацию  
+            setTimeout(function() {  
+                progressDiv.classList.add('marker-update');  
+                setTimeout(function() {  
+                    progressDiv.classList.remove('marker-update');  
+                }, 300);  
+            }, 50);  
             
-            // Удаляем старые маркеры, если есть  
-            posterElement.find('.myshows-progress, .myshows-next-episode').remove();  
+            console.log('[MyShows] Progress marker added:', progressMarker);  
+        }  
+        
+        // Добавляем маркер следующей серии с анимацией  
+        if (nextEpisode) {  
+            var nextDiv = document.createElement('div');  
+            nextDiv.className = 'myshows-next-episode';  
+            nextDiv.textContent = nextEpisode;  
+            posterElement.append(nextDiv);  
             
-            // Добавляем маркер прогресса  
-            if (showData.progress_marker) {  
-                var progressMarker = document.createElement('div');  
-                progressMarker.className = 'myshows-progress';  
-                progressMarker.textContent = showData.progress_marker;  
-                posterElement.append(progressMarker);  
-            }  
+            // ✅ Добавляем анимацию  
+            setTimeout(function() {  
+                nextDiv.classList.add('marker-update');  
+                setTimeout(function() {  
+                    nextDiv.classList.remove('marker-update');  
+                }, 300);  
+            }, 50);  
             
-            // Добавляем маркер следующей серии  
-            if (showData.next_episode) {  
-                var nextEpisodeMarker = document.createElement('div');  
-                nextEpisodeMarker.className = 'myshows-next-episode';  
-                nextEpisodeMarker.textContent = showData.next_episode;  
-                posterElement.append(nextEpisodeMarker);  
-            }  
-        }
+            console.log('[MyShows] Next episode marker added:', nextEpisode);  
+        }  
+    }
 
     function updateCompletedShowCard(showName) {  
         var cards = document.querySelectorAll('.card');  
