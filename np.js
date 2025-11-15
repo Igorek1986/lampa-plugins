@@ -592,7 +592,7 @@
 
         self.full = function (params, onSuccess, onError) {
             var card = params.card;
-            params.method = !!(card.number_of_seasons || card.seasons || card.first_air_date) ? 'tv' : 'movie';
+            params.method = !!(card.number_of_seasons || card.seasons || card.last_episode_to_air || card.first_air_date) ? 'tv' : 'movie';
             Lampa.Api.sources.tmdb.full(params, onSuccess, onError);
         }
 
@@ -633,18 +633,12 @@
             if (CATEGORY_VISIBILITY.legends.visible) partsData.push(function (callback) {
                 makeRequest(CATEGORIES.legends, CATEGORY_VISIBILITY.legends.title, callback);
             });
-            if (CATEGORY_VISIBILITY.episodes.visible) {
-                partsData.push(function (callback) {
-                    callback({
-                        source: 'tmdb',
-                        results: Lampa.TimeTable.lately().slice(0, 20),
-                        title: CATEGORY_VISIBILITY.episodes.title,
-                        nomore: true,
-                        cardClass: function (elem, params) {
-                            return new Episode(elem, params);
-                        }
-                    });
-                });
+            if (CATEGORY_VISIBILITY.episodes.visible) {  
+                            var addEpisodes = Lampa.Manifest.app_digital >= 300
+                                ? addEpisodesV3
+                                : addEpisodesV2;
+
+                            addEpisodes(partsData);
             }
             if (CATEGORY_VISIBILITY.k4_new.visible) partsData.push(function (callback) {
                 makeRequest(CATEGORIES.k4_new, CATEGORY_VISIBILITY.k4_new.title, callback);
@@ -689,6 +683,53 @@
                         });
                     })(year);
                 }
+            }
+
+            function addEpisodesV2(partsData) {
+                partsData.push(function (callback) {
+                    callback({
+                        source: 'tmdb',
+                        results: Lampa.TimeTable.lately().slice(0, 20),
+                        title: CATEGORY_VISIBILITY.episodes.title,
+                        nomore: true,
+                        cardClass: function (elem, params) {
+                            return new Episode(elem, params);
+                        }
+                    });
+                });
+            }
+
+            function addEpisodesV3(partsData) {
+                partsData.push(function (callback) {  
+                    var results = Lampa.TimeTable.lately().slice(0, 20);  
+                    
+                    results.forEach(function(item) {  
+                        item.params = {  
+                            createInstance: function(data) {  
+                                return Lampa.Maker.make('Episode', data, function(module) {  
+                                    return module.only('Card', 'Callback');  
+                                });  
+                            },  
+                            emit: {  
+                                onlyEnter: function() {  
+                                    Lampa.Router.call('full', item.card);  
+                                },  
+                                onlyFocus: function() {  
+                                    Lampa.Background.change(Lampa.Utils.cardImgBackgroundBlur(item.card));  
+                                }  
+                            }  
+                        };  
+                        
+                        Lampa.Arrays.extend(item, item.episode);  
+                    });  
+                    
+                    callback({  
+                        source: 'tmdb',  
+                        results: results,  
+                        title: CATEGORY_VISIBILITY.episodes.title,  
+                        nomore: true  
+                    });  
+                });
             }
 
             function makeRequest(category, title, callback) {
@@ -811,8 +852,7 @@
         };
 
         self.image = function () {
-            self.img_poster.onload = function () {
-            };
+            self.img_poster.onload = function () { };
             self.img_poster.onerror = function () {
                 self.img_poster.src = './img/img_broken.svg';
             };
@@ -873,14 +913,10 @@
         };
 
         self.destroy = function () {
-            self.img_poster.onerror = function () {
-            };
-            self.img_poster.onload = function () {
-            };
-            self.img_episode.onerror = function () {
-            };
-            self.img_episode.onload = function () {
-            };
+            self.img_poster.onerror = function () { };
+            self.img_poster.onload = function () { };
+            self.img_episode.onerror = function () { };
+            self.img_episode.onload = function () { };
             self.img_poster.src = '';
             self.img_episode.src = '';
             remove(self.card);
