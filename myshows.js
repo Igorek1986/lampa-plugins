@@ -17,6 +17,7 @@
     var later_icon = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z" fill="currentColor"/></svg>';
     var remove_icon = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" fill="currentColor"/></svg>';
     var cancelled_icon = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm5 11H7v-2h10v2z" fill="currentColor"/></svg>';
+    var isLampac = window.lampac_plugin;
 
 
     function accountUrl(url) {  
@@ -544,48 +545,51 @@
             }  
         });  
 
-        Lampa.SettingsApi.addParam({  
-            component: 'myshows', // Ваш компонент настроек  
-            param: {  
-                type: 'button'  
-            },  
-            field: {  
-                name: 'Синхронизация с Lampac'  
-            },  
-            onChange: function() {  
-                Lampa.Select.show({  
-                    title: 'Синхронизация MyShows',  
-                    items: [  
-                        {  
-                            title: 'Синхронизировать',  
-                            subtitle: 'Добавить просмотренные фильмы и сериалы в историю Lampa. (Требуется модуль TimecodeUser)',  
-                            confirm: true  
-                        },  
-                        {  
-                            title: 'Отмена'  
-                        }  
-                    ],  
-                    onSelect: function(item) {  
-                        if (item.confirm) {  
-                            Lampa.Noty.show('Начинаем синхронизацию...');  
+        if (isLampac) {
+            console.log('[MyShows] Adding Sync button to Lampac settings');
+            Lampa.SettingsApi.addParam({  
+                component: 'myshows', // Ваш компонент настроек  
+                param: {  
+                    type: 'button'  
+                },  
+                field: {  
+                    name: 'Синхронизация с Lampac'  
+                },  
+                onChange: function() {  
+                    Lampa.Select.show({  
+                        title: 'Синхронизация MyShows',  
+                        items: [  
+                            {  
+                                title: 'Синхронизировать',  
+                                subtitle: 'Добавить просмотренные фильмы и сериалы в историю Lampa. (Требуется модуль TimecodeUser)',  
+                                confirm: true  
+                            },  
+                            {  
+                                title: 'Отмена'  
+                            }  
+                        ],  
+                        onSelect: function(item) {  
+                            if (item.confirm) {  
+                                Lampa.Noty.show('Начинаем синхронизацию...');  
+                                
+                                syncMyShows(function(success, message) {  
+                                    if (success) {  
+                                        Lampa.Noty.show(message);  
+                                    } else {  
+                                        Lampa.Noty.show('Ошибка: ' + message);  
+                                    }  
+                                });  
+                            }  
                             
-                            syncMyShows(function(success, message) {  
-                                if (success) {  
-                                    Lampa.Noty.show(message);  
-                                } else {  
-                                    Lampa.Noty.show('Ошибка: ' + message);  
-                                }  
-                            });  
+                            Lampa.Controller.toggle('settings_component');  
+                        },  
+                        onBack: function() {  
+                            Lampa.Controller.toggle('settings_component');  
                         }  
-                        
-                        Lampa.Controller.toggle('settings_component');  
-                    },  
-                    onBack: function() {  
-                        Lampa.Controller.toggle('settings_component');  
-                    }  
-                });  
-            }  
-        });
+                    });  
+                }  
+            });
+        }
     }  
 
     // Обновляем UI при смене профиля
@@ -901,7 +905,6 @@
             var shows = [];    
             var myshowsIndex = {};  
             
-            
             for (var i = 0; i < response.result.length; i++) {    
                 var item = response.result[i];    
                 if (item.show) {    
@@ -1042,6 +1045,9 @@
     function setMyShowsMovieStatus(movieData, status, callback) {          
         var title = movieData.original_title || movieData.title;  
         var year = getMovieYear(movieData);  
+
+        Lampa.Storage.set('myshows_was_watching', true); 
+
         
         getMovieIdByOriginalTitle(title, year, function(movieId) {  
             if (!movieId) {  
@@ -2010,6 +2016,12 @@
 
     
     Lampa.Listener.follow('activity', function(event) {  
+
+        console.log('[MyShows] Activity event:', {  
+            type: event.type,  
+            component: event.component  
+        });  
+
         if (event.type === 'start' && event.component === 'full') {  
             // Сохраняем карточку, в которую зашли  
             var currentCard = event.object && event.object.card;  
@@ -2024,6 +2036,13 @@
                 var originalName = currentCard.original_name || currentCard.original_title || currentCard.title;  
                 var previousCard = Lampa.Storage.get('myshows_current_card', null);  
                 var wasWatching = Lampa.Storage.get('myshows_was_watching', false);  
+
+                console.log('[MyShows] Full start debug:', {  
+                    originalName: originalName,  
+                    previousCard: previousCard ? (previousCard.original_name || previousCard.original_title || previousCard.title) : null,  
+                    wasWatching: wasWatching,  
+                    isSerial: currentCard.number_of_seasons > 0 || currentCard.seasons  
+                });  
                 
                 Lampa.Storage.set('myshows_current_card', currentCard);  
                 
@@ -2038,6 +2057,7 @@
                     // Ждём обновления данных на сервере  
                     setTimeout(function() {  
                         if (isSerial) {  
+                            // Для сериалов  
                             loadCacheFromServer('unwatched_serials', 'shows', function(cachedResult) {  
                                 if (cachedResult && cachedResult.shows) {  
                                     var foundShow = cachedResult.shows.find(function(show) {  
@@ -2050,7 +2070,6 @@
                                     }  
                                 }  
                             });
-                            // Для сериалов  
                             loadCacheFromServer('serial_status', 'shows', function(cachedResult) {  
                                 if (cachedResult && cachedResult.shows) {  
                                     var foundShow = cachedResult.shows.find(function(show) {  
@@ -2159,25 +2178,25 @@
         }  
     });
 
-        Lampa.Listener.follow('full', function(event) {  
-            if (event.type === 'complite' && event.data && event.data.movie) {  
-                var movie = event.data.movie;  
-                var originalName = movie.original_name || movie.name || movie.title;  
-                
-                // Загружаем данные MyShows  
-                loadCacheFromServer('unwatched_serials', 'shows', function(cachedResult) {  
-                    if (cachedResult && cachedResult.shows) {  
-                        var foundShow = cachedResult.shows.find(function(show) {  
-                            return (show.original_name || show.name || show.title) === originalName;  
-                        });  
-                        
-                        if (foundShow && foundShow.progress_marker) {  
-                            addProgressMarkerToFullCard(event.body, foundShow);  
-                        }  
+    Lampa.Listener.follow('full', function(event) {  
+        if (event.type === 'complite' && event.data && event.data.movie) {  
+            var movie = event.data.movie;  
+            var originalName = movie.original_name || movie.name || movie.title;  
+            
+            // Загружаем данные MyShows  
+            loadCacheFromServer('unwatched_serials', 'shows', function(cachedResult) {  
+                if (cachedResult && cachedResult.shows) {  
+                    var foundShow = cachedResult.shows.find(function(show) {  
+                        return (show.original_name || show.name || show.title) === originalName;  
+                    });  
+                    
+                    if (foundShow && foundShow.progress_marker) {  
+                        addProgressMarkerToFullCard(event.body, foundShow);  
                     }  
-                });  
-            }  
-        });
+                }  
+            });  
+        }  
+    });
 
     function addProgressMarkerToFullCard(bodyElement, showData) {  
         var posterElement = bodyElement.find('.full-start-new__poster');  
@@ -2614,7 +2633,6 @@
             .full-start-new__poster .myshows-next-episode {  
                 bottom: 2em;  
             }
-
 
             /* Мобильная версия для full-карточки */  
             body.true--mobile.orientation--portrait .full-start-new__poster .myshows-progress {  
