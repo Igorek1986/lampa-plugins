@@ -2022,12 +2022,9 @@
             var currentCard = event.object && event.object.card;  
             if (currentCard) {  
                 var originalName = currentCard.original_name || currentCard.original_title || currentCard.title;  
-                
-                // Проверяем, возвращаемся ли к той же карточке  
                 var previousCard = Lampa.Storage.get('myshows_current_card', null);  
                 var wasWatching = Lampa.Storage.get('myshows_was_watching', false);  
                 
-                // Сохраняем текущую карточку  
                 Lampa.Storage.set('myshows_current_card', currentCard);  
                 
                 // ✅ Если возвращаемся к той же карточке после просмотра  
@@ -2035,23 +2032,60 @@
                     (previousCard.original_name || previousCard.original_title || previousCard.title) === originalName &&  
                     wasWatching) {  
                     
-                    console.log('[MyShows] Returning to same card after watching');  
-                    Lampa.Storage.set('myshows_was_watching', false);  
+                    // Определяем тип контента  
+                    var isSerial = currentCard.number_of_seasons > 0 || currentCard.seasons;  
                     
                     // Ждём обновления данных на сервере  
                     setTimeout(function() {  
-                        loadCacheFromServer('unwatched_serials', 'shows', function(cachedResult) {  
-                            if (cachedResult && cachedResult.shows) {  
-                                var foundShow = cachedResult.shows.find(function(show) {  
-                                    return (show.original_name || show.name || show.title) === originalName;  
-                                });  
-                                
-                                if (foundShow && (foundShow.progress_marker || foundShow.next_episode)) {  
-                                    console.log('[MyShows] Updating markers on full page');  
-                                    updateMarkersOnFullCard(foundShow.progress_marker, foundShow.next_episode);  
+                        if (isSerial) {  
+                            loadCacheFromServer('unwatched_serials', 'shows', function(cachedResult) {  
+                                if (cachedResult && cachedResult.shows) {  
+                                    var foundShow = cachedResult.shows.find(function(show) {  
+                                        return (show.original_name || show.name || show.title) === originalName;  
+                                    });  
+                                    
+                                    if (foundShow && (foundShow.progress_marker || foundShow.next_episode)) {  
+                                        console.log('[MyShows] Updating markers on full page');  
+                                        updateMarkersOnFullCard(foundShow.progress_marker, foundShow.next_episode);  
+                                    }  
                                 }  
-                            }  
-                        });  
+                            });
+                            // Для сериалов  
+                            loadCacheFromServer('serial_status', 'shows', function(cachedResult) {  
+                                if (cachedResult && cachedResult.shows) {  
+                                    var foundShow = cachedResult.shows.find(function(show) {  
+                                        return show.title === originalName ||   
+                                            show.titleOriginal === originalName ||  
+                                            (show.title && show.title.toLowerCase() === originalName.toLowerCase()) ||  
+                                            (show.titleOriginal && show.titleOriginal.toLowerCase() === originalName.toLowerCase());  
+                                    });  
+                                    
+                                    if (foundShow) {  
+                                        console.log('[MyShows] Updating serial status to:', foundShow.watchStatus);  
+                                        updateButtonStatesWithAnimation(foundShow.watchStatus);  
+                                        Lampa.Storage.set('myshows_was_watching', false);
+                                    }  
+                                }  
+                            });  
+                        } else {  
+                            // Для фильмов  
+                            loadCacheFromServer('movie_status', 'movies', function(cachedResult) {  
+                                if (cachedResult && cachedResult.movies) {  
+                                    var foundMovie = cachedResult.movies.find(function(movie) {  
+                                        return movie.title === originalName ||   
+                                            movie.titleOriginal === originalName ||  
+                                            (movie.title && movie.title.toLowerCase() === originalName.toLowerCase()) ||  
+                                            (movie.titleOriginal && movie.titleOriginal.toLowerCase() === originalName.toLowerCase());  
+                                    });  
+                                    
+                                    if (foundMovie) {  
+                                        console.log('[MyShows] Updating movie status to:', foundMovie.watchStatus);  
+                                        updateMovieButtonStatesWithAnimation(foundMovie.watchStatus);  
+                                        Lampa.Storage.set('myshows_was_watching', false);
+                                    }  
+                                }  
+                            });  
+                        }  
                     }, 2000);  
                 }  
             }  
@@ -2218,6 +2252,67 @@
             
             console.log('[MyShows] Next episode marker added:', nextEpisode);  
         }  
+    }
+
+    function updateButtonStatesWithAnimation(newStatus) {  
+        var buttons = document.querySelectorAll('.full-start__button[class*="myshows-"]');  
+        
+        buttons.forEach(function(button) {  
+            var svg = button.querySelector('svg');  
+            if (!svg) return;  
+            
+            var wasActive = button.classList.contains('myshows-active');  
+            var shouldBeActive = newStatus && (  
+                (newStatus === 'watching' && button.classList.contains('myshows-watching')) ||  
+                (newStatus === 'later' && button.classList.contains('myshows-scheduled')) ||  
+                (newStatus === 'cancelled' && button.classList.contains('myshows-thrown')) ||  
+                (newStatus === 'remove' && button.classList.contains('myshows-cancelled'))  
+            );  
+            
+            // Только если статус реально изменился  
+            if (wasActive !== shouldBeActive) {  
+                // Добавляем transition для плавной смены цвета  
+                svg.style.transition = 'color 0.5s ease, filter 0.5s ease';  
+                
+                if (shouldBeActive) {  
+                    button.classList.add('myshows-active');  
+                    console.log('[MyShows] Activated button:', button.className);  
+                } else {  
+                    button.classList.remove('myshows-active');  
+                    console.log('[MyShows] Deactivated button:', button.className);  
+                }  
+            }  
+        });  
+    }  
+    
+    function updateMovieButtonStatesWithAnimation(newStatus) {  
+        var buttons = document.querySelectorAll('.full-start__button[class*="myshows-movie-"]');  
+        
+        buttons.forEach(function(button) {  
+            var svg = button.querySelector('svg');  
+            if (!svg) return;  
+            
+            var wasActive = button.classList.contains('myshows-active');  
+            var shouldBeActive = newStatus && (  
+                (newStatus === 'finished' && button.classList.contains('myshows-movie-watched')) ||  
+                (newStatus === 'later' && button.classList.contains('myshows-movie-later')) ||  
+                (newStatus === 'remove' && button.classList.contains('myshows-movie-remove'))  
+            );  
+            
+            // Только если статус реально изменился  
+            if (wasActive !== shouldBeActive) {  
+                // Добавляем transition для плавной смены цвета  
+                svg.style.transition = 'color 0.5s ease, filter 0.5s ease';  
+                
+                if (shouldBeActive) {  
+                    button.classList.add('myshows-active');  
+                    console.log('[MyShows] Activated movie button:', button.className);  
+                } else {  
+                    button.classList.remove('myshows-active');  
+                    console.log('[MyShows] Deactivated movie button:', button.className);  
+                }  
+            }  
+        });  
     }
 
     function updateCompletedShowCard(showName) {  
@@ -2748,34 +2843,40 @@
         }) 
     }
 
-    function addMyShowsButtonStyles() {        
-        var style = document.createElement('style');        
-        style.textContent = `        
-            .full-start-new__buttons .full-start__button.myshows-watching.myshows-active svg,      
-            .full-start__buttons .full-start__button.myshows-watching.myshows-active svg {        
-                color: #FFC107;        
-                filter: drop-shadow(0 0 3px rgba(255, 193, 7, 0.8));        
-            }        
+    function addMyShowsButtonStyles() {  
+        var style = document.createElement('style');  
+        style.textContent = `  
+            /* Добавляем transition для всех SVG в кнопках MyShows */  
+            .full-start-new__buttons .full-start__button[class*="myshows-"] svg,  
+            .full-start__buttons .full-start__button[class*="myshows-"] svg {  
+                transition: color 0.5s ease, filter 0.5s ease;  
+            }  
             
-            .full-start-new__buttons .full-start__button.myshows-scheduled.myshows-active svg,      
-            .full-start__buttons .full-start__button.myshows-scheduled.myshows-active svg {        
-                color: #2196F3;        
-                filter: drop-shadow(0 0 3px rgba(33, 150, 243, 0.8));        
-            }    
+            .full-start-new__buttons .full-start__button.myshows-watching.myshows-active svg,  
+            .full-start__buttons .full-start__button.myshows-watching.myshows-active svg {  
+                color: #FFC107;  
+                filter: drop-shadow(0 0 3px rgba(255, 193, 7, 0.8));  
+            }  
             
-            .full-start-new__buttons .full-start__button.myshows-thrown.myshows-active svg,      
-            .full-start__buttons .full-start__button.myshows-thrown.myshows-active svg {        
-                color: #FF9800;        
-                filter: drop-shadow(0 0 3px rgba(255, 152, 0, 0.8));        
-            }    
+            .full-start-new__buttons .full-start__button.myshows-scheduled.myshows-active svg,  
+            .full-start__buttons .full-start__button.myshows-scheduled.myshows-active svg {  
+                color: #2196F3;  
+                filter: drop-shadow(0 0 3px rgba(33, 150, 243, 0.8));  
+            }  
             
-            .full-start-new__buttons .full-start__button.myshows-cancelled.myshows-active svg,      
-            .full-start__buttons .full-start__button.myshows-cancelled.myshows-active svg {        
-                color: #F44336;        
-                filter: drop-shadow(0 0 3px rgba(244, 67, 54, 0.8));        
-            }        
-        `;        
-        document.head.appendChild(style);        
+            .full-start-new__buttons .full-start__button.myshows-thrown.myshows-active svg,  
+            .full-start__buttons .full-start__button.myshows-thrown.myshows-active svg {  
+                color: #FF9800;  
+                filter: drop-shadow(0 0 3px rgba(255, 152, 0, 0.8));  
+            }  
+            
+            .full-start-new__buttons .full-start__button.myshows-cancelled.myshows-active svg,  
+            .full-start__buttons .full-start__button.myshows-cancelled.myshows-active svg {  
+                color: #F44336;  
+                filter: drop-shadow(0 0 3px rgba(244, 67, 54, 0.8));  
+            }  
+        `;  
+        document.head.appendChild(style);  
     }
 
     function getStatusTitle(showTitle, path, callback) {  
@@ -3044,6 +3145,12 @@
     function addMyShowsMovieButtonStyles() {  
         var style = document.createElement('style');  
         style.textContent = `  
+            /* Добавляем transition для всех SVG в кнопках фильмов */  
+            .full-start-new__buttons .full-start__button[class*="myshows-movie-"] svg,  
+            .full-start__buttons .full-start__button[class*="myshows-movie-"] svg {  
+                transition: color 0.5s ease, filter 0.5s ease;  
+            }  
+            
             .full-start-new__buttons .full-start__button.myshows-movie-watched.myshows-active svg,  
             .full-start__buttons .full-start__button.myshows-movie-watched.myshows-active svg {  
                 color: #4CAF50;  
