@@ -296,7 +296,7 @@
         }  
 
         if (!hasProfileSetting('myshows_sort_order')) {    
-            setProfileSetting('myshows_sort_order', 'alphabet');    
+            setProfileSetting('myshows_sort_order', 'progress');    
         }  
 
         if (!hasProfileSetting('myshows_add_threshold')) {      
@@ -325,7 +325,7 @@
             
         var myshowsViewInMain = getProfileSetting('myshows_view_in_main', true); 
         var myshowsButtonView = getProfileSetting('myshows_button_view', true); 
-        var sortOrderValue = getProfileSetting('myshows_sort_order', 'alphabet');  
+        var sortOrderValue = getProfileSetting('myshows_sort_order', 'progress');  
         var addThresholdValue = parseInt(getProfileSetting('myshows_add_threshold', DEFAULT_ADD_THRESHOLD).toString());  
         var progressValue = getProfileSetting('myshows_min_progress', DEFAULT_MIN_PROGRESS).toString();    
         var tokenValue = getProfileSetting('myshows_token', '');    
@@ -401,7 +401,7 @@
                     'progress': 'По прогрессу',    
                     'unwatched_count': 'По количеству непросмотренных'  
                 },    
-                default: 'alphabet'    
+                default: 'progress'    
             },    
             field: {    
                 name: 'Сортировка сериалов',    
@@ -610,7 +610,7 @@
                 if (myshowsViewInMain) myshowsButtonView.value = getProfileSetting('myshows_button_view', true);
 
                 var sortSelect = settingsPanel.querySelector('select[data-name="myshows_sort_order"]');  
-                if (sortSelect) sortSelect.value = getProfileSetting('myshows_sort_order', 'alphabet');
+                if (sortSelect) sortSelect.value = getProfileSetting('myshows_sort_order', 'progress');
 
                 var addThresholdSelect = settingsPanel.querySelector('select[data-name="myshows_add_threshold"]');  
                 if (addThresholdSelect) addThresholdSelect.value = getProfileSetting('myshows_add_threshold', DEFAULT_ADD_THRESHOLD).toString();
@@ -1008,7 +1008,7 @@
         }    
         
         // Сортировка данных
-        var sortOrder = getProfileSetting('myshows_sort_order', 'alphabet');
+        var sortOrder = getProfileSetting('myshows_sort_order', 'progress');
         if (cacheData.shows && cacheData.shows.length > 0) {
             sortShows(cacheData.shows, sortOrder);
         }
