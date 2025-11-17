@@ -1045,9 +1045,6 @@
     function setMyShowsMovieStatus(movieData, status, callback) {          
         var title = movieData.original_title || movieData.title;  
         var year = getMovieYear(movieData);  
-
-        Lampa.Storage.set('myshows_was_watching', true); 
-
         
         getMovieIdByOriginalTitle(title, year, function(movieId) {  
             if (!movieId) {  
@@ -1516,8 +1513,6 @@
         
         var originalName = card.original_name || card.original_title || card.title;      
         var firstEpisodeHash = Lampa.Utils.hash('11' + originalName);     
-        
-        Lampa.Storage.set('myshows_was_watching', true); 
         
         // Проверяем, нужно ли добавить сериал в "Смотрю"  
         if (hash === firstEpisodeHash && percent >= addThreshold) {    
@@ -3925,15 +3920,26 @@
 
     // Инициализация плеера  
     if (window.Lampa && Lampa.Player && Lampa.Player.listener) {  
-    Lampa.Player.listener.follow('start', function(data) {  
-        var card = data.card || (Lampa.Activity.active() && Lampa.Activity.active().movie);  
-    
-        if (!card) return;  
+        Lampa.Player.listener.follow('start', function(data) {  
+            var card = data.card || (Lampa.Activity.active() && Lampa.Activity.active().movie);  
         
-        // Просто сохраняем карточку для Timeline обработки  
-        Lampa.Storage.set('myshows_last_card', card);  
-    });  
+            if (!card) return;  
+            
+            // Просто сохраняем карточку для Timeline обработки  
+            Lampa.Storage.set('myshows_last_card', card);  
+        });  
     }
+
+    if (window.Lampa && Lampa.Player && Lampa.Player.listener) {  
+        Lampa.Player.listener.follow('start', function(data) {  
+            Lampa.Storage.set('myshows_was_watching', true);  
+        });  
+          
+        // Для внешнего плеера  
+        Lampa.Player.listener.follow('external', function(data) {  
+            Lampa.Storage.set('myshows_was_watching', true);  
+        });  
+    }  
   
     // Инициализация  
     if (window.appready) {    
