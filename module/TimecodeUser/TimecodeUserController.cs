@@ -7,13 +7,12 @@ using Shared.Models.SQL;
 using System;    
 using System.Collections.Generic;      
 using System.Linq;  
-using System.Threading.Tasks;  // ✅ Добавлено  
+using System.Threading.Tasks;  
 using Newtonsoft.Json;    
 using Newtonsoft.Json.Linq;    
       
 namespace TimecodeUser    
 {  
-    // ✅ Добавлен класс для десериализации запроса  
     public class BatchTimecodeRequest  
     {  
         public List<TimecodeItem> timecodes { get; set; }  
@@ -35,26 +34,29 @@ namespace TimecodeUser
                   
             if (string.IsNullOrEmpty(userId))      
                 return Json(new { });      
+            
+            using (var sqlDb = new SyncUserContext())
+            {
+                var timecodes = sqlDb.timecodes
+                    .AsNoTracking()
+                    .Where(i => i.user == userId)
+                    .Select(i => new { i.card, i.item, i.data })
+                    .ToList();
+
+                if (timecodes.Count == 0)      
+                    return Json(new { });      
       
-            var timecodes = SyncUserDb.Read.timecodes      
-                .AsNoTracking()      
-                .Where(i => i.user == userId)      
-                .Select(i => new { i.card, i.item, i.data })      
-                .ToList();      
+                var result = new Dictionary<string, Dictionary<string, string>>();      
+                foreach (var tc in timecodes)      
+                {      
+                    if (!result.ContainsKey(tc.card))      
+                        result[tc.card] = new Dictionary<string, string>();      
+                          
+                    result[tc.card][tc.item] = tc.data;      
+                }      
       
-            if (timecodes.Count == 0)      
-                return Json(new { });      
-      
-            var result = new Dictionary<string, Dictionary<string, string>>();      
-            foreach (var tc in timecodes)      
-            {      
-                if (!result.ContainsKey(tc.card))      
-                    result[tc.card] = new Dictionary<string, string>();      
-                      
-                result[tc.card][tc.item] = tc.data;      
-            }      
-      
-            return Json(result);      
+                return Json(result);      
+            }
         }      
     
         [HttpPost]  
@@ -73,98 +75,100 @@ namespace TimecodeUser
         
                 Console.WriteLine($"[TimecodeUser] Batch add started: {request.timecodes.Count} timecodes for user {userId}");  
         
-                var sqlDb = SyncUserDb.Write;  
-                int batchSize = 100;  
-                int totalBatches = (int)Math.Ceiling(request.timecodes.Count / (double)batchSize);  
-                int added = 0;  
-                int updated = 0;  
-        
-                // ✅ Загружаем существующие записи пользователя  
-                var existingDict = await sqlDb.timecodes  
-                    .Where(t => t.user == userId)  
-                    .ToDictionaryAsync(t => (t.card, t.item));  
-        
-                Console.WriteLine($"[TimecodeUser] Found {existingDict.Count} existing records");  
-        
-                for (int i = 0; i < request.timecodes.Count; i += batchSize)  
-                {  
-                    int currentBatch = (i / batchSize) + 1;  
-                    var batch = request.timecodes.Skip(i).Take(batchSize).ToList();  
-        
-                    Console.WriteLine($"[TimecodeUser] Processing batch {currentBatch}/{totalBatches} ({batch.Count} items)");  
-        
-                    foreach (var tc in batch)  
+                using (var sqlDb = new SyncUserContext())
+                {
+                    int batchSize = 100;  
+                    int totalBatches = (int)Math.Ceiling(request.timecodes.Count / (double)batchSize);  
+                    int added = 0;  
+                    int updated = 0;  
+            
+                    // ✅ Загружаем существующие записи пользователя  
+                    var existingDict = await sqlDb.timecodes  
+                        .Where(t => t.user == userId)  
+                        .ToDictionaryAsync(t => (t.card, t.item));  
+            
+                    Console.WriteLine($"[TimecodeUser] Found {existingDict.Count} existing records");  
+            
+                    for (int i = 0; i < request.timecodes.Count; i += batchSize)  
                     {  
-                        if (string.IsNullOrEmpty(tc.card_id) || string.IsNullOrEmpty(tc.item))  
-                            continue;  
-        
-                        var key = (tc.card_id, tc.item);  
-        
-                        // ✅ Проверяем в словаре  
-                        if (existingDict.TryGetValue(key, out var existingRecord))  
+                        int currentBatch = (i / batchSize) + 1;  
+                        var batch = request.timecodes.Skip(i).Take(batchSize).ToList();  
+            
+                        Console.WriteLine($"[TimecodeUser] Processing batch {currentBatch}/{totalBatches} ({batch.Count} items)");  
+            
+                        foreach (var tc in batch)  
                         {  
-                            // Обновляем существующую запись  
-                            existingRecord.data = tc.data;  
-                            existingRecord.updated = DateTime.UtcNow;  
-                            updated++;  
-                        }  
-                        else  
-                        {  
-                            // Добавляем новую запись  
-                            var newRecord = new SyncUserTimecodeSqlModel  
+                            if (string.IsNullOrEmpty(tc.card_id) || string.IsNullOrEmpty(tc.item))  
+                                continue;  
+            
+                            var key = (tc.card_id, tc.item);  
+            
+                            // ✅ Проверяем в словаре  
+                            if (existingDict.TryGetValue(key, out var existingRecord))  
                             {  
-                                user = userId,  
-                                card = tc.card_id,  
-                                item = tc.item,  
-                                data = tc.data,  
-                                updated = DateTime.UtcNow  
-                            };  
+                                // Обновляем существующую запись  
+                                existingRecord.data = tc.data;  
+                                existingRecord.updated = DateTime.UtcNow;  
+                                updated++;  
+                            }  
+                            else  
+                            {  
+                                // Добавляем новую запись  
+                                var newRecord = new SyncUserTimecodeSqlModel  
+                                {  
+                                    user = userId,  
+                                    card = tc.card_id,  
+                                    item = tc.item,  
+                                    data = tc.data,  
+                                    updated = DateTime.UtcNow  
+                                };  
+                                
+                                sqlDb.timecodes.Add(newRecord);  
+                                
+                                // ✅ ВАЖНО: Добавляем в словарь, чтобы избежать дубликатов в следующих пакетах  
+                                existingDict[key] = newRecord;  
+                                added++;  
+                            }  
+                        }  
+            
+                        try  
+                        {  
+                            int saved = await sqlDb.SaveChangesAsync();  
+                            Console.WriteLine($"[TimecodeUser] Batch {currentBatch} saved: {saved} changes");  
                             
-                            sqlDb.timecodes.Add(newRecord);  
+                            // Очищаем ChangeTracker для освобождения памяти  
+                            sqlDb.ChangeTracker.Clear();  
                             
-                            // ✅ ВАЖНО: Добавляем в словарь, чтобы избежать дубликатов в следующих пакетах  
-                            existingDict[key] = newRecord;  
-                            added++;  
+                            // ✅ Небольшая пауза между пакетами (50ms)  
+                            await Task.Delay(50);  
+                        }  
+                        catch (Exception ex)  
+                        {  
+                            Console.WriteLine($"[TimecodeUser] Batch {currentBatch} error: {ex.Message}");  
+                            if (ex.InnerException != null)  
+                                Console.WriteLine($"[TimecodeUser] Inner exception: {ex.InnerException.Message}");  
+                            
+                            return Json(new   
+                            {   
+                                success = false,   
+                                message = ex.Message,  
+                                innerMessage = ex.InnerException?.Message,  
+                                batch = currentBatch,  
+                                totalBatches = totalBatches  
+                            });  
                         }  
                     }  
-        
-                    try  
-                    {  
-                        int saved = await sqlDb.SaveChangesAsync();  
-                        Console.WriteLine($"[TimecodeUser] Batch {currentBatch} saved: {saved} changes");  
-                        
-                        // Очищаем ChangeTracker для освобождения памяти  
-                        sqlDb.ChangeTracker.Clear();  
-                        
-                        // ✅ Небольшая пауза между пакетами (50ms)  
-                        await Task.Delay(50);  
-                    }  
-                    catch (Exception ex)  
-                    {  
-                        Console.WriteLine($"[TimecodeUser] Batch {currentBatch} error: {ex.Message}");  
-                        if (ex.InnerException != null)  
-                            Console.WriteLine($"[TimecodeUser] Inner exception: {ex.InnerException.Message}");  
-                        
-                        return Json(new   
-                        {   
-                            success = false,   
-                            message = ex.Message,  
-                            innerMessage = ex.InnerException?.Message,  
-                            batch = currentBatch,  
-                            totalBatches = totalBatches  
-                        });  
-                    }  
-                }  
-        
-                Console.WriteLine($"[TimecodeUser] Batch add completed: {added} added, {updated} updated");  
-        
-                return Json(new   
-                {   
-                    success = true,   
-                    added = added,   
-                    updated = updated,  
-                    total = request.timecodes.Count  
-                });  
+            
+                    Console.WriteLine($"[TimecodeUser] Batch add completed: {added} added, {updated} updated");  
+            
+                    return Json(new   
+                    {   
+                        success = true,   
+                        added = added,   
+                        updated = updated,  
+                        total = request.timecodes.Count  
+                    });  
+                }
             }  
             catch (Exception ex)  
             {  
