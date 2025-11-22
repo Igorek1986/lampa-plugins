@@ -1235,12 +1235,12 @@
 
     if (window.appready) {
         startPlugin();
-        // loadAllTimecodes();
+        loadAllTimecodes();
     } else {
         Lampa.Listener.follow('app', function (event) {
             if (event.type === 'ready') {
                 startPlugin();
-                // loadAllTimecodes();
+                loadAllTimecodes();
             }
         });
     }
