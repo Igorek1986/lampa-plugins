@@ -17,7 +17,7 @@
     var later_icon = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z" fill="currentColor"/></svg>';
     var remove_icon = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" fill="currentColor"/></svg>';
     var cancelled_icon = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm5 11H7v-2h10v2z" fill="currentColor"/></svg>';
-    var isLampac = window.lampac_plugin;
+    var isLampac = window.lampac_plugin || false;
 
 
     function accountUrl(url) {  
@@ -31,6 +31,10 @@
     
     // Сохранение кеша с использованием профилей  
     function saveCacheToServer(cacheData, path, callback) {  
+        if (!isLampac) {
+            console.log('[MyShows] Функция отключена - доступна только в  Lampac');
+            return;
+        }
         try {  
             // var data = JSON.stringify(cacheData);  
             var data = JSON.stringify(cacheData, null, 2);  
@@ -67,7 +71,12 @@
     }  
   
     // Загрузка кеша 
-    function loadCacheFromServer(path, propertyName, callback) {      
+    function loadCacheFromServer(path, propertyName, callback) {  
+        if (!isLampac) {
+            console.log('[MyShows] Функция отключена - доступна только в  Lampac');
+            return;
+        }
+            
         var profileId = Lampa.Storage.get('lampac_profile_id', '');      
         var uri = accountUrl('/storage/get?path=myshows/' + path + '&pathfile=' + profileId);      
             
@@ -1596,23 +1605,36 @@
         }      
     }
 
-    function getUnwatchedShowsWithDetails(callback, show) {   
-        var useFastAPI = Lampa.Storage.get('numparser_myshows_fastapi', false);  
-      
-        if (useFastAPI) { 
-            fetchFromMyShowsAPI(function(freshResult) {
-            }); 
-        } else {
-            // Логика с кешем    
-            loadCacheFromServer('unwatched_serials', 'shows', function(cachedResult) {    
-                if (cachedResult) {      
-                    callback(cachedResult);   
-                } else {
-                    fetchFromMyShowsAPI(function(freshResult) {
-                    });    
-                } 
-            });    
-        } 
+    function getUnwatchedShowsWithDetails(callback, show) {     
+        console.log('[MyShows] getUnwatchedShowsWithDetails called');      
+        var useFastAPI = Lampa.Storage.get('numparser_myshows_fastapi', 'false');    
+        console.log('[MyShows] Using FastAPI:', useFastAPI, 'isLampac:', isLampac);  
+        
+        if (useFastAPI) {   
+            fetchFromMyShowsAPI(function(freshResult) {  
+                console.log('[MyShows] FastAPI result:', freshResult);      
+                callback(freshResult);      
+            });      
+        } else if (isLampac) {  
+            // Используем кеширование только в Lampac  
+            loadCacheFromServer('unwatched_serials', 'shows', function(cachedResult) {      
+                console.log('[MyShows] Cache result:', cachedResult);      
+                if (cachedResult) {        
+                    callback(cachedResult);     
+                } else {  
+                    fetchFromMyShowsAPI(function(freshResult) {  
+                        console.log('[MyShows] API result (no cache):', freshResult);      
+                        callback(freshResult);      
+                    });      
+                }   
+            });      
+        } else {  
+            console.log('[MyShows] Not Lampac, using direct API');      
+            fetchFromMyShowsAPI(function(freshResult) {  
+                console.log('[MyShows] Direct API result:', freshResult);      
+                callback(freshResult);      
+            });      
+        }   
     }
 
     function updateUIIfNeeded(oldShows, newShows) {  
@@ -2698,8 +2720,7 @@
                             title: 'Непросмотренные сериалы (MyShows)',    
                             results: result.shows,  
                             source: 'tmdb',    
-                            line_type: 'myshows_unwatched',    
-                            nomore: true   
+                            line_type: 'myshows_unwatched'     
                         };    
                         
                         // Сохраняем ссылку на данные для последующих модификаций  
