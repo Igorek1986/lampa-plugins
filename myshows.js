@@ -282,10 +282,18 @@
     }
   
     // Функции для работы с профиль-специфичными настройками  
-    function getProfileKey(baseKey) {  
-        var profileId = Lampa.Storage.get('lampac_profile_id', '');  
-        return baseKey + '_profile' + profileId;  
-    }  
+    function getProfileKey(baseKey) {
+        if (isLampac) {
+            var profileId = Lampa.Storage.get('lampac_profile_id', '');
+        } else {
+            var profileId = '';
+            // Проверяем что аккаунт существует и имеет профиль
+            if (Lampa.Account.Permit.account && Lampa.Account.Permit.account.profile && Lampa.Account.Permit.account.profile.id) {
+                profileId = '_' + Lampa.Account.Permit.account.profile.id;
+            }
+        }
+        return baseKey + '_profile' + profileId;
+    }
   
     function getProfileSetting(key, defaultValue) {  
         return Lampa.Storage.get(getProfileKey(key), defaultValue);  
@@ -383,138 +391,141 @@
         isInitialized = true;    
         loadProfileSettings();    
         autoSetupToken();
+        var tokenValue = getProfileSetting('myshows_token', '');
 
-        Lampa.SettingsApi.addParam({  
-            component: 'myshows',  
-            param: {  
-                name: 'myshows_view_in_main',  
-                type: 'trigger',  
-                default: getProfileSetting('myshows_view_in_main', true)  
-            },  
-            field: {  
-                name: 'Показывать на главной странице',  
-                description: 'Отображать непросмотренные сериалы на главной странице'  
-            },  
-            onChange: function(value) {  
-                setProfileSetting('myshows_view_in_main', value);  
-            }  
-        });
-
-        Lampa.SettingsApi.addParam({    
-            component: 'myshows',    
-            param: {    
-                name: 'myshows_sort_order',    
+        if (tokenValue) {
+            Lampa.SettingsApi.addParam({  
+                component: 'myshows',  
+                param: {  
+                    name: 'myshows_view_in_main',  
+                    type: 'trigger',  
+                    default: getProfileSetting('myshows_view_in_main', true)  
+                },  
+                field: {  
+                    name: 'Показывать на главной странице',  
+                    description: 'Отображать непросмотренные сериалы на главной странице'  
+                },  
+                onChange: function(value) {  
+                    setProfileSetting('myshows_view_in_main', value);  
+                }  
+            });
+    
+            Lampa.SettingsApi.addParam({    
+                component: 'myshows',    
+                param: {    
+                    name: 'myshows_sort_order',    
+                    type: 'select',    
+                    values: {    
+                        'alphabet': 'По алфавиту',    
+                        'progress': 'По прогрессу',    
+                        'unwatched_count': 'По количеству непросмотренных'  
+                    },    
+                    default: 'progress'    
+                },    
+                field: {    
+                    name: 'Сортировка сериалов',    
+                    description: 'Порядок отображения сериалов на главной странице'    
+                },    
+                onChange: function(value) {    
+                    setProfileSetting('myshows_sort_order', value);    
+                }    
+            });
+    
+            // Настройки плагина  
+            Lampa.SettingsApi.addParam({    
+                component: 'myshows',    
+                param: {    
+                name: 'myshows_add_threshold',    
                 type: 'select',    
                 values: {    
-                    'alphabet': 'По алфавиту',    
-                    'progress': 'По прогрессу',    
-                    'unwatched_count': 'По количеству непросмотренных'  
+                    '0': 'Сразу при запуске',    
+                    '5': 'После 5% просмотра',    
+                    '10': 'После 10% просмотра',    
+                    '15': 'После 15% просмотра',    
+                    '20': 'После 20% просмотра',    
+                    '25': 'После 25% просмотра',    
+                    '30': 'После 30% просмотра',    
+                    '35': 'После 35% просмотра',    
+                    '40': 'После 40% просмотра',    
+                    '45': 'После 45% просмотра',    
+                    '50': 'После 50% просмотра'    
                 },    
-                default: 'progress'    
-            },    
-            field: {    
-                name: 'Сортировка сериалов',    
-                description: 'Порядок отображения сериалов на главной странице'    
-            },    
-            onChange: function(value) {    
-                setProfileSetting('myshows_sort_order', value);    
-            }    
-        });
-
-        // Настройки плагина  
-        Lampa.SettingsApi.addParam({    
-            component: 'myshows',    
-            param: {    
-            name: 'myshows_add_threshold',    
-            type: 'select',    
-            values: {    
-                '0': 'Сразу при запуске',    
-                '5': 'После 5% просмотра',    
-                '10': 'После 10% просмотра',    
-                '15': 'После 15% просмотра',    
-                '20': 'После 20% просмотра',    
-                '25': 'После 25% просмотра',    
-                '30': 'После 30% просмотра',    
-                '35': 'После 35% просмотра',    
-                '40': 'После 40% просмотра',    
-                '45': 'После 45% просмотра',    
-                '50': 'После 50% просмотра'    
-            },    
-            default: getProfileSetting('myshows_add_threshold', DEFAULT_ADD_THRESHOLD).toString()   
-            },    
-            field: {    
-            name: 'Порог добавления сериала',    
-            description: 'Когда добавлять сериал в список "Смотрю" на MyShows'    
-            },    
-            onChange: function(value) {    
-            setProfileSetting('myshows_add_threshold', parseInt(value));    
-            }    
-        });  
-
-        Lampa.SettingsApi.addParam({  
-            component: 'myshows',  
-            param: {  
-            name: 'myshows_min_progress',  
-            type: 'select',  
-            values: {  
-                '50': '50%',  
-                '60': '60%',  
-                '70': '70%',  
-                '80': '80%',  
-                '85': '85%',  
-                '90': '90%',  
-                '95': '95%',  
-                '100': '100%'  
-            },  
-            default: getProfileSetting('myshows_min_progress', DEFAULT_MIN_PROGRESS).toString()  
-            },  
-            field: {  
-            name: 'Порог просмотра',  
-            description: 'Минимальный процент просмотра для отметки эпизода или фильма на myshows.me'  
-            },  
-            onChange: function(value) {  
-            setProfileSetting('myshows_min_progress', parseInt(value));  
-            }  
-        }); 
-        
-        Lampa.SettingsApi.addParam({  
-            component: 'myshows',  
-            param: {  
-                name: 'myshows_cache_days',  
+                default: getProfileSetting('myshows_add_threshold', DEFAULT_ADD_THRESHOLD).toString()   
+                },    
+                field: {    
+                name: 'Порог добавления сериала',    
+                description: 'Когда добавлять сериал в список "Смотрю" на MyShows'    
+                },    
+                onChange: function(value) {    
+                setProfileSetting('myshows_add_threshold', parseInt(value));    
+                }    
+            });  
+    
+            Lampa.SettingsApi.addParam({  
+                component: 'myshows',  
+                param: {  
+                name: 'myshows_min_progress',  
                 type: 'select',  
                 values: {  
-                    '7': '7 дней',  
-                    '14': '14 дней',  
-                    '30': '30 дней',  
-                    '60': '60 дней',  
-                    '90': '90 дней'  
+                    '50': '50%',  
+                    '60': '60%',  
+                    '70': '70%',  
+                    '80': '80%',  
+                    '85': '85%',  
+                    '90': '90%',  
+                    '95': '95%',  
+                    '100': '100%'  
                 },  
-                default: DEFAULT_CACHE_DAYS.toString()    
-            },  
-            field: {  
-                name: 'Время жизни кеша',  
-                description: 'Через сколько дней очищать кеш маппинга эпизодов'  
-            },  
-            onChange: function(value) {  
-                setProfileSetting('myshows_cache_days', parseInt(value));  
-            }  
-        });
-
-        Lampa.SettingsApi.addParam({  
-            component: 'myshows',  
-            param: {  
-                name: 'myshows_button_view',  
-                type: 'trigger',  
-                default: getProfileSetting('myshows_button_view', true)  
-            },  
-            field: {  
-                name: 'Показывать кнопки в карточках',  
-                description: 'Отображать кнопки уплавления в карточка'  
-            },  
-            onChange: function(value) {  
-                setProfileSetting('myshows_button_view', value);  
-            }  
-        });
+                default: getProfileSetting('myshows_min_progress', DEFAULT_MIN_PROGRESS).toString()  
+                },  
+                field: {  
+                name: 'Порог просмотра',  
+                description: 'Минимальный процент просмотра для отметки эпизода или фильма на myshows.me'  
+                },  
+                onChange: function(value) {  
+                setProfileSetting('myshows_min_progress', parseInt(value));  
+                }  
+            }); 
+            
+            Lampa.SettingsApi.addParam({  
+                component: 'myshows',  
+                param: {  
+                    name: 'myshows_cache_days',  
+                    type: 'select',  
+                    values: {  
+                        '7': '7 дней',  
+                        '14': '14 дней',  
+                        '30': '30 дней',  
+                        '60': '60 дней',  
+                        '90': '90 дней'  
+                    },  
+                    default: DEFAULT_CACHE_DAYS.toString()    
+                },  
+                field: {  
+                    name: 'Время жизни кеша',  
+                    description: 'Через сколько дней очищать кеш маппинга эпизодов'  
+                },  
+                onChange: function(value) {  
+                    setProfileSetting('myshows_cache_days', parseInt(value));  
+                }  
+            });
+    
+            Lampa.SettingsApi.addParam({  
+                component: 'myshows',  
+                param: {  
+                    name: 'myshows_button_view',  
+                    type: 'trigger',  
+                    default: getProfileSetting('myshows_button_view', true)  
+                },  
+                field: {  
+                    name: 'Показывать кнопки в карточках',  
+                    description: 'Отображать кнопки уплавления в карточка'  
+                },  
+                onChange: function(value) {  
+                    setProfileSetting('myshows_button_view', value);  
+                }  
+            });
+        }
 
         Lampa.SettingsApi.addParam({  
             component: 'myshows',  
@@ -554,7 +565,7 @@
             }  
         });  
 
-        if (isLampac) {
+        if (isLampac && tokenValue) {
             console.log('[MyShows] Adding Sync button to Lampac settings');
             Lampa.SettingsApi.addParam({  
                 component: 'myshows', // Ваш компонент настроек  
@@ -599,47 +610,71 @@
                 }  
             });
         }
+
+        if (!tokenValue) {  
+            Lampa.SettingsApi.addParam({    
+                component: 'myshows',    
+                param: {    
+                    type: 'static'  
+                },    
+                field: {    
+                    name: '📋 После авторизации станут доступны:', 
+                    description: '• Показ непросмотренных сериалов на главной странице<br>• Настройки сортировки<br>• Управление порогами просмотра<br>• Дополнительные настройки'   
+                }    
+            });  
+        }
     }  
 
-    // Обновляем UI при смене профиля
+    function handleProfileChange() {
+        // Пересоздаем настройки для нового профиля
+        initSettings();
+        
+        // Обновляем значения в UI, если настройки открыты
+        setTimeout(function() {
+        var settingsPanel = document.querySelector('[data-component="myshows"]');
+        if (settingsPanel) {
+            // Обновляем значения полей
+            var myshowsViewInMain = settingsPanel.querySelector('select[data-name="myshows_view_in_main"]');  
+            if (myshowsViewInMain) myshowsViewInMain.value = getProfileSetting('myshows_view_in_main', true);
+
+            var myshowsButtonView = settingsPanel.querySelector('select[data-name="myshows_button_view"]');  
+            if (myshowsViewInMain) myshowsButtonView.value = getProfileSetting('myshows_button_view', true);
+
+            var sortSelect = settingsPanel.querySelector('select[data-name="myshows_sort_order"]');  
+            if (sortSelect) sortSelect.value = getProfileSetting('myshows_sort_order', 'progress');
+
+            var addThresholdSelect = settingsPanel.querySelector('select[data-name="myshows_add_threshold"]');  
+            if (addThresholdSelect) addThresholdSelect.value = getProfileSetting('myshows_add_threshold', DEFAULT_ADD_THRESHOLD).toString();
+
+            var tokenInput = settingsPanel.querySelector('input[data-name="myshows_token"]');
+            if (tokenInput) tokenInput.value = getProfileSetting('myshows_token', '');
+            
+            var progressSelect = settingsPanel.querySelector('select[data-name="myshows_min_progress"]');
+            if (progressSelect) progressSelect.value = getProfileSetting('myshows_min_progress', DEFAULT_MIN_PROGRESS).toString();
+
+            var daysSelect = settingsPanel.querySelector('select[data-name="myshows_cache_days"]');
+            if (daysSelect) daysSelect.value = getProfileSetting('myshows_cache_days', DEFAULT_CACHE_DAYS).toString();
+
+            var loginInput = settingsPanel.querySelector('input[data-name="myshows_login"]');
+            if (loginInput) loginInput.value = getProfileSetting('myshows_login', '');
+
+            var passwordInput = settingsPanel.querySelector('input[data-name="myshows_password"]');
+            if (passwordInput) passwordInput.value = getProfileSetting('myshows_password', '');
+        }
+        }, 100);
+    }
+
+    // Обновляем UI при смене профиля Lampa
+    Lampa.Listener.follow('state:changed', function(e) {  
+        if (e.target === 'favorite' && e.reason === 'profile') {   
+            handleProfileChange();  
+        }  
+    });
+    
+    // Обновляем UI при смене профиля Lampac
     Lampa.Listener.follow('profile', function(e) {
         if (e.type === 'changed') {
-            // Пересоздаем настройки для нового профиля
-            initSettings();
-            
-            // Обновляем значения в UI, если настройки открыты
-            setTimeout(function() {
-            var settingsPanel = document.querySelector('[data-component="myshows"]');
-            if (settingsPanel) {
-                // Обновляем значения полей
-                var myshowsViewInMain = settingsPanel.querySelector('select[data-name="myshows_view_in_main"]');  
-                if (myshowsViewInMain) myshowsViewInMain.value = getProfileSetting('myshows_view_in_main', true);
-
-                var myshowsButtonView = settingsPanel.querySelector('select[data-name="myshows_button_view"]');  
-                if (myshowsViewInMain) myshowsButtonView.value = getProfileSetting('myshows_button_view', true);
-
-                var sortSelect = settingsPanel.querySelector('select[data-name="myshows_sort_order"]');  
-                if (sortSelect) sortSelect.value = getProfileSetting('myshows_sort_order', 'progress');
-
-                var addThresholdSelect = settingsPanel.querySelector('select[data-name="myshows_add_threshold"]');  
-                if (addThresholdSelect) addThresholdSelect.value = getProfileSetting('myshows_add_threshold', DEFAULT_ADD_THRESHOLD).toString();
-
-                var tokenInput = settingsPanel.querySelector('input[data-name="myshows_token"]');
-                if (tokenInput) tokenInput.value = getProfileSetting('myshows_token', '');
-                
-                var progressSelect = settingsPanel.querySelector('select[data-name="myshows_min_progress"]');
-                if (progressSelect) progressSelect.value = getProfileSetting('myshows_min_progress', DEFAULT_MIN_PROGRESS).toString();
-
-                var daysSelect = settingsPanel.querySelector('select[data-name="myshows_cache_days"]');
-                if (daysSelect) daysSelect.value = getProfileSetting('myshows_cache_days', DEFAULT_CACHE_DAYS).toString();
-
-                var loginInput = settingsPanel.querySelector('input[data-name="myshows_login"]');
-                if (loginInput) loginInput.value = getProfileSetting('myshows_login', '');
-
-                var passwordInput = settingsPanel.querySelector('input[data-name="myshows_password"]');
-                if (passwordInput) passwordInput.value = getProfileSetting('myshows_password', '');
-            }
-            }, 100);
+            handleProfileChange();  
         }
     });
 
@@ -1267,12 +1302,12 @@
     }
 
     function getEnglishTitle(tmdbId, isSerial, callback) {  
-        var apiUrl = 'https://api.themoviedb.org/3/' + (isSerial ? 'tv' : 'movie') + '/' + tmdbId +   
+        var apiUrl = (isSerial ? 'tv' : 'movie') + '/' + tmdbId +   
                     '?api_key=' + Lampa.TMDB.key() +   
                     '&language=en';  
     
         var tmdbNetwork = new Lampa.Reguest();  
-        tmdbNetwork.silent(apiUrl, function (response) {  
+        tmdbNetwork.silent(Lampa.TMDB.api(apiUrl), function (response) {
             if (response) {  
                 var englishTitle = isSerial ? response.name : response.title;  
                 callback(englishTitle);  
@@ -1792,14 +1827,14 @@
     }
 
     function fetchTMDBShowDetails(currentShow, index, status) {
-        var searchUrl = 'https://api.themoviedb.org/3/search/tv' +
+        var searchUrl = 'search/tv' +
             '?api_key=' + Lampa.TMDB.key() +
             '&query=' + encodeURIComponent(currentShow.originalTitle || currentShow.title) +
             '&year=' + currentShow.year +
             '&language=' + Lampa.Storage.get('tmdb_lang', 'ru');
 
         var network = new Lampa.Reguest();
-        network.silent(searchUrl, function (searchResponse) {
+        network.silent(Lampa.TMDB.api(searchUrl), function (searchResponse) {
             if (searchResponse && searchResponse.results && searchResponse.results.length > 0) {
                 var foundShow = searchResponse.results[0];
                 enrichTMDBShow(foundShow, currentShow, index, status);
@@ -1812,12 +1847,12 @@
     }
 
     function enrichTMDBShow(foundShow, currentShow, index, status) {
-        var fullUrl = 'https://api.themoviedb.org/3/tv/' + foundShow.id +
+        var fullUrl = 'tv/' + foundShow.id +
             '?api_key=' + Lampa.TMDB.key() +
             '&language=' + Lampa.Storage.get('tmdb_lang', 'ru');
 
         var fullNetwork = new Lampa.Reguest();
-        fullNetwork.silent(fullUrl, function (fullResponse) {
+        fullNetwork.silent(Lampa.TMDB.api(fullUrl), function (fullResponse) {
             if (!fullResponse || !fullResponse.seasons) {
                 return status.append('tmdb_' + index, foundShow);
             }
@@ -1856,12 +1891,12 @@
             appendEnriched(fullResponse, foundShow, currentShow, totalEpisodes, totalEpisodes, index, status);  
             return;  
         }
-        var seasonUrl = 'https://api.themoviedb.org/3/tv/' + foundShow.id + '/season/' + targetSeason +  
+        var seasonUrl = 'tv/' + foundShow.id + '/season/' + targetSeason +  
             '?api_key=' + Lampa.TMDB.key() +  
             '&language=' + Lampa.Storage.get('tmdb_lang', 'ru');
 
         var seasonNetwork = new Lampa.Reguest();
-        seasonNetwork.silent(seasonUrl, function (seasonResponse) {
+        seasonNetwork.silent(Lampa.TMDB.api(seasonUrl), function (seasonResponse) {
             var releasedEpisodes = getReleasedEpisodesCount(seasonResponse, currentShow, totalEpisodes);
             appendEnriched(fullResponse, foundShow, currentShow, totalEpisodes, releasedEpisodes, index, status);
         }, function () {
