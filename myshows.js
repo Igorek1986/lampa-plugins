@@ -40,7 +40,7 @@
 
             // 🟢 Для Android — если uri относительный, добавляем window.location.origin
             if (Lampa.Platform.is('android') && !/^https?:\/\//i.test(uri)) {
-                uri = window.location.origin + (uri.startsWith('/') ? uri : '/' + uri);
+                uri = window.location.origin + (uri.indexOf('/') === 0 ? uri : '/' + uri);
                 console.log('[MyShows][Android] 🧩 Fixed URI via window.location.origin:', uri);
             }
 
@@ -2074,7 +2074,6 @@
             }  
         });  
     }
-
     
     Lampa.Listener.follow('activity', function(event) {  
 
@@ -2808,7 +2807,6 @@
     }
 
     ////// Статус сериалов. (Смотрю, Буду смотреть, Не смотрел) //////
-
     function createMyShowsButtons(e, currentStatus) {  
         var buttons = [  
             {   
