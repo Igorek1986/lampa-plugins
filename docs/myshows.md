@@ -1,4 +1,4 @@
-📺 Плагин MyShows для Lampac  
+📺 Плагин MyShows для Lampac и [Lampa](http://lampa.mx/)  
 Автоматическая синхронизация просмотра сериалов и фильмов с MyShows.me  
 
 ![Пример работы плагина](https://raw.githubusercontent.com/Igorek1986/lampa-plugins/main/docs/MyShows.png)
