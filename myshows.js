@@ -1051,8 +1051,14 @@
 
     function saveToFastAPI(cacheData, path, callback) {    
         var login = Lampa.Storage.get('myshows_login', '');    
-        var unicId = Lampa.Storage.get('lampac_unic_id', '');    
+        var unicId = Lampa.Storage.get('lampac_unic_id') || Lampa.Storage.get('account_email') || Lampa.Storage.get('lampa_uid', '');    
         var profileId = Lampa.Storage.get('lampac_profile_id', '');    
+
+        if (!isLampac) {
+            if (Lampa.Account.Permit.account && Lampa.Account.Permit.account.profile && Lampa.Account.Permit.account.profile.id) {
+                profileId = '_' + Lampa.Account.Permit.account.profile.id;
+            }
+        }
         
         if (!login || !unicId) {    
             console.log('[MyShows] Не удается сохранить в FastAPI: отсутствует login или unic_id');    
