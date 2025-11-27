@@ -111,7 +111,7 @@
         // ✅ Загружаем настройки профиля  
         loadProfileSettings();  
           
-        var processedCards = new WeakSet();      
+        var processedCards = [];    
       
         log('Profile ID:', Lampa.Storage.get('lampac_profile_id', ''));    
         log('Settings key:', getProfileKey(BASE_KEY));    
@@ -205,7 +205,7 @@
                 return;    
             }    
               
-            if (processedCards.has(cardElement)) {    
+            if (processedCards.indexOf(cardElement) !== -1) {    
                 log('Card already processed');    
                 return;    
             }    
@@ -248,7 +248,7 @@
             cardView.appendChild(typeElem);    
             log('Added "Сериал" label');    
               
-            processedCards.add(cardElement);    
+            processedCards.push(cardElement);    
             log('Card marked as processed');    
               
             // Добавляем статус    

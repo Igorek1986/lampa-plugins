@@ -14,6 +14,7 @@
     var MIN_PROGRESS = Lampa.Storage.get('numparser_min_progress', DEFAULT_MIN_PROGRESS);
     var newProgress = MIN_PROGRESS;
     Lampa.Storage.set('base_url_numparser', BASE_URL);
+    var isLampac = window.lampac_plugin || false;
 
 
     // ✅ НОВАЯ ЛОГИКА: Глобальное хранилище таймкодов  
@@ -932,7 +933,15 @@
 
     // === Поддержка профилей ===
     function getProfileKey(baseKey) {
-        var profileId = Lampa.Storage.get('lampac_profile_id', '');
+        if (isLampac) {
+            var profileId = Lampa.Storage.get('lampac_profile_id', '');
+        } else {
+            var profileId = '';
+            // Проверяем что аккаунт существует и имеет профиль
+            if (Lampa.Account.Permit.account && Lampa.Account.Permit.account.profile && Lampa.Account.Permit.account.profile.id) {
+                profileId = '_' + Lampa.Account.Permit.account.profile.id;
+            }
+        }
         return baseKey + '_profile' + profileId;
     }
 
