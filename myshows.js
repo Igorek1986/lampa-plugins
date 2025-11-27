@@ -31,12 +31,8 @@
     
     // Сохранение кеша с использованием профилей  
     function saveCacheToServer(cacheData, path, callback) {  
-        if (!isLampac) {
-            console.log('[MyShows] Функция отключена - доступна только в  Lampac');
-            return;
-        }
+        
         try {  
-            // var data = JSON.stringify(cacheData);  
             var data = JSON.stringify(cacheData, null, 2);  
 
             var profileId = Lampa.Storage.get('lampac_profile_id', '');  
@@ -47,23 +43,30 @@
                 uri = window.location.origin + (uri.startsWith('/') ? uri : '/' + uri);
                 console.log('[MyShows][Android] 🧩 Fixed URI via window.location.origin:', uri);
             }
-            
-            var network = new Lampa.Reguest();  
-            network.native(uri, function(response) {  
-                if (response.success) {  
-                    if (callback) callback(true);  
-                } else {  
-                    console.error('[MyShows] Storage error', response.msg);
-                    if (callback) callback(false);   
-                }  
-            }, function(error) {  
-                console.error('[MyShows] Network error');
-                if (callback) callback(false);  
 
-            }, data, {  
-                headers: JSON_HEADERS,  
-                method: 'POST'  
-            });  
+            if (!isLampac) {
+                if (Lampa.Account.Permit.account && Lampa.Account.Permit.account.profile && Lampa.Account.Permit.account.profile.id) {
+                    profileId = '_' + Lampa.Account.Permit.account.profile.id;
+                }
+                Lampa.Storage.set('myshows_' + path + profileId, cacheData)
+            } else {
+                var network = new Lampa.Reguest();  
+                network.native(uri, function(response) {  
+                    if (response.success) {  
+                        if (callback) callback(true);  
+                    } else {  
+                        console.error('[MyShows] Storage error', response.msg);
+                        if (callback) callback(false);   
+                    }  
+                }, function(error) {  
+                    console.error('[MyShows] Network error');
+                    if (callback) callback(false);  
+    
+                }, data, {  
+                    headers: JSON_HEADERS,  
+                    method: 'POST'  
+                });  
+            }
         } catch(e) {  
             console.error('[MyShows] Try error on saveCacheToServer', e.message);
             if (callback) callback(false);  
@@ -72,29 +75,35 @@
   
     // Загрузка кеша 
     function loadCacheFromServer(path, propertyName, callback) {  
-        if (!isLampac) {
-            console.log('[MyShows] Функция отключена - доступна только в  Lampac');
-            return;
-        }
-            
+
         var profileId = Lampa.Storage.get('lampac_profile_id', '');      
-        var uri = accountUrl('/storage/get?path=myshows/' + path + '&pathfile=' + profileId);      
-            
-        var network = new Lampa.Reguest();      
-        network.silent(uri, function(response) {      
-            if (response.success && response.fileInfo && response.data) {      
-                    var cacheData = JSON.parse(response.data);      
-                    // callback({ shows: cacheData.shows });  
-                    var dataProperty = propertyName || 'shows';  
-                    var result = {};  
-                    result[dataProperty] = cacheData[dataProperty];  
-                    callback(result);    
-                    return;        
-            }  
-            callback(null);       
-        }, function(error) {         
-            callback(null);      
-        });      
+
+        if (!isLampac) {
+            if (Lampa.Account.Permit.account && Lampa.Account.Permit.account.profile && Lampa.Account.Permit.account.profile.id) {
+                profileId = '_' + Lampa.Account.Permit.account.profile.id;
+            }
+            var result = Lampa.Storage.get('myshows_' + path + profileId);
+            callback(result);
+            return;
+        } else {   
+            var uri = accountUrl('/storage/get?path=myshows/' + path + '&pathfile=' + profileId);      
+                
+            var network = new Lampa.Reguest();      
+            network.silent(uri, function(response) {      
+                if (response.success && response.fileInfo && response.data) {      
+                        var cacheData = JSON.parse(response.data);       
+                        var dataProperty = propertyName || 'shows';  
+                        var result = {};  
+                        result[dataProperty] = cacheData[dataProperty];  
+                        callback(result);    
+                        return;        
+                }  
+                callback(null);       
+            }, function(error) {         
+                callback(null);      
+            });      
+        }
+
     }
 
     function initMyShowsCaches() {
