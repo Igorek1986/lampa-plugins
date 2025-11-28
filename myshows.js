@@ -2908,10 +2908,10 @@
 
     function getShowStatus(showId, callback) {  
         loadCacheFromServer('serial_status', 'shows', function(showsData) {
-            
-            if (showsData) {
+            if (showsData && showsData.shows) {
+                var numericShowId = parseInt(showId);
                 var userShow = showsData.shows.find(function(item) {  
-                    return item.id === showId;  
+                    return item.id === numericShowId;  
                 }); 
                 callback(userShow ? userShow.watchStatus : 'remove');
             } else {
@@ -2963,31 +2963,26 @@
         document.head.appendChild(style);  
     }
 
-    function getStatusTitle(showTitle, path, callback) {  
+    function getStatusByTitle(title, isMovie, callback) {
+        var cacheType = isMovie ? 'movie_status' : 'serial_status';
+        var dataKey = isMovie ? 'movies' : 'shows';
+        var statusField = isMovie ? 'watchStatus' : 'watchStatus';
         
-        loadCacheFromServer('serial_status', 'shows', function(showsData) {  
-            if (showsData && showsData.shows) {  
-                var userShow = showsData.shows.find(function(item) {  
-                    // Ищем по точному совпадению названия или оригинального названия  
-                    return item.title === showTitle ||   
-                        item.titleOriginal === showTitle ||  
-                        (item.title && item.title.toLowerCase() === showTitle.toLowerCase()) ||  
-                        (item.titleOriginal && item.titleOriginal.toLowerCase() === showTitle.toLowerCase());  
-                });  
+        loadCacheFromServer(cacheType, dataKey, function(cachedData) {
+            if (cachedData && cachedData[dataKey]) {
+                var items = cachedData[dataKey];
+                var foundItem = items.find(function(item) {
+                    return item.title === title || 
+                        item.titleOriginal === title ||
+                        (item.title && item.title.toLowerCase() === title.toLowerCase()) ||
+                        (item.titleOriginal && item.titleOriginal.toLowerCase() === title.toLowerCase());
+                });
                 
-                if (callback) {  
-                    callback(userShow ? userShow.watchStatus : 'remove');  
-                } else {  
-                    return userShow ? userShow.watchStatus : 'remove';  
-                }  
-            } else {  
-                if (callback) {  
-                    callback('remove');  
-                } else {  
-                    return 'remove';  
-                }  
-            }  
-        });  
+                callback(foundItem ? foundItem[statusField] : 'remove');
+            } else {
+                callback('remove');
+            }
+        });
     }
 
     function addToHistory(contentData) {
@@ -3063,48 +3058,6 @@
                 }
             })
         }
-    }
-    
-    function getMovieStatusByTitle(movieTitle, callback) {  
-        
-        loadCacheFromServer('movie_status', 'movies', function(moviesData) {  
-            if (moviesData && moviesData.movies) {  
-                var userMovie = moviesData.movies.find(function(item) {  
-                    return item.title === movieTitle ||  
-                        item.titleOriginal === movieTitle ||  
-                        (item.title && item.title.toLowerCase() === movieTitle.toLowerCase()) ||  
-                        (item.titleOriginal && item.titleOriginal.toLowerCase() === movieTitle.toLowerCase());  
-                });  
-                
-                if (callback) {  
-                    callback(userMovie ? userMovie.watchStatus : 'remove');  
-                } else {  
-                    return userMovie ? userMovie.watchStatus : 'remove';  
-                }  
-            } else {  
-                if (callback) {  
-                    callback('remove');  
-                } else {  
-                    return 'remove';  
-                }  
-            }  
-        });  
-    }
-    
-    function updateMovieButtonStates(newStatus) {  
-        var buttons = document.querySelectorAll('.full-start__button[class*="myshows-movie-"]');  
-        
-        buttons.forEach(function(button) {  
-            button.classList.remove('myshows-active');  
-            
-            if (newStatus && (  
-                (newStatus === 'finished' && button.classList.contains('myshows-movie-watched')) ||  
-                (newStatus === 'later' && button.classList.contains('myshows-movie-later')) ||  
-                (newStatus === 'remove' && button.classList.contains('myshows-movie-remove'))  
-            )) {  
-                button.classList.add('myshows-active');  
-            }  
-        });  
     }
 
     // Cинхронизация
@@ -3849,46 +3802,52 @@
             
             var isTV = !isMovieContent(e.data.movie); 
             var title = identifiers.title;
+            var originalTitle = identifiers.originalName;
             
             if (isTV) {
-                getStatusTitle(title, null, function(cachedStatus) {  
-                    if (!cachedStatus || cachedStatus === 'remove') {  
-                        updateButtonStates('remove');  
-                    }  
-
-                    if (getProfileSetting('myshows_button_view', true)) {    
-                        createMyShowsButtons(e, cachedStatus, !isTV);   
+                // Для сериалов
+                getStatusByTitle(originalTitle, false, function(cachedStatus) {
+                    console.log('[MyShows] cachedStatus TV', cachedStatus);  
+                    
+                    if (!cachedStatus || cachedStatus === 'remove') {
+                        updateButtonStates('remove', false, false);
                     }
-                });  
+
+                    if (getProfileSetting('myshows_button_view', true)) {
+                        createMyShowsButtons(e, cachedStatus, false);
+                    }
+                });
                 
                 // Асинхронная проверка актуального статуса
                 getShowIdByExternalIds(
                     identifiers.imdbId, 
                     identifiers.kinopoiskId, 
                     title, 
-                    identifiers.originalName, 
+                    originalTitle, 
                     identifiers.tmdbId, 
                     identifiers.year, 
                     identifiers.alternativeTitles, 
                     function(showId) { 
                         if (showId) {    
                             getShowStatus(showId, function(currentStatus) {    
-                                updateButtonStates(currentStatus);    
+                                console.log('[MyShows] currentStatus TV', currentStatus);  
+                                updateButtonStates(currentStatus, false, true);    
                             });    
                         }    
                     }
                 );
                 
             } else {
-                getMovieStatusByTitle(identifiers.originalName, function(cachedStatus) {  
+                // Для фильмов
+                getStatusByTitle(originalTitle, true, function(cachedStatus) {  
                     console.log('[MyShows] cachedStatus Movie', cachedStatus);  
                     
                     if (!cachedStatus || cachedStatus === 'remove') {  
-                        updateMovieButtonStates('remove');  
+                        updateButtonStates('remove', true, false); 
                     }  
 
                     if (getProfileSetting('myshows_button_view', true)) {    
-                        createMyShowsButtons(e, cachedStatus, !isTV);   
+                        createMyShowsButtons(e, cachedStatus, true);   
                     }
                 });  
             }
