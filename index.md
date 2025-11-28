@@ -2,7 +2,7 @@
 
 ## Available Plugins
 
-### 1. **NUMP Plugin**  
+### 1. **NUM Plugin**  
 
 #### Installation:
 ```bash
