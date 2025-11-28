@@ -2240,7 +2240,7 @@
             }  
             
             // Очищаем сохраненную карточку после обработки  
-            Lampa.Storage.remove('myshows_current_card');  
+            localStorage.removeItem('myshows_current_card');
         }  
     });
 
@@ -3285,6 +3285,8 @@
     // Cинхронизация
     function syncMyShows(callback) {      
         syncInProgress = true;    
+        var screensaver = Lampa.Storage.get('screensaver', 'true');
+        Lampa.Storage.set('screensaver', 'false'); 
         
         console.log('[MyShows] Starting sequential sync process');      
         console.log('[MyShows] syncInProgress', syncInProgress);      
@@ -3342,6 +3344,10 @@
                                             if (callback) {    
                                                 callback(true, 'Синхронизация завершена. Обработано: ' + totalProcessed + ', ошибок: ' + totalErrors);    
                                             }    
+
+                                        if (screensaver) {
+                                            localStorage.removeItem('screensaver');
+                                        }
 
                                             // ✅ ДОБАВЛЕНО: Показываем уведомление и перезагружаем  
                                             Lampa.Noty.show('Синхронизация завершена! Приложение будет перезагружено через 3 секунды...');  
