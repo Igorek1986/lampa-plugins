@@ -875,22 +875,21 @@
 
     // Установить статус для сериала ("Смотрю, Буду смотреть, Перестал смотреть, Не смотрю" на MyShows  
     function setMyShowsStatus(cardData, status, callback) {  
-        var alternativeTitles = [];
-        if (cardData && cardData.alternative_titles && cardData.alternative_titles.results) {  
-            cardData.alternative_titles.results.forEach(function(altTitle) {  
-                if (altTitle.iso_3166_1 === 'US' && altTitle.title) {  
-                    alternativeTitles.push(altTitle.title);  
-                }  
-            });  
-        } 
-        var imdbId = cardData.imdb_id || (cardData.ids && cardData.ids.imdb);  
-        var kinopoiskId = cardData.kinopoisk_id || cardData.kp_id || (cardData.ids && cardData.ids.kp);  
-        var showTitle = cardData.title || cardData.name;  
-        var originalName = cardData.original_name || cardData.original_title || cardData.title;
-        var year = cardData.first_air_date.slice(0,4);
-        var tmdbId = cardData.id;
+        var identifiers = getCardIdentifiers(cardData);
+        if (!identifiers) {
+            callback(false);
+            return;
+        }
         
-        getShowIdByExternalIds(imdbId, kinopoiskId, showTitle, originalName, tmdbId, year, alternativeTitles, function(showId) {
+        getShowIdByExternalIds(
+            identifiers.imdbId, 
+            identifiers.kinopoiskId, 
+            identifiers.title, 
+            identifiers.originalName, 
+            identifiers.tmdbId, 
+            identifiers.year, 
+            identifiers.alternativeTitles,  
+            function(showId) {
             if (!showId) {  
                 callback(false);  
                 return;  
@@ -1405,20 +1404,19 @@
   
     // Автоматически получить mapping для текущего сериала (по imdbId или kinopoiskId из карточки)  
     function ensureHashMap(card, token, callback) {
-        var alternativeTitles = [];
-        if (card && card.alternative_titles && card.alternative_titles.results) {  
-            card.alternative_titles.results.forEach(function(altTitle) {  
-                if (altTitle.iso_3166_1 === 'US' && altTitle.title) {  
-                    alternativeTitles.push(altTitle.title);  
-                }  
-            });  
+        var identifiers = getCardIdentifiers(card);
+        if (!identifiers) {
+            callback({});
+            return;
         }
-        var imdbId = card && (card.imdb_id || card.imdbId || (card.ids && card.ids.imdb));
-        var kinopoiskId = card && (card.kinopoisk_id || card.kp_id || (card.ids && card.ids.kp));
-        var showTitle = card && (card.title || card.name);
-        var originalName = card && (card.original_name || card.original_title || card.title);
-        var year = card.first_air_date.slice(0,4);
-        var tmdbId = card && card.id;
+        
+        var imdbId = identifiers.imdbId;
+        var kinopoiskId = identifiers.kinopoiskId;
+        var showTitle = identifiers.title;
+        var originalName = identifiers.originalName;
+        var year = identifiers.year;
+        var tmdbId = identifiers.tmdbId;
+        var alternativeTitles = identifiers.alternativeTitles;
         
         if ((!imdbId && !kinopoiskId) || !originalName) {
             callback({});
@@ -1495,6 +1493,37 @@
         }
         return card;  
     }  
+
+    function getCardIdentifiers(card) {
+        if (!card) {
+            console.warn('[MyShows] extractCardIdentifiers: card is null');
+            return null;
+        }
+        
+        var alternativeTitles = [];
+        try {
+            if (card.alternative_titles && card.alternative_titles.results) {  
+                card.alternative_titles.results.forEach(function(altTitle) {  
+                    if (altTitle.iso_3166_1 === 'US' && altTitle.title) {  
+                        alternativeTitles.push(altTitle.title);  
+                    }  
+                });  
+            }
+        } catch (e) {
+            console.warn('[MyShows] Error extracting alternative titles:', e);
+        }
+        
+        return {
+            imdbId: card.imdb_id || card.imdbId || (card.ids && card.ids.imdb),
+            kinopoiskId: card.kinopoisk_id || card.kp_id || (card.ids && card.ids.kp),
+            title: card.title || card.name,
+            originalName: card.original_name || card.original_title || card.title,
+            year: card.first_air_date ? card.first_air_date.slice(0,4) : 
+                (card.release_date ? card.release_date.slice(0,4) : null),
+            tmdbId: card.id,
+            alternativeTitles: alternativeTitles
+        };
+    }
   
     // обработка Timeline обновлений
     function processTimelineUpdate(data) {    
@@ -1707,7 +1736,7 @@
                 console.log('[MyShows] Adding new show:', newKey);  
                 
                 // ✅ Проверяем, есть ли карточка в DOM  
-                var existingCard = findExistingCard(newKey);  
+                var existingCard = findCardInMyShowsSection(newKey);  
                 if (!existingCard) {  
                     insertNewCardIntoMyShowsSection(newShowsMap[newKey]);  
                 } else {  
@@ -2147,7 +2176,7 @@
                                     
                                     if (foundShow) {  
                                         console.log('[MyShows] Updating serial status to:', foundShow.watchStatus);  
-                                        updateButtonStatesWithAnimation(foundShow.watchStatus);  
+                                        updateButtonStates(foundShow.watchStatus, false, true);  
                                         Lampa.Storage.set('myshows_was_watching', false);
                                     }  
                                 }  
@@ -2165,7 +2194,7 @@
                                     
                                     if (foundMovie) {  
                                         console.log('[MyShows] Updating movie status to:', foundMovie.watchStatus);  
-                                        updateMovieButtonStatesWithAnimation(foundMovie.watchStatus);  
+                                        updateButtonStates(foundMovie.watchStatus, true, true);  
                                         Lampa.Storage.set('myshows_was_watching', false);
                                     }  
                                 }  
@@ -2203,7 +2232,7 @@
                             if (foundShow) {  
                                 foundInAPI = true;  
                                 
-                                var existingCard = findExistingCard(originalName);  
+                                var existingCard = findCardInMyShowsSection(originalName);  
                                 
                                 if (existingCard && foundShow.progress_marker) {  
                                     updateAllMyShowsCards(  
@@ -2339,67 +2368,6 @@
         }  
     }
 
-    function updateButtonStatesWithAnimation(newStatus) {  
-        var buttons = document.querySelectorAll('.full-start__button[class*="myshows-"]');  
-        
-        buttons.forEach(function(button) {  
-            var svg = button.querySelector('svg');  
-            if (!svg) return;  
-            
-            var wasActive = button.classList.contains('myshows-active');  
-            var shouldBeActive = newStatus && (  
-                (newStatus === 'watching' && button.classList.contains('myshows-watching')) ||  
-                (newStatus === 'later' && button.classList.contains('myshows-scheduled')) ||  
-                (newStatus === 'cancelled' && button.classList.contains('myshows-thrown')) ||  
-                (newStatus === 'remove' && button.classList.contains('myshows-cancelled'))  
-            );  
-            
-            // Только если статус реально изменился  
-            if (wasActive !== shouldBeActive) {  
-                // Добавляем transition для плавной смены цвета  
-                svg.style.transition = 'color 0.5s ease, filter 0.5s ease';  
-                
-                if (shouldBeActive) {  
-                    button.classList.add('myshows-active');  
-                    console.log('[MyShows] Activated button:', button.className);  
-                } else {  
-                    button.classList.remove('myshows-active');  
-                    console.log('[MyShows] Deactivated button:', button.className);  
-                }  
-            }  
-        });  
-    }  
-    
-    function updateMovieButtonStatesWithAnimation(newStatus) {  
-        var buttons = document.querySelectorAll('.full-start__button[class*="myshows-movie-"]');  
-        
-        buttons.forEach(function(button) {  
-            var svg = button.querySelector('svg');  
-            if (!svg) return;  
-            
-            var wasActive = button.classList.contains('myshows-active');  
-            var shouldBeActive = newStatus && (  
-                (newStatus === 'finished' && button.classList.contains('myshows-movie-watched')) ||  
-                (newStatus === 'later' && button.classList.contains('myshows-movie-later')) ||  
-                (newStatus === 'remove' && button.classList.contains('myshows-movie-remove'))  
-            );  
-            
-            // Только если статус реально изменился  
-            if (wasActive !== shouldBeActive) {  
-                // Добавляем transition для плавной смены цвета  
-                svg.style.transition = 'color 0.5s ease, filter 0.5s ease';  
-                
-                if (shouldBeActive) {  
-                    button.classList.add('myshows-active');  
-                    console.log('[MyShows] Activated movie button:', button.className);  
-                } else {  
-                    button.classList.remove('myshows-active');  
-                    console.log('[MyShows] Deactivated movie button:', button.className);  
-                }  
-            }  
-        });  
-    }
-
     function updateCompletedShowCard(showName) {  
         var cards = document.querySelectorAll('.card');  
         
@@ -2483,44 +2451,49 @@
         }, 500);    
     }
 
-    function findExistingCard(showName) {  
-        var titleElements = document.querySelectorAll('.items-line__title');  
-        var targetSection = null;  
+    function findMyShowsSection() {
+        var titleElements = document.querySelectorAll('.items-line__title');
+        for (var i = 0; i < titleElements.length; i++) {
+            var titleText = titleElements[i].textContent || titleElements[i].innerText;
+            if (titleText.indexOf('MyShows') !== -1) {
+                return titleElements[i].closest('.items-line');
+            }
+        }
+        return null;
+    }
+
+    function getCardName(cardData) {
+        if (!cardData) return '';
+        return cardData.original_title || cardData.original_name || cardData.name || cardData.title;
+    }
+
+    function findCardByName(showName) {
+        var cards = document.querySelectorAll('.card');
+        for (var i = 0; i < cards.length; i++) {
+            var cardElement = cards[i];
+            var cardData = cardElement.card_data || {};
+            var cardName = getCardName(cardData);
+            if (cardName === showName) {
+                return cardElement;
+            }
+        }
+        return null;
+    }
+
+    function findCardInMyShowsSection(showName) {
+        var section = findMyShowsSection();
+        if (!section) return null;
         
-        for (var i = 0; i < titleElements.length; i++) {  
-            var titleText = titleElements[i].textContent || titleElements[i].innerText;  
-            if (titleText.indexOf('MyShows') !== -1) {  
-                targetSection = titleElements[i].closest('.items-line');  
-                break;  
-            }  
-        }  
-        
-        if (!targetSection) {  
-            return null;  
-        }  
-        
-        var cards = targetSection.querySelectorAll('.card');  
-        
-        for (var i = 0; i < cards.length; i++) {  
-            var cardElement = cards[i];  
-            var cardData = cardElement.card_data || {};  
-            
-            var cardNames = [  
-                cardData.original_name,  
-                cardData.name,  
-                cardData.title,  
-                cardData.original_title  
-            ].filter(Boolean);  
-            
-            // Используем другую переменную для внутреннего цикла  
-            for (var j = 0; j < cardNames.length; j++) {  
-                if (cardNames[j] === showName) {  
-                    return cardElement;  
-                }  
-            }  
-        }  
-        
-        return null;  
+        var cards = section.querySelectorAll('.card');
+        for (var i = 0; i < cards.length; i++) {
+            var cardElement = cards[i];
+            var cardData = cardElement.card_data || {};
+            var cardName = getCardName(cardData);
+            if (cardName === showName) {
+                return cardElement;
+            }
+        }
+        return null;
     }
 
     function insertNewCardIntoMyShowsSection(showData, retryCount) {  
@@ -2812,103 +2785,125 @@
         };  
     }
 
-    ////// Статус сериалов. (Смотрю, Буду смотреть, Не смотрел) //////
-    function createMyShowsButtons(e, currentStatus) {  
-        var buttons = [  
-            {   
-                title: 'Смотрю',   
-                status: 'watching',   
-                class: 'myshows-watching', 
-                icon: watch_icon 
-            },  
-            {   
-                title: 'Буду смотреть',   
-                status: 'later',   
-                class: 'myshows-scheduled',  
-                icon: later_icon
-            },  
-            {   
-                title: 'Перестал смотреть',   
-                status: 'cancelled',   
-                class: 'myshows-thrown',  
-                icon: cancelled_icon
-            },  
-            {   
-                title: 'Не смотрю',   
-                status: 'remove',   
-                class: 'myshows-cancelled',  
-                icon: remove_icon
-            }  
-        ];  
-        
-        buttons.forEach(function(buttonData) {  
-            var isActive = currentStatus === buttonData.status;  
-            var activeClass = isActive ? ' myshows-active' : '';  
-            
-            var btn = $('<div class="full-start__button selector ' + buttonData.class + activeClass + '">' +  
-                buttonData.icon +  
-                '<span>' + buttonData.title + '</span>' +  
-                '</div>'); 
+    ////// Статус сериалов и фильмов. (Смотрю, Буду смотреть, Не смотрел) //////
+    function createMyShowsButtons(e, currentStatus, isMovie) {
+        // Конфигурация кнопок в зависимости от типа контента
+        var buttonsConfig = isMovie ? [
+            { title: 'Просмотрел', status: 'finished' },
+            { title: 'Буду смотреть', status: 'later' },
+            { title: 'Не смотрел', status: 'remove' }
+        ] : [
+            { title: 'Смотрю', status: 'watching' },
+            { title: 'Буду смотреть', status: 'later' },
+            { title: 'Перестал смотреть', status: 'cancelled' },
+            { title: 'Не смотрю', status: 'remove' }
+        ];
 
-            btn.on('hover:focus', function() {  
-                // Стандартное поведение фокуса Lampa  
-            }); 
-                
-            btn.on('hover:enter', function() {  
-                // Сначала снимаем выделение со всех кнопок MyShows  
-                updateButtonStates(null);  
-                
-                setMyShowsStatus(e.data.movie, buttonData.status, function(success) {  
-                    if (success) {  
-                        Lampa.Noty.show('Статус "' + buttonData.title + '" установлен на MyShows');  
-                        // Добавляем выделение на нажатую кнопку  
-                        updateButtonStates(buttonData.status);  
-                    } else {  
-                        Lampa.Noty.show('Ошибка установки статуса');  
-                        // При ошибке возвращаем предыдущее состояние  
-                        updateButtonStates(currentStatus);  
-                    }  
-                });  
-            }); 
-            
-            e.object.activity.render().find('.full-start-new__buttons').append(btn);  
-        });  
+        // РАЗДЕЛЬНЫЕ классы для сериалов и фильмов
+        var statusToClass = {
+            // Сериалы
+            'watching': 'myshows-watching',
+            'later': 'myshows-scheduled', 
+            'cancelled': 'myshows-thrown',
+            'remove': 'myshows-cancelled',
+            // Фильмы  
+            'finished': 'myshows-movie-watched',
+            'later_movie': 'myshows-movie-later', // разные имена для фильмов
+            'remove_movie': 'myshows-movie-remove'
+        };
 
-        if (window.Lampa && window.Lampa.Controller) {    
-            var container = e.object.activity.render().find('.full-start-new__buttons');  
+        // Общий маппинг статусов на иконки
+        var statusToIcon = {
+            'watching': watch_icon,
+            'finished': watch_icon,
+            'later': later_icon,
+            'later_movie': later_icon,
+            'cancelled': cancelled_icon,
+            'remove': remove_icon,
+            'remove_movie': remove_icon
+        };
+
+        buttonsConfig.forEach(function(buttonData) {
+            // Для фильмов используем специальные ключи статусов
+            var statusKey = buttonData.status;
+            if (isMovie) {
+                if (buttonData.status === 'later') statusKey = 'later_movie';
+                if (buttonData.status === 'remove') statusKey = 'remove_movie';
+            }
             
-            // Получаем все видимые кнопки  
-            var allButtons = container.find('> *').filter(function(){  
-                return $(this).is(':visible')  
-            });  
+            var buttonClass = statusToClass[statusKey];
+            var buttonIcon = statusToIcon[statusKey];
+            var isActive = currentStatus === buttonData.status;
+            var activeClass = isActive ? ' myshows-active' : '';
             
-            // Обновляем коллекцию Controller с новыми кнопками  
-            Lampa.Controller.collectionSet(container);  
+            var btn = $('<div class="full-start__button selector ' + buttonClass + activeClass + '">' +
+                buttonIcon +
+                '<span>' + buttonData.title + '</span>' +
+                '</div>');
+
+            btn.on('hover:enter', function() {
+                // Сначала снимаем выделение со всех кнопок
+                updateButtonStates(null, isMovie, false);
+                
+                var setStatusFunction = isMovie ? setMyShowsMovieStatus : setMyShowsStatus;
+                
+                setStatusFunction(e.data.movie, buttonData.status, function(success) {
+                    if (success) {
+                        Lampa.Noty.show('Статус "' + buttonData.title + '" установлен на MyShows');
+                        updateButtonStates(buttonData.status, isMovie, false);
+                    } else {
+                        Lampa.Noty.show('Ошибка установки статуса');
+                        updateButtonStates(currentStatus, isMovie, false);
+                    }
+                });
+            });
             
-            // Восстанавливаем фокус на первой кнопке  
-            if (allButtons.length > 0) {  
-                Lampa.Controller.collectionFocus(allButtons.eq(0)[0], container);  
-            }  
-        } 
+            e.object.activity.render().find('.full-start-new__buttons').append(btn);
+        });
+
+        // Общая логика инициализации контроллера
+        if (window.Lampa && window.Lampa.Controller) {
+            var container = e.object.activity.render().find('.full-start-new__buttons');
+            var allButtons = container.find('> *').filter(function(){
+                return $(this).is(':visible');
+            });
+            
+            Lampa.Controller.collectionSet(container);
+            if (allButtons.length > 0) {
+                Lampa.Controller.collectionFocus(allButtons.eq(0)[0], container);
+            }
+        }
     }
 
-    function updateButtonStates(newStatus) {  
-        var buttons = document.querySelectorAll('.full-start__button[class*="myshows-"]');  
+    function updateButtonStates(newStatus, isMovie, useAnimation) {
+        var selector = '.full-start__button[class*="myshows-"]';
         
-        buttons.forEach(function(button) {  
-            // Сначала снимаем активное состояние со всех кнопок  
-            button.classList.remove('myshows-active');  
+        var statusMap = isMovie ? {
+            'finished': 'myshows-movie-watched',
+            'later': 'myshows-movie-later',
+            'remove': 'myshows-movie-remove'
+        } : {
+            'watching': 'myshows-watching',
+            'later': 'myshows-scheduled', 
+            'cancelled': 'myshows-thrown',
+            'remove': 'myshows-cancelled'
+        };
+        
+        var buttons = document.querySelectorAll(selector);
+        
+        buttons.forEach(function(button) {
+            var svg = button.querySelector('svg');
             
-            // Затем добавляем активное состояние только нужной кнопке  
-            if (newStatus && (  
-                (newStatus === 'watching' && button.classList.contains('myshows-watching')) ||  
-                (newStatus === 'later' && button.classList.contains('myshows-scheduled')) ||  
-                (newStatus === 'cancelled' && button.classList.contains('myshows-thrown')) ||  
-                (newStatus === 'remove' && button.classList.contains('myshows-cancelled'))
-            )) {  
-                button.classList.add('myshows-active');  
-            }  
-        });  
+            button.classList.remove('myshows-active');
+            
+            if (useAnimation && svg) {
+                svg.style.transition = 'color 0.5s ease, filter 0.5s ease';
+            }
+            
+            if (newStatus && statusMap[newStatus] && button.classList.contains(statusMap[newStatus])) {
+                button.classList.add('myshows-active');
+            }
+        });
     }
 
     function getShowStatus(showId, callback) {  
@@ -2928,32 +2923,39 @@
     function addMyShowsButtonStyles() {  
         var style = document.createElement('style');  
         style.textContent = `  
-            /* Добавляем transition для всех SVG в кнопках MyShows */  
-            .full-start-new__buttons .full-start__button[class*="myshows-"] svg,  
-            .full-start__buttons .full-start__button[class*="myshows-"] svg {  
+            /* Общие transition для всех кнопок */  
+            .full-start__button[class*="myshows-"] svg {  
                 transition: color 0.5s ease, filter 0.5s ease;  
             }  
             
-            .full-start-new__buttons .full-start__button.myshows-watching.myshows-active svg,  
-            .full-start__buttons .full-start__button.myshows-watching.myshows-active svg {  
+            /* СЕРИАЛЫ */  
+            .full-start__button.myshows-watching.myshows-active svg {  
                 color: #FFC107;  
                 filter: drop-shadow(0 0 3px rgba(255, 193, 7, 0.8));  
             }  
-            
-            .full-start-new__buttons .full-start__button.myshows-scheduled.myshows-active svg,  
-            .full-start__buttons .full-start__button.myshows-scheduled.myshows-active svg {  
+            .full-start__button.myshows-scheduled.myshows-active svg {  
                 color: #2196F3;  
                 filter: drop-shadow(0 0 3px rgba(33, 150, 243, 0.8));  
             }  
-            
-            .full-start-new__buttons .full-start__button.myshows-thrown.myshows-active svg,  
-            .full-start__buttons .full-start__button.myshows-thrown.myshows-active svg {  
+            .full-start__button.myshows-thrown.myshows-active svg {  
                 color: #FF9800;  
                 filter: drop-shadow(0 0 3px rgba(255, 152, 0, 0.8));  
             }  
+            .full-start__button.myshows-cancelled.myshows-active svg {  
+                color: #F44336;  
+                filter: drop-shadow(0 0 3px rgba(244, 67, 54, 0.8));  
+            }  
             
-            .full-start-new__buttons .full-start__button.myshows-cancelled.myshows-active svg,  
-            .full-start__buttons .full-start__button.myshows-cancelled.myshows-active svg {  
+            /* ФИЛЬМЫ */  
+            .full-start__button.myshows-movie-watched.myshows-active svg {  
+                color: #4CAF50;  
+                filter: drop-shadow(0 0 3px rgba(76, 175, 80, 0.8));  
+            }  
+            .full-start__button.myshows-movie-later.myshows-active svg {  
+                color: #2196F3;  
+                filter: drop-shadow(0 0 3px rgba(33, 150, 243, 0.8));  
+            }  
+            .full-start__button.myshows-movie-remove.myshows-active svg {  
                 color: #F44336;  
                 filter: drop-shadow(0 0 3px rgba(244, 67, 54, 0.8));  
             }  
@@ -2988,127 +2990,8 @@
         });  
     }
 
-    Lampa.Listener.follow('full', function(e) {    
-        if (e.type == 'complite') {    
-            
-            var isTV = e.data.movie.number_of_seasons ||     
-                    e.data.movie.name ||     
-                    e.object.method === 'tv';    
-            
-            if (!isTV) return;    
-            
-            var showTitle = e.data.movie.title || e.data.movie.name;    
-            
-            // Используем callback вместо синхронного вызова  
-            getStatusTitle(showTitle, null, function(cachedStatus) {  
-                if (!cachedStatus || cachedStatus === 'remove') {  
-                    updateButtonStates('remove');  
-                }  
-
-                if (getProfileSetting('myshows_button_view', true)) {    
-                    createMyShowsButtons(e, cachedStatus);   
-                }
-            });  
-            
-            // Асинхронно проверяем актуальность статуса    
-            var alternativeTitles = [];
-            if (e.data.movie && e.data.movie.alternative_titles && e.data.movie.alternative_titles.results) {  
-                e.data.movie.alternative_titles.results.forEach(function(altTitle) {  
-                    if (altTitle.iso_3166_1 === 'US' && altTitle.title) {  
-                        alternativeTitles.push(altTitle.title);  
-                    }  
-                });  
-            } 
-            var imdbId = e.data.movie.imdb_id || (e.data.movie.ids && e.data.movie.ids.imdb);    
-            var kinopoiskId = e.data.movie.kinopoisk_id || e.data.movie.kp_id || (e.data.movie.ids && e.data.movie.ids.kp);   
-            var originalName = e.data.movie.original_name || e.data.movie.original_title || e.data.movie.title;   
-            var year = e.data.movie.first_air_date.slice(0,4);  
-            var tmdbId = e.data.movie.id;  
-    
-            // getShowIdByExternalIds(imdbId, kinopoiskId, showTitle, originalName, tmdbId, year, function(showId) {  
-            getShowIdByExternalIds(imdbId, kinopoiskId, showTitle, originalName, tmdbId, year, alternativeTitles, function(showId) { 
-                if (showId) {    
-                    getShowStatus(showId, function(currentStatus) {    
-                        updateButtonStates(currentStatus);    
-                    });    
-                }    
-            });    
-        }    
-    });
-
     function addToHistory(contentData) {
         Lampa.Favorite.add('history', contentData)
-    }
-
-    ///// Статус фильмов 
-    function createMyShowsMovieButtons(e, currentStatus) {  
-        var buttons = [  
-            {  
-                title: 'Просмотрел',  
-                status: 'finished',  
-                class: 'myshows-movie-watched',  
-                icon: watch_icon
-            },  
-            {  
-                title: 'Буду смотреть',  
-                status: 'later',  
-                class: 'myshows-movie-later',  
-                icon: later_icon
-            },  
-            {  
-                title: 'Не смотрел',  
-                status: 'remove',  
-                class: 'myshows-movie-remove',  
-                icon: remove_icon
-            }  
-        ];  
-        
-        buttons.forEach(function(buttonData) {  
-            var isActive = currentStatus === buttonData.status;  
-            var activeClass = isActive ? ' myshows-active' : '';  
-            
-            var btn = $('<div class="full-start__button selector ' + buttonData.class + activeClass + '">' +  
-                buttonData.icon +  
-                '<span>' + buttonData.title + '</span>' +  
-                '</div>');  
-            
-            btn.on('hover:focus', function() {  
-                // Стандартное поведение фокуса Lampa  
-            });  
-            
-            btn.on('hover:enter', function() {  
-                updateMovieButtonStates(null);  
-                
-                setMyShowsMovieStatus(e.data.movie, buttonData.status, function(success) {  
-                    if (success) {  
-                        Lampa.Noty.show('Статус "' + buttonData.title + '" установлен на MyShows');  
-                        updateMovieButtonStates(buttonData.status);  
-                    } else {  
-                        Lampa.Noty.show('Ошибка установки статуса');  
-                        var movieTitle = e.data.movie.original_title || e.data.movie.title;  
-                    }  
-                });  
-            });  
-            
-            e.object.activity.render().find('.full-start-new__buttons').append(btn);  
-        });  
-        
-        if (window.Lampa && window.Lampa.Controller) {    
-            var container = e.object.activity.render().find('.full-start-new__buttons');  
-            
-            // Получаем все видимые кнопки  
-            var allButtons = container.find('> *').filter(function(){  
-                return $(this).is(':visible')  
-            });  
-            
-            // Обновляем коллекцию Controller с новыми кнопками  
-            Lampa.Controller.collectionSet(container);  
-            
-            // Восстанавливаем фокус на первой кнопке  
-            if (allButtons.length > 0) {  
-                Lampa.Controller.collectionFocus(allButtons.eq(0)[0], container);  
-            }  
-        } 
     }
 
     function Movies(body, callback) {
@@ -3223,64 +3106,6 @@
             }  
         });  
     }
-
-    function addMyShowsMovieButtonStyles() {  
-        var style = document.createElement('style');  
-        style.textContent = `  
-            /* Добавляем transition для всех SVG в кнопках фильмов */  
-            .full-start-new__buttons .full-start__button[class*="myshows-movie-"] svg,  
-            .full-start__buttons .full-start__button[class*="myshows-movie-"] svg {  
-                transition: color 0.5s ease, filter 0.5s ease;  
-            }  
-            
-            .full-start-new__buttons .full-start__button.myshows-movie-watched.myshows-active svg,  
-            .full-start__buttons .full-start__button.myshows-movie-watched.myshows-active svg {  
-                color: #4CAF50;  
-                filter: drop-shadow(0 0 3px rgba(76, 175, 80, 0.8));  
-            }  
-            
-            .full-start-new__buttons .full-start__button.myshows-movie-later.myshows-active svg,  
-            .full-start__buttons .full-start__button.myshows-movie-later.myshows-active svg {  
-                color: #2196F3;  
-                filter: drop-shadow(0 0 3px rgba(33, 150, 243, 0.8));  
-            }  
-            
-            .full-start-new__buttons .full-start__button.myshows-movie-remove.myshows-active svg,  
-            .full-start__buttons .full-start__button.myshows-movie-remove.myshows-active svg {  
-                color: #F44336;  
-                filter: drop-shadow(0 0 3px rgba(244, 67, 54, 0.8));  
-            }  
-        `;  
-        document.head.appendChild(style);  
-    }
-
-    Lampa.Listener.follow('full', function(e) {  
-        if (e.type == 'complite') {  
-
-            var movie = e.data.movie;  
-            var imdbId = movie.imdb_id || (movie.ids && movie.ids.imdb);    
-            var kinopoiskId = movie.kinopoisk_id || movie.kp_id || (movie.ids && movie.ids.kp);
-            
-            // Проверяем тип контента  
-            var isMovie = isMovieContent(e.data.movie);  
-            
-            if (isMovie) {    
-                var movieTitle = e.data.movie.original_title || e.data.movie.title;    
-                
-                getMovieStatusByTitle(movieTitle, function(cachedStatus) {  
-                    console.log('[MyShows] cachedStatus Movie', cachedStatus);  
-                    
-                    if (!cachedStatus || cachedStatus === 'remove') {  
-                        updateMovieButtonStates('remove');  
-                    }  
-
-                    if (getProfileSetting('myshows_button_view', true)) {    
-                        createMyShowsMovieButtons(e, cachedStatus);   
-                    }
-                });  
-            }
-        }  
-    });
 
     // Cинхронизация
     function syncMyShows(callback) {      
@@ -4015,6 +3840,60 @@
             Lampa.Storage.set('myshows_was_watching', true);  
         });  
     }  
+
+    // Обработчики
+    Lampa.Listener.follow('full', function(e) {    
+        if (e.type == 'complite' && e.data && e.data.movie) {    
+            var identifiers = getCardIdentifiers(e.data.movie);
+            if (!identifiers) return;
+            
+            var isTV = !isMovieContent(e.data.movie); 
+            var title = identifiers.title;
+            
+            if (isTV) {
+                getStatusTitle(title, null, function(cachedStatus) {  
+                    if (!cachedStatus || cachedStatus === 'remove') {  
+                        updateButtonStates('remove');  
+                    }  
+
+                    if (getProfileSetting('myshows_button_view', true)) {    
+                        createMyShowsButtons(e, cachedStatus, !isTV);   
+                    }
+                });  
+                
+                // Асинхронная проверка актуального статуса
+                getShowIdByExternalIds(
+                    identifiers.imdbId, 
+                    identifiers.kinopoiskId, 
+                    title, 
+                    identifiers.originalName, 
+                    identifiers.tmdbId, 
+                    identifiers.year, 
+                    identifiers.alternativeTitles, 
+                    function(showId) { 
+                        if (showId) {    
+                            getShowStatus(showId, function(currentStatus) {    
+                                updateButtonStates(currentStatus);    
+                            });    
+                        }    
+                    }
+                );
+                
+            } else {
+                getMovieStatusByTitle(identifiers.originalName, function(cachedStatus) {  
+                    console.log('[MyShows] cachedStatus Movie', cachedStatus);  
+                    
+                    if (!cachedStatus || cachedStatus === 'remove') {  
+                        updateMovieButtonStates('remove');  
+                    }  
+
+                    if (getProfileSetting('myshows_button_view', true)) {    
+                        createMyShowsButtons(e, cachedStatus, !isTV);   
+                    }
+                });  
+            }
+        }    
+    });
   
     // Инициализация  
     if (window.appready) {    
@@ -4026,7 +3905,6 @@
         addMyShowsToTMDB();  
         addMyShowsToCUB();  
         addMyShowsButtonStyles();  
-        addMyShowsMovieButtonStyles();  
         init();
     } else {    
         Lampa.Listener.follow('app', function (event) {    
@@ -4039,7 +3917,6 @@
                 addMyShowsToTMDB();  
                 addMyShowsToCUB();  
                 addMyShowsButtonStyles();  
-                addMyShowsMovieButtonStyles();  
                 init();
             }    
         });    
