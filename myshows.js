@@ -20,6 +20,24 @@
     var isLampac = window.lampac_plugin || false;
 
 
+    function createLogMethod(emoji, consoleMethod) {
+        return function() {
+            var args = Array.prototype.slice.call(arguments);
+            if (emoji) {
+                args.unshift(emoji);
+            }
+            args.unshift('MyShows');
+            consoleMethod.apply(console, args);
+        };
+    }
+
+    var Log = {
+        info: createLogMethod('ℹ️', console.log),
+        error: createLogMethod('❌', console.error),
+        warn: createLogMethod('⚠️', console.warn),
+        debug: createLogMethod('🐛', console.debug)
+    };
+
     function accountUrl(url) {  
         url = url + '';  
         if (url.indexOf('uid=') == -1) {  
@@ -41,7 +59,7 @@
             // 🟢 Для Android — если uri относительный, добавляем window.location.origin
             if (Lampa.Platform.is('android') && !/^https?:\/\//i.test(uri)) {
                 uri = window.location.origin + (uri.indexOf('/') === 0 ? uri : '/' + uri);
-                console.log('[MyShows][Android] 🧩 Fixed URI via window.location.origin:', uri);
+                Log.info('Android 🧩 Fixed URI via window.location.origin:', uri);
             }
 
             if (!isLampac) {
@@ -55,11 +73,11 @@
                     if (response.success) {  
                         if (callback) callback(true);  
                     } else {  
-                        console.error('[MyShows] Storage error', response.msg);
+                        Log.error('Storage error', response.msg);
                         if (callback) callback(false);   
                     }  
                 }, function(error) {  
-                    console.error('[MyShows] Network error');
+                    Log.error('Network error');
                     if (callback) callback(false);  
     
                 }, data, {  
@@ -68,7 +86,7 @@
                 });  
             }
         } catch(e) {  
-            console.error('[MyShows] Try error on saveCacheToServer', e.message);
+            Log.error('Try error on saveCacheToServer', e.message);
             if (callback) callback(false);  
         }  
     }  
@@ -575,7 +593,7 @@
         });  
 
         if (isLampac && tokenValue) {
-            console.log('[MyShows] Adding Sync button to Lampac settings');
+            Log.info('Adding Sync button to Lampac settings');
             Lampa.SettingsApi.addParam({  
                 component: 'myshows', // Ваш компонент настроек  
                 param: {  
@@ -688,7 +706,7 @@
     });
 
     function getShowIdByExternalIds(imdbId, kinopoiskId, title, originalTitle, tmdbId, year, alternativeTitles, callback) {
-        console.log('[MyShows] getShowIdByExternalIds started with params:', {
+        Log.info('getShowIdByExternalIds started with params:', {
             imdbId: imdbId,
             kinopoiskId: kinopoiskId,
             title: title,
@@ -701,14 +719,14 @@
         // 1. Пробуем найти по IMDB
         getShowIdByImdbId(imdbId, function(imdbResult) {
             if (imdbResult) {
-                console.log('[MyShows] Found by IMDB ID:', imdbResult);
+                Log.info('Found by IMDB ID:', imdbResult);
                 return callback(imdbResult);
             }
 
             // 2. Пробуем найти по Kinopoisk
             getShowIdByKinopiskId(kinopoiskId, function(kinopoiskResult) {
                 if (kinopoiskResult) {
-                    console.log('[MyShows] Found by Kinopoisk ID:', kinopoiskResult);
+                    Log.info('Found by Kinopoisk ID:', kinopoiskResult);
                     return callback(kinopoiskResult);
                 }
 
@@ -717,7 +735,7 @@
                     handleAsianContent(originalTitle, tmdbId, year, alternativeTitles, callback);
                 } else {
                     // 4. Для неазиатского контента - прямой поиск
-                    console.log('[MyShows] Non-Asian content, searching by original title:', originalTitle);
+                    Log.info('Non-Asian content, searching by original title:', originalTitle);
                     getShowIdByOriginalTitle(originalTitle, year, callback);
                 }
             });
@@ -726,14 +744,14 @@
 
     // Выносим логику для азиатского контента в отдельную функцию
     function handleAsianContent(originalTitle, tmdbId, year, alternativeTitles, callback) {
-        console.log('[MyShows] Is Asian content: true for originalTitle:', originalTitle);
+        Log.info('Is Asian content: true for originalTitle:', originalTitle);
 
         // 1. Пробуем альтернативные названия
         if (alternativeTitles && alternativeTitles.length > 0) {
-            console.log('[MyShows] Trying alternative titles:', alternativeTitles);
+            Log.info('Trying alternative titles:', alternativeTitles);
             tryAlternativeTitles(alternativeTitles, 0, year, function(altResult) {
                 if (altResult) {
-                    console.log('[MyShows] Found by alternative title:', altResult);
+                    Log.info('Found by alternative title:', altResult);
                     return callback(altResult);
                 }
                 // 2. Если альтернативные не сработали - пробуем английское название
@@ -747,16 +765,16 @@
 
     // Выносим логику fallback на английское название
     function tryEnglishTitleFallback(originalTitle, tmdbId, year, callback) {
-        console.log('[MyShows] Trying getEnglishTitle fallback');
+        Log.info('Trying getEnglishTitle fallback');
         
         getEnglishTitle(tmdbId, true, function(englishTitle) {
             if (englishTitle) {
-                console.log('[MyShows] getEnglishTitle result:', englishTitle);
+                Log.info('getEnglishTitle result:', englishTitle);
                 
                 // Пробуем поиск по английскому названию
                 getShowIdByOriginalTitle(englishTitle, year, function(englishResult) {
                     if (englishResult) {
-                        console.log('[MyShows] Found by English title:', englishResult);
+                        Log.info('Found by English title:', englishResult);
                         return callback(englishResult);
                     }
                     // Fallback к оригинальному названию
@@ -771,9 +789,9 @@
 
     // Финальный fallback
     function finalFallbackToOriginal(originalTitle, year, callback) {
-        console.log('[MyShows] Fallback to original title:', originalTitle);
+        Log.info('Fallback to original title:', originalTitle);
         getShowIdByOriginalTitle(originalTitle, year, function(finalResult) {
-            console.log('[MyShows] Final result:', finalResult);
+            Log.info('Final result:', finalResult);
             callback(finalResult);
         });
     }
@@ -1060,7 +1078,7 @@
         }
         
         if (!login || !unicId) {    
-            console.log('[MyShows] Не удается сохранить в FastAPI: отсутствует login или unic_id');    
+            Log.info('Не удается сохранить в FastAPI: отсутствует login или unic_id');    
             if (callback) callback();  
             return;    
         }    
@@ -1081,11 +1099,11 @@
         // Правильный порядок: url, success, error, post_data, params  
         network.silent(url,   
             function(response) {    
-                console.log('[MyShows] Данные успешно сохранены в FastAPI');    
+                Log.info('Данные успешно сохранены в FastAPI');    
                 if (callback) callback();    
             },   
             function(error) {    
-                console.log('[MyShows] Ошибка сохранения в FastAPI:', error);    
+                Log.info('Ошибка сохранения в FastAPI:', error);    
                 if (callback) callback();    
             },   
             jsonData,    
@@ -1182,7 +1200,7 @@
     }
 
     function getShowCandidates(data, title, year, callback) {    
-        console.log('[MyShows] getShowCandidates called with:', {  
+        Log.info('getShowCandidates called with:', {  
             dataLength: data.length,  
             title: title,  
             year: year  
@@ -1199,7 +1217,7 @@
                 
                 var yearMatch = show.year == year;    
     
-                console.log('[MyShows] Checking show:', {  
+                Log.info('Checking show:', {  
                     id: show.id,  
                     titleOriginal: show.titleOriginal,  
                     year: show.year,  
@@ -1209,24 +1227,24 @@
                 // Для точного совпадения года добавляем кандидата  
                 if (yearMatch) {    
                     candidates.push(show);    
-                    console.log('[MyShows] Added year match candidate:', show.id);  
+                    Log.info('Added year match candidate:', show.id);  
                 }    
             } catch (e) {    
-                console.error('[MyShows] Error processing show:', e);  
+                Log.error('Error processing show:', e);  
                 callback(null);    
                 return;    
             }    
         }    
     
-        console.log('[MyShows] Found candidates:', candidates.length);  
+        Log.info('Found candidates:', candidates.length);  
     
         if (candidates.length === 0) {    
             callback(null);    
         } else if (candidates.length == 1) {    
-            console.log('[MyShows] Returning single candidate:', candidates[0].id);  
+            Log.info('Returning single candidate:', candidates[0].id);  
             callback(candidates[0].id);    
         } else {    
-            console.log('[MyShows] Multiple candidates, getting best one');  
+            Log.info('Multiple candidates, getting best one');  
             getBestShowCandidate(candidates, function(candidate) {    
                 callback(candidate ? candidate.id : null);    
             });    
@@ -1259,12 +1277,12 @@
                 }  
                 
             } catch(e) {  
-                console.log('[MyShows] Date parsing error:', e);  
+                Log.info('Date parsing error:', e);  
                 continue;  
             }  
         }  
         
-        console.log('[MyShows] No matching candidate found');  
+        Log.info('No matching candidate found');  
         callback(null);  
     }
 
@@ -1348,25 +1366,25 @@
     }
 
     function tryAlternativeTitles(titles, index, year, callback) {  
-        console.log('[MyShows] tryAlternativeTitles - index:', index, 'of', titles.length, 'titles');  
+        Log.info('tryAlternativeTitles - index:', index, 'of', titles.length, 'titles');  
         
         if (index >= titles.length) {  
-            console.log('[MyShows] tryAlternativeTitles - all titles exhausted');  
+            Log.info('tryAlternativeTitles - all titles exhausted');  
             callback(null);  
             return;  
         }  
         
         var currentTitle = titles[index];  
-        console.log('[MyShows] tryAlternativeTitles - trying title:', currentTitle, 'year:', year);  
+        Log.info('tryAlternativeTitles - trying title:', currentTitle, 'year:', year);  
         
         getShowIdByOriginalTitle(currentTitle, year, function(myshows_id) {  
-            console.log('[MyShows] tryAlternativeTitles - result for "' + currentTitle + '":', myshows_id);  
+            Log.info('tryAlternativeTitles - result for "' + currentTitle + '":', myshows_id);  
             
             if (myshows_id) {  
-                console.log('[MyShows] tryAlternativeTitles - SUCCESS with title:', currentTitle);  
+                Log.info('tryAlternativeTitles - SUCCESS with title:', currentTitle);  
                 callback(myshows_id);  
             } else {  
-                console.log('[MyShows] tryAlternativeTitles - failed with "' + currentTitle + '", trying next');  
+                Log.info('tryAlternativeTitles - failed with "' + currentTitle + '", trying next');  
                 // Пробуем следующее название  
                 tryAlternativeTitles(titles, index + 1, year, callback);  
             }  
@@ -1439,7 +1457,7 @@
                 return;
             }
 
-            console.log('[MyShows] ensureHashMap showId', showId)
+            Log.info('ensureHashMap showId', showId)
             
             getEpisodesByShowId(showId, token, function(episodes) {
                 var newMap = buildHashMap(episodes, originalName);
@@ -1496,7 +1514,7 @@
 
     function getCardIdentifiers(card) {
         if (!card) {
-            console.warn('[MyShows] extractCardIdentifiers: card is null');
+            Log.warn('extractCardIdentifiers: card is null');
             return null;
         }
         
@@ -1510,7 +1528,7 @@
                 });  
             }
         } catch (e) {
-            console.warn('[MyShows] Error extracting alternative titles:', e);
+            Log.warn('Error extracting alternative titles:', e);
         }
         
         return {
@@ -1685,32 +1703,32 @@
     }
 
     function getUnwatchedShowsWithDetails(callback, show) {     
-        console.log('[MyShows] getUnwatchedShowsWithDetails called');      
+        Log.info('getUnwatchedShowsWithDetails called');      
         var useFastAPI = Lampa.Storage.get('numparser_myshows_fastapi', 'false');    
-        console.log('[MyShows] Using FastAPI:', useFastAPI, 'isLampac:', isLampac);  
+        Log.info('Using FastAPI:', useFastAPI, 'isLampac:', isLampac);  
         
         if (useFastAPI) {   
             fetchFromMyShowsAPI(function(freshResult) {  
-                console.log('[MyShows] FastAPI result:', freshResult);      
+                Log.info('FastAPI result:', freshResult);      
                 callback(freshResult);      
             });      
         } else if (isLampac) {  
             // Используем кеширование только в Lampac  
             loadCacheFromServer('unwatched_serials', 'shows', function(cachedResult) {      
-                console.log('[MyShows] Cache result:', cachedResult);      
+                Log.info('Cache result:', cachedResult);      
                 if (cachedResult) {        
                     callback(cachedResult);     
                 } else {  
                     fetchFromMyShowsAPI(function(freshResult) {  
-                        console.log('[MyShows] API result (no cache):', freshResult);      
+                        Log.info('API result (no cache):', freshResult);      
                         callback(freshResult);      
                     });      
                 }   
             });      
         } else {  
-            console.log('[MyShows] Not Lampac, using direct API');      
+            Log.info('Not Lampac, using direct API');      
             fetchFromMyShowsAPI(function(freshResult) {  
-                console.log('[MyShows] Direct API result:', freshResult);      
+                Log.info('Direct API result:', freshResult);      
                 callback(freshResult);      
             });      
         }   
@@ -1733,14 +1751,14 @@
         // Добавляем новые сериалы  
         for (var newKey in newShowsMap) {  
             if (!oldShowsMap[newKey]) {  
-                console.log('[MyShows] Adding new show:', newKey);  
+                Log.info('Adding new show:', newKey);  
                 
                 // ✅ Проверяем, есть ли карточка в DOM  
                 var existingCard = findCardInMyShowsSection(newKey);  
                 if (!existingCard) {  
                     insertNewCardIntoMyShowsSection(newShowsMap[newKey]);  
                 } else {  
-                    console.log('[MyShows] Card already exists in DOM:', newKey);  
+                    Log.info('Card already exists in DOM:', newKey);  
                     // Обновляем данные существующей карточки  
                     existingCard.card_data = existingCard.card_data || {};  
                     existingCard.card_data.progress_marker = newShowsMap[newKey].progress_marker;  
@@ -1753,7 +1771,7 @@
         // Удаляем завершенные сериалы  
         for (var oldKey in oldShowsMap) {  
             if (!newShowsMap[oldKey]) {  
-                console.log('[MyShows] Removing completed show:', oldKey);  
+                Log.info('Removing completed show:', oldKey);  
                 updateCompletedShowCard(oldKey);  
             }  
         }  
@@ -1766,7 +1784,7 @@
                 
                 if (oldShow.progress_marker !== newShow.progress_marker ||   
                     oldShow.next_episode !== newShow.next_episode) {  
-                    console.log('[MyShows] Updating show:', key);  
+                    Log.info('Updating show:', key);  
                     updateAllMyShowsCards(key, newShow.progress_marker, newShow.next_episode);  
                 }  
             }  
@@ -2026,21 +2044,21 @@
         if (!cardElement || !markerClass) return;  
         
         if (typeof newText !== 'string') {  
-            console.warn('[MyShows] Invalid newText type:', typeof newText, newText);  
+            Log.warn('Invalid newText type:', typeof newText, newText);  
             return;  
         }  
         
         // ✅ ИСПРАВЛЕНО: Работаем с самим маркером, а не с <span>  
         var marker = cardElement.querySelector('.' + markerClass);  
         if (!marker) {  
-            console.log('[MyShows] Marker not found:', markerClass);  
+            Log.info('Marker not found:', markerClass);  
             return;  
         }  
         
         var oldText = marker.textContent;  
         if (oldText === newText) return;  
         
-        console.log('[MyShows] Updating marker:', markerClass, 'from', oldText, 'to', newText);  
+        Log.info('Updating marker:', markerClass, 'from', oldText, 'to', newText);  
         
         // Добавляем CSS анимацию  
         marker.style.transition = 'all 0.5s ease';  
@@ -2058,7 +2076,7 @@
     }
 
     function updateAllMyShowsCards(showName, newProgressMarker, newNextEpisode) {  
-        console.log('[MyShows] updateAllMyShowsCards called:', {  
+        Log.info('updateAllMyShowsCards called:', {  
             showName: showName,  
             progress: newProgressMarker,  
             nextEpisode: newNextEpisode,  
@@ -2075,7 +2093,7 @@
                         cardData.name || cardData.title;  
             
             if (cardName === showName) {  
-                console.log('[MyShows] Found card to update:', cardName);  
+                Log.info('Found card to update:', cardName);  
                 
                 // ✅ Обновляем данные в card_data  
                 if (newProgressMarker) {  
@@ -2088,12 +2106,12 @@
                 // ✅ Подписываемся на события (если ещё не подписаны)  
                 if (!cardElement.dataset.myshowsListeners) {  
                     cardElement.addEventListener('visible', function() {  
-                        console.log('[MyShows] Card visible event fired (existing)');  
+                        Log.info('Card visible event fired (existing)');  
                         addProgressMarkerToCard(cardElement, cardElement.card_data);  
                     });  
                     
                     cardElement.addEventListener('update', function() {  
-                        console.log('[MyShows] Card update event fired (existing)');  
+                        Log.info('Card update event fired (existing)');  
                         addProgressMarkerToCard(cardElement, cardElement.card_data);  
                     });  
                     
@@ -2112,7 +2130,7 @@
     
     Lampa.Listener.follow('activity', function(event) {  
 
-        console.log('[MyShows] Activity event:', {  
+        Log.info('Activity event:', {  
             type: event.type,  
             component: event.component  
         });  
@@ -2132,7 +2150,7 @@
                 var previousCard = Lampa.Storage.get('myshows_current_card', null);  
                 var wasWatching = Lampa.Storage.get('myshows_was_watching', false);  
 
-                console.log('[MyShows] Full start debug:', {  
+                Log.info('Full start debug:', {  
                     originalName: originalName,  
                     previousCard: previousCard ? (previousCard.original_name || previousCard.original_title || previousCard.title) : null,  
                     wasWatching: wasWatching,  
@@ -2160,7 +2178,7 @@
                                     });  
                                     
                                     if (foundShow && (foundShow.progress_marker || foundShow.next_episode)) {  
-                                        console.log('[MyShows] Updating markers on full page');  
+                                        Log.info('Updating markers on full page');  
                                         updateMarkersOnFullCard(foundShow.progress_marker, foundShow.next_episode);  
                                     }  
                                 }  
@@ -2175,7 +2193,7 @@
                                     });  
                                     
                                     if (foundShow) {  
-                                        console.log('[MyShows] Updating serial status to:', foundShow.watchStatus);  
+                                        Log.info('Updating serial status to:', foundShow.watchStatus);  
                                         updateButtonStates(foundShow.watchStatus, false, true);  
                                         Lampa.Storage.set('myshows_was_watching', false);
                                     }  
@@ -2193,7 +2211,7 @@
                                     });  
                                     
                                     if (foundMovie) {  
-                                        console.log('[MyShows] Updating movie status to:', foundMovie.watchStatus);  
+                                        Log.info('Updating movie status to:', foundMovie.watchStatus);  
                                         updateButtonStates(foundMovie.watchStatus, true, true);  
                                         Lampa.Storage.set('myshows_was_watching', false);
                                     }  
@@ -2319,12 +2337,12 @@
     }
 
     function updateMarkersOnFullCard(progressMarker, nextEpisode) {  
-        console.log('[MyShows] updateMarkersOnFullCard called');  
+        Log.info('updateMarkersOnFullCard called');  
         
         var posterElement = $('.full-start-new__poster');  
         
         if (!posterElement.length) {  
-            console.warn('[MyShows] Full poster not found via jQuery');  
+            Log.warn('Full poster not found via jQuery');  
             return;  
         }  
         
@@ -2346,7 +2364,7 @@
                 }, 300);  
             }, 50);  
             
-            console.log('[MyShows] Progress marker added:', progressMarker);  
+            Log.info('Progress marker added:', progressMarker);  
         }  
         
         // Добавляем маркер следующей серии с анимацией  
@@ -2364,7 +2382,7 @@
                 }, 300);  
             }, 50);  
             
-            console.log('[MyShows] Next episode marker added:', nextEpisode);  
+            Log.info('Next episode marker added:', nextEpisode);  
         }  
     }
 
@@ -2378,7 +2396,7 @@
             var cardName = cardData.original_title || cardData.original_name || cardData.name || cardData.title;  
             
             if (cardName === showName && cardData.progress_marker) {  
-                console.log('[MyShows] Found matching card for:', showName);  
+                Log.info('Found matching card for:', showName);  
                 
                 // ✅ Помечаем карточку как удаляемую  
                 cardElement.dataset.removing = 'true';  
@@ -2497,7 +2515,7 @@
     }
 
     function insertNewCardIntoMyShowsSection(showData, retryCount) {  
-        console.log('[MyShows] insertNewCardIntoMyShowsSection called with:', {  
+        Log.info('insertNewCardIntoMyShowsSection called with:', {  
             name: showData.name || showData.title,  
             progress_marker: showData.progress_marker,  
             next_episode: showData.next_episode  
@@ -2508,7 +2526,7 @@
         }  
         
         if (retryCount > 5) {  
-            console.error('[MyShows] Max retries reached for:', showData.name || showData.title);  
+            Log.error('Max retries reached for:', showData.name || showData.title);  
             return;  
         }  
         
@@ -2525,24 +2543,24 @@
         }  
         
         if (!targetSection) {  
-            console.warn('[MyShows] MyShows section not found, retrying in 500ms... (attempt ' + (retryCount + 1) + ')');  
+            Log.warn('MyShows section not found, retrying in 500ms... (attempt ' + (retryCount + 1) + ')');  
             setTimeout(function() {  
                 insertNewCardIntoMyShowsSection(showData, retryCount + 1);  
             }, 500);  
             return;  
         }  
         
-        console.log('[MyShows] Found MyShows section');  
+        Log.info('Found MyShows section');  
         
         var scrollElement = targetSection.querySelector('.scroll');  
         
         if (!scrollElement) {  
-            console.error('[MyShows] Scroll element not found');  
+            Log.error('Scroll element not found');  
             return;  
         }  
         
         if (!scrollElement.Scroll) {  
-            console.warn('[MyShows] Scroll.Scroll not available, retrying in 500ms... (attempt ' + (retryCount + 1) + ')');  
+            Log.warn('Scroll.Scroll not available, retrying in 500ms... (attempt ' + (retryCount + 1) + ')');  
             setTimeout(function() {  
                 insertNewCardIntoMyShowsSection(showData, retryCount + 1);  
             }, 500);  
@@ -2550,7 +2568,7 @@
         }  
         
         var scroll = scrollElement.Scroll;  
-        console.log('[MyShows] Scroll object available');  
+        Log.info('Scroll object available');  
         
         try {  
             // ✅ ИСПРАВЛЕНО: Используем прямой конструктор Card  
@@ -2559,7 +2577,7 @@
                 card_category: true  
             });  
             
-            console.log('[MyShows] Card created');  
+            Log.info('Card created');  
             
             // ✅ Создаём карточку через create()  
             newCard.create();  
@@ -2580,7 +2598,7 @@
             var cardElement = newCard.render(true);  
             
             if (cardElement) {  
-                console.log('[MyShows] Card rendered');  
+                Log.info('Card rendered');  
                 
                 // ✅ Сохраняем кастомные данные  
                 cardElement.card_data = cardElement.card_data || {};  
@@ -2592,30 +2610,30 @@
                 
                 // ✅ Подписываемся на события  
                 cardElement.addEventListener('visible', function() {  
-                    console.log('[MyShows] New card visible event fired');  
+                    Log.info('New card visible event fired');  
                     addProgressMarkerToCard(cardElement, cardElement.card_data);  
                 });  
                 
                 cardElement.addEventListener('update', function() {  
-                    console.log('[MyShows] New card update event fired');  
+                    Log.info('New card update event fired');  
                     addProgressMarkerToCard(cardElement, cardElement.card_data);  
                 });  
                 
                 // ✅ Добавляем в scroll  
                 scroll.append(cardElement);  
-                console.log('[MyShows] Card appended to scroll');  
+                Log.info('Card appended to scroll');  
                 
                 if (window.Lampa && window.Lampa.Controller) {  
                     window.Lampa.Controller.collectionAppend(cardElement);  
-                    console.log('[MyShows] Card added to controller collection');  
+                    Log.info('Card added to controller collection');  
                 }  
                 
-                console.log('[MyShows] Card successfully added to DOM');  
+                Log.info('Card successfully added to DOM');  
             } else {  
-                console.error('[MyShows] Card element is null after render');  
+                Log.error('Card element is null after render');  
             }  
         } catch (error) {  
-            console.error('[MyShows] Error creating card:', error);  
+            Log.error('Error creating card:', error);  
         }  
     }
 
@@ -3066,8 +3084,8 @@
         var screensaver = Lampa.Storage.get('screensaver', 'true');
         Lampa.Storage.set('screensaver', 'false'); 
         
-        console.log('[MyShows] Starting sequential sync process');      
-        console.log('[MyShows] syncInProgress', syncInProgress);      
+        Log.info('Starting sequential sync process');      
+        Log.info('syncInProgress', syncInProgress);      
         
         // Массив для накопления всех таймкодов  
         var allTimecodes = [];  
@@ -3076,42 +3094,42 @@
         watchedMoviesData(function(movies, error) {      
             if (error) {      
                 // restoreTimelineListener();    
-                console.error('[MyShows] Movie sync error:', error);      
+                Log.error('Movie sync error:', error);      
                 if (callback) callback(false, 'Ошибка синхронизации фильмов: ' + error);      
                 return;      
             }      
             
-            console.log('[MyShows] Got', movies.length, 'movies');      
+            Log.info('Got', movies.length, 'movies');      
             
             // Обрабатываем фильмы последовательно      
             processMovies(movies, allTimecodes, function(movieResult) {      
-                console.log('[MyShows] Movies processed:', movieResult.processed, 'errors:', movieResult.errors);      
+                Log.info('Movies processed:', movieResult.processed, 'errors:', movieResult.errors);      
                 
                 // Получаем сериалы      
                 getWatchedShows(function(shows, showError) {      
                     if (showError) {      
                         // restoreTimelineListener();    
-                        console.error('[MyShows] Show sync error:', showError);      
+                        Log.error('Show sync error:', showError);      
                         if (callback) callback(false, 'Ошибка синхронизации сериалов: ' + showError);      
                         return;      
                     }      
                     
-                    console.log('[MyShows] Got', shows.length, 'shows');      
+                    Log.info('Got', shows.length, 'shows');      
                     
                     // Обрабатываем сериалы последовательно      
                     processShows(shows, allTimecodes, function(showResult) {      
-                        console.log('[MyShows] Shows processed:', showResult.processed, 'errors:', showResult.errors);      
+                        Log.info('Shows processed:', showResult.processed, 'errors:', showResult.errors);      
                         
                         var totalProcessed = movieResult.processed + showResult.processed;      
                         var totalErrors = movieResult.errors + showResult.errors;      
                         
                         if (allTimecodes.length > 0) {  
-                            console.log('[MyShows] Syncing', allTimecodes.length, 'timecodes to database');  
+                            Log.info('Syncing', allTimecodes.length, 'timecodes to database');  
                             Lampa.Noty.show('Синхронизация таймкодов: ' + allTimecodes.length + ' записей');  
                             
                             syncTimecodesToDatabase(allTimecodes, function(syncSuccess) {  
                                 if (syncSuccess) {  
-                                    console.log('[MyShows] Timecodes synced successfully');  
+                                    Log.info('Timecodes synced successfully');  
                                     
                                     // Добавляем все карточки в избранное      
                                     addAllCardsAtOnce(cardsToAdd);      
@@ -3168,7 +3186,7 @@
         var profileId = Lampa.Storage.get('lampac_profile_id', '');    
         
         if (!uid) {    
-            console.error('[MyShows] No lampac_unic_id found');    
+            Log.error('No lampac_unic_id found');    
             callback(false);    
             return;    
         }  
@@ -3183,22 +3201,22 @@
             timecodes: timecodes    
         };  
         
-        console.log('[MyShows] Sending batch timecode request to:', url);    
-        console.log('[MyShows] Payload:', payload); 
+        Log.info('Sending batch timecode request to:', url);    
+        Log.info('Payload:', payload); 
         
         network.timeout(1000 * 60); // 60 секунд таймаут  
         network.native(url, function(response) {  
-            console.log('[MyShows] Batch sync response:', response);  
+            Log.info('Batch sync response:', response);  
             
             if (response && response.success) {  
-                console.log('[MyShows] Successfully synced', response.added, 'added,', response.updated, 'updated');  
+                Log.info('Successfully synced', response.added, 'added,', response.updated, 'updated');  
                 callback(true);  
             } else {  
-                console.error('[MyShows] Batch sync failed:', response);  
+                Log.error('Batch sync failed:', response);  
                 callback(false);  
             }  
             }, function(error) {  
-                console.error('[MyShows] Batch sync error:', error);  
+                Log.error('Batch sync error:', error);  
                 callback(false);  
             }, JSON.stringify(payload), {  
                 headers: {  
@@ -3220,7 +3238,7 @@
             }    
             
             var movie = movies[currentIndex];    
-            console.log('[MyShows] Processing movie', (currentIndex + 1), 'of', movies.length, ':', movie.title);    
+            Log.info('Processing movie', (currentIndex + 1), 'of', movies.length, ':', movie.title);    
             
             Lampa.Noty.show('Обрабатываю фильм: ' + movie.title + ' (' + (currentIndex + 1) + '/' + movies.length + ')');    
             
@@ -3249,7 +3267,7 @@
                                 cardsToAdd.push(card);    
                                 processed++;    
                             } catch (e) {    
-                                console.error('[MyShows] Error processing movie:', movie.title, e);    
+                                Log.error('Error processing movie:', movie.title, e);    
                                 errors++;    
                             }    
                         } else {    
@@ -3284,7 +3302,7 @@
             }    
             
             var show = shows[currentShowIndex];    
-            console.log('[MyShows] Processing show', (currentShowIndex + 1), 'of', shows.length, ':', show.title);    
+            Log.info('Processing show', (currentShowIndex + 1), 'of', shows.length, ':', show.title);    
             
             Lampa.Noty.show('Обрабатываю сериал: ' + show.title + ' (' + (currentShowIndex + 1) + '/' + shows.length + ')');    
             
@@ -3321,7 +3339,7 @@
 
     // ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ: processShowEpisodes теперь накапливает таймкоды  
     function processShowEpisodes(show, tmdbCard, tmdbId, allTimecodes, callback) {    
-        console.log('[MyShows] Processing episodes for show:', show.title, 'Episodes count:', show.episodes ? show.episodes.length : 0);    
+        Log.info('Processing episodes for show:', show.title, 'Episodes count:', show.episodes ? show.episodes.length : 0);    
         
         var watchedEpisodeIds = show.watchedEpisodes.map(function(ep) { return ep.id; });    
         var processedEpisodes = 0;    
@@ -3330,14 +3348,14 @@
         
         function processNextEpisode() {    
             if (currentEpisodeIndex >= show.episodes.length) {    
-                console.log('[MyShows] Finished processing show:', show.title, 'Processed:', processedEpisodes, 'Errors:', errorEpisodes);    
+                Log.info('Finished processing show:', show.title, 'Processed:', processedEpisodes, 'Errors:', errorEpisodes);    
                 cardsToAdd.push(tmdbCard);    
                 callback({processed: processedEpisodes, errors: errorEpisodes});    
                 return;    
             }    
             
             var episode = show.episodes[currentEpisodeIndex];    
-            console.log('[MyShows] Processing episode:', episode.seasonNumber + 'x' + episode.episodeNumber, 'for show:', show.title);    
+            Log.info('Processing episode:', episode.seasonNumber + 'x' + episode.episodeNumber, 'for show:', show.title);    
             
             if (watchedEpisodeIds.indexOf(episode.id) !== -1) {    
                 try {    
@@ -3351,7 +3369,7 @@
                     
                     var duration = episode.runtime ? episode.runtime * 60 : (show.runtime ? show.runtime * 60 : 2700);  
                     
-                    console.log('[MyShows] Adding timecode for episode:', episode.seasonNumber + 'x' + episode.episodeNumber, 'Hash:', hash);    
+                    Log.info('Adding timecode for episode:', episode.seasonNumber + 'x' + episode.episodeNumber, 'Hash:', hash);    
                     
                     allTimecodes.push({  
                         card_id: tmdbId + '_tv',  
@@ -3364,13 +3382,13 @@
                     });  
                     
                     processedEpisodes++;    
-                    console.log('[MyShows] Successfully processed episode:', episode.seasonNumber + 'x' + episode.episodeNumber);    
+                    Log.info('Successfully processed episode:', episode.seasonNumber + 'x' + episode.episodeNumber);    
                 } catch (timelineError) {    
-                    console.error('[MyShows] Error processing episode:', episode.seasonNumber + 'x' + episode.episodeNumber, timelineError);    
+                    Log.error('Error processing episode:', episode.seasonNumber + 'x' + episode.episodeNumber, timelineError);    
                     errorEpisodes++;    
                 }    
             } else {    
-                console.log('[MyShows] Episode not watched, skipping:', episode.seasonNumber + 'x' + episode.episodeNumber);    
+                Log.info('Episode not watched, skipping:', episode.seasonNumber + 'x' + episode.episodeNumber);    
             }    
             
             currentEpisodeIndex++;    
@@ -3402,7 +3420,7 @@
     function findTMDBId(title, originalTitle, year, imdbId, kinopoiskId, isTV, callback, showData) {  
         var network = new Lampa.Reguest();  
         
-        console.log('[MyShows] Searching for:', title, 'Original:', originalTitle, 'IMDB:', imdbId, 'Year:', year);  
+        Log.info('Searching for:', title, 'Original:', originalTitle, 'IMDB:', imdbId, 'Year:', year);  
         
         // Шаг 1: Поиск по IMDB ID  
         if (imdbId) {  
@@ -3413,14 +3431,14 @@
             network.silent(url, function(results) {  
                 var items = isTV ? results.tv_results : results.movie_results;  
                 if (items && items.length > 0) {  
-                    console.log('[MyShows] Found by IMDB ID:', items[0].id, 'for', title);  
+                    Log.info('Found by IMDB ID:', items[0].id, 'for', title);  
                     callback(items[0].id, items[0]);  
                     return;  
                 }  
-                console.log('[MyShows] No IMDB results, trying title search');  
+                Log.info('No IMDB results, trying title search');  
                 searchByTitle();  
             }, function(error) {  
-                console.error('[MyShows] IMDB search error:', error);  
+                Log.error('IMDB search error:', error);  
                 searchByTitle();  
             });  
             return;  
@@ -3439,7 +3457,7 @@
             
             function tryNextQuery() {  
                 if (currentQueryIndex >= searchQueries.length) {  
-                    console.log('[MyShows] Not found in TMDB, using fallback hash for:', title);  
+                    Log.info('Not found in TMDB, using fallback hash for:', title);  
                     callback(Lampa.Utils.hash(originalTitle || title), null);  
                     return;  
                 }  
@@ -3457,11 +3475,11 @@
                         url += '&' + (isTV ? 'first_air_date_year' : 'year') + '=' + searchYear;  
                     }  
                     
-                    console.log('[MyShows] Title search:', url, 'Query:', query, 'Year:', searchYear || 'no year');  
+                    Log.info('Title search:', url, 'Query:', query, 'Year:', searchYear || 'no year');  
                     
                     network.timeout(1000 * 10);  
                     network.silent(url, function(results) {  
-                        console.log('[MyShows] Title search results:', query, 'year:', searchYear, results);  
+                        Log.info('Title search results:', query, 'year:', searchYear, results);  
                         
                         if (results && results.results && results.results.length > 0) {  
                             // Ищем точное совпадение по названию  
@@ -3478,7 +3496,7 @@
                             
                             // Если нашли точное совпадение, используем его  
                             if (exactMatch) {  
-                                console.log('[MyShows] Found exact match:', exactMatch.id, exactMatch.title || exactMatch.name);  
+                                Log.info('Found exact match:', exactMatch.id, exactMatch.title || exactMatch.name);  
                                 callback(exactMatch.id, exactMatch);  
                                 return;  
                             }  
@@ -3486,7 +3504,7 @@
                             // Если один результат, используем его  
                             if (results.results.length === 1) {  
                                 var singleMatch = results.results[0];  
-                                console.log('[MyShows] Single result found:', singleMatch.id, singleMatch.title || singleMatch.name);  
+                                Log.info('Single result found:', singleMatch.id, singleMatch.title || singleMatch.name);  
                                 callback(singleMatch.id, singleMatch);  
                                 return;  
                             }  
@@ -3495,7 +3513,7 @@
                             if (results.results.length > 1 && !searchYear && showData && isTV) {  
                                 var firstEpisodeYear = getFirstEpisodeYear(showData);  
                                 if (firstEpisodeYear) {  
-                                    console.log('[MyShows] Multiple results, filtering by S01E01 year:', firstEpisodeYear);  
+                                    Log.info('Multiple results, filtering by S01E01 year:', firstEpisodeYear);  
                                     
                                     var yearFilteredResults = results.results.filter(function(item) {  
                                         if (item.first_air_date) {  
@@ -3507,13 +3525,13 @@
                                     
                                     if (yearFilteredResults.length === 1) {  
                                         var filteredMatch = yearFilteredResults[0];  
-                                        console.log('[MyShows] Found by S01E01 year filter:', filteredMatch.id, filteredMatch.name);  
+                                        Log.info('Found by S01E01 year filter:', filteredMatch.id, filteredMatch.name);  
                                         callback(filteredMatch.id, filteredMatch);  
                                         return;  
                                     } else if (yearFilteredResults.length > 1) {  
                                         // Берем первый из отфильтрованных  
                                         var firstFiltered = yearFilteredResults[0];  
-                                        console.log('[MyShows] Using first from S01E01 filtered results:', firstFiltered.id, firstFiltered.name);  
+                                        Log.info('Using first from S01E01 filtered results:', firstFiltered.id, firstFiltered.name);  
                                         callback(firstFiltered.id, firstFiltered);  
                                         return;  
                                     }  
@@ -3522,14 +3540,14 @@
                             
                             // Используем первый результат как fallback  
                             var fallbackMatch = results.results[0];  
-                            console.log('[MyShows] Using first result as fallback:', fallbackMatch.id, fallbackMatch.title || fallbackMatch.name);  
+                            Log.info('Using first result as fallback:', fallbackMatch.id, fallbackMatch.title || fallbackMatch.name);  
                             callback(fallbackMatch.id, fallbackMatch);  
                             return;  
                         }  
                         
                         // Если поиск с годом не дал результатов, пробуем без года  
                         if (searchYear) {  
-                            console.log('[MyShows] No results with year, trying without year');  
+                            Log.info('No results with year, trying without year');  
                             tryWithYear(query, null);  
                             return;  
                         }  
@@ -3538,7 +3556,7 @@
                         if (showData && isTV && !searchYear) {  
                             var firstEpisodeYear = getFirstEpisodeYear(showData);  
                             if (firstEpisodeYear && firstEpisodeYear !== year) {  
-                                console.log('[MyShows] No results without year, trying S01E01 year:', firstEpisodeYear);  
+                                Log.info('No results without year, trying S01E01 year:', firstEpisodeYear);  
                                 tryWithYear(query, firstEpisodeYear);  
                                 return;  
                             }  
@@ -3549,7 +3567,7 @@
                         tryNextQuery();  
                         
                     }, function(error) {  
-                        console.error('[MyShows] Title search error:', error);  
+                        Log.error('Title search error:', error);  
                         
                         // При ошибке также пробуем без года, если искали с годом  
                         if (searchYear) {  
@@ -3570,7 +3588,7 @@
     function getTMDBCard(tmdbId, isTV, callback) {  
         // Добавляем проверку входных параметров  
         if (!tmdbId || typeof tmdbId !== 'number') {  
-            console.log('[MyShows] Invalid TMDB ID:', tmdbId);  
+            Log.info('Invalid TMDB ID:', tmdbId);  
             callback(null, 'Invalid TMDB ID');  
             return;  
         }  
@@ -3595,7 +3613,7 @@
                 if (response.simular) movieData.similar = response.simular;  
                     callback(movieData, null);  
                 } else {  
-                    console.log('[MyShows] Invalid card response for ID:', tmdbId, response);  
+                    Log.info('Invalid card response for ID:', tmdbId, response);  
                     callback(null, 'Invalid card data');  
                 }  
         }, function(error) {  
@@ -3607,7 +3625,7 @@
 
     function addAllCardsAtOnce(cards) {  
         try {  
-            console.log('[MyShows] Adding', cards.length, 'cards to favorites');  
+            Log.info('Adding', cards.length, 'cards to favorites');  
             
             // Сортируем карточки по дате (от новых к старым)  
             var sortedCards = cards.sort(function(a, b) {  
@@ -3633,17 +3651,17 @@
             // Берем первые 100 карточек и делаем reverse для правильного порядка добавления  
             var cardsToAddToHistory = sortedCards.slice(0, 100).reverse();  
             
-            console.log('[MyShows] Adding', cardsToAddToHistory.length, 'cards to history with limit 100');  
+            Log.info('Adding', cardsToAddToHistory.length, 'cards to history with limit 100');  
             
             // Добавляем карточки - теперь самая старая добавится первой, а самая новая последней  
             for (var i = 0; i < cardsToAddToHistory.length; i++) {  
                 Lampa.Favorite.add('history', cardsToAddToHistory[i], 100);  
             }  
             
-            console.log('[MyShows] Successfully added', cardsToAddToHistory.length, 'cards to history');  
+            Log.info('Successfully added', cardsToAddToHistory.length, 'cards to history');  
             
         } catch (error) {  
-            console.error('[MyShows] Error adding cards:', error);  
+            Log.error('Error adding cards:', error);  
         }  
     }
 
@@ -3662,9 +3680,9 @@
                     };  
                 });  
                 
-                console.log('[MyShows] ===== СПИСОК ФИЛЬМОВ =====');  
-                console.log('[MyShows] Всего фильмов:', movies.length);  
-                console.log('[MyShows] ===== КОНЕЦ СПИСКА ФИЛЬМОВ =====');  
+                Log.info('===== СПИСОК ФИЛЬМОВ =====');  
+                Log.info('Всего фильмов:', movies.length);  
+                Log.info('===== КОНЕЦ СПИСКА ФИЛЬМОВ =====');  
                 
                 callback(movies, null);  
             } else {  
@@ -3695,9 +3713,9 @@
             // Обрабатываем сериалы последовательно с задержками  
             function processNextShow() {  
                 if (currentIndex >= totalShows) {  
-                    console.log('[MyShows] ===== СПИСОК СЕРИАЛОВ =====');  
-                    console.log('[MyShows] Всего сериалов с просмотренными эпизодами:', shows.length);  
-                    console.log('[MyShows] ===== КОНЕЦ СПИСКА СЕРИАЛОВ =====');  
+                    Log.info('===== СПИСОК СЕРИАЛОВ =====');  
+                    Log.info('Всего сериалов с просмотренными эпизодами:', shows.length);  
+                    Log.info('===== КОНЕЦ СПИСКА СЕРИАЛОВ =====');  
                     callback(shows, null);  
                     return;  
                 }  
@@ -3751,13 +3769,13 @@
                         setTimeout(processNextShow, 10);  
                         
                     }, function(error) {  
-                        console.log('[MyShows] Error getting episodes for show', showId, error);  
+                        Log.info('Error getting episodes for show', showId, error);  
                         currentIndex++;  
                         setTimeout(processNextShow, 100);  
                     });  
                     
                 }, function(error) {  
-                    console.log('[MyShows] Error getting show details for', showId, error);  
+                    Log.info('Error getting show details for', showId, error);  
                     currentIndex++;  
                     setTimeout(processNextShow, 100);  
                 });  
@@ -3766,7 +3784,7 @@
             processNextShow();  
             
         }, function(error) {  
-            console.log('[MyShows] Error getting shows:', error);  
+            Log.info('Error getting shows:', error);  
             callback(null, 'Ошибка получения сериалов');  
         });  
     }
@@ -3807,7 +3825,7 @@
             if (isTV) {
                 // Для сериалов
                 getStatusByTitle(originalTitle, false, function(cachedStatus) {
-                    console.log('[MyShows] cachedStatus TV', cachedStatus);  
+                    Log.info('cachedStatus TV', cachedStatus);  
                     
                     if (!cachedStatus || cachedStatus === 'remove') {
                         updateButtonStates('remove', false, false);
@@ -3830,7 +3848,7 @@
                     function(showId) { 
                         if (showId) {    
                             getShowStatus(showId, function(currentStatus) {    
-                                console.log('[MyShows] currentStatus TV', currentStatus);  
+                                Log.info('currentStatus TV', currentStatus);  
                                 updateButtonStates(currentStatus, false, true);    
                             });    
                         }    
@@ -3840,7 +3858,7 @@
             } else {
                 // Для фильмов
                 getStatusByTitle(originalTitle, true, function(cachedStatus) {  
-                    console.log('[MyShows] cachedStatus Movie', cachedStatus);  
+                    Log.info('cachedStatus Movie', cachedStatus);  
                     
                     if (!cachedStatus || cachedStatus === 'remove') {  
                         updateButtonStates('remove', true, false); 
@@ -3857,7 +3875,7 @@
     //
     // "Хочу посмотреть" - без кеша и прогресса  
     function fetchWatchlistShows(callback) {  
-        console.log('[MyShows] fetchWatchlistShows started');  
+        Log.info('fetchWatchlistShows started');  
         
         makeMyShowsJSONRPCRequest('profile.Shows', {}, function(success, showsData) {  
             makeMyShowsJSONRPCRequest('profile.UnwatchedMovies', {  
@@ -3898,7 +3916,7 @@
                     }  
                 }  
                 
-                console.log('[MyShows] Total items from API:', allItems.length);  
+                Log.info('Total items from API:', allItems.length);  
                 
                 // Проверяем кеш  
                 loadCacheFromServer('watchlist', 'shows', function(cachedResult) {  
@@ -3907,7 +3925,7 @@
                     var cachedIndex = {};  
                     
                     if (cachedResult && cachedResult.shows && cachedResult.shows.length > 0) {  
-                        console.log('[MyShows] Found cached items:', cachedResult.shows.length);  
+                        Log.info('Found cached items:', cachedResult.shows.length);  
                         
                         // Создаем индекс кешированных элементов  
                         for (var i = 0; i < cachedResult.shows.length; i++) {  
@@ -3915,32 +3933,32 @@
                             // Убираем строгую проверку poster_path - используем любые кешированные данные  
                             if (cached.myshowsId) {  
                                 cachedIndex[cached.myshowsId] = cached;  
-                                console.log('[MyShows] Cached item:', cached.myshowsId, cached.title);  
+                                Log.info('Cached item:', cached.myshowsId, cached.title);  
                             }  
                         }  
                         
                         // Разделяем элементы  
                         for (var i = 0; i < allItems.length; i++) {  
                             var item = allItems[i];  
-                            console.log('[MyShows] Checking item:', item.myshowsId, item.title);  
+                            Log.info('Checking item:', item.myshowsId, item.title);  
                             
                             if (cachedIndex[item.myshowsId]) {  
                                 cachedItems.push(cachedIndex[item.myshowsId]);  
-                                console.log('[MyShows] Using cached for:', item.myshowsId);  
+                                Log.info('Using cached for:', item.myshowsId);  
                             } else {  
                                 newItems.push(item);  
-                                console.log('[MyShows] New item to fetch:', item.myshowsId);  
+                                Log.info('New item to fetch:', item.myshowsId);  
                             }  
                         }  
                         
-                        console.log('[MyShows] Final - Cached:', cachedItems.length, 'New:', newItems.length);  
+                        Log.info('Final - Cached:', cachedItems.length, 'New:', newItems.length);  
                     } else {  
-                        console.log('[MyShows] No cache found, fetching all items');  
+                        Log.info('No cache found, fetching all items');  
                         newItems = allItems;  
                     }  
                     
                     if (newItems.length > 0) {  
-                        console.log('[MyShows] Fetching TMDB for', newItems.length, 'new items');  
+                        Log.info('Fetching TMDB for', newItems.length, 'new items');  
                         
                         // Обогащаем только новые элементы с сохранением в кеш  
                         getTMDBDetailsSimple(newItems, function(result) {  
@@ -3964,13 +3982,13 @@
                             // Сохраняем полный кеш  
                             var cacheData = {shows: allResults};  
                             saveCacheToServer(cacheData, 'watchlist', function(success) {  
-                                console.log('[MyShows] Cache saved, success:', success);  
+                                Log.info('Cache saved, success:', success);  
                             });  
                             
                             callback({results: allResults});  
                         }, 'watchlist');  
                     } else {  
-                        console.log('[MyShows] All items from cache, sorting and returning');  
+                        Log.info('All items from cache, sorting and returning');  
                         
                         // Просто сортируем кешированные элементы  
                         cachedItems.sort(function(a, b) {  
@@ -4066,7 +4084,7 @@
     }
 
     function getTMDBDetailsSimple(items, callback, cacheKey) {          
-        console.log('[MyShows] getTMDBDetailsSimple started with', items.length, 'items');        
+        Log.info('getTMDBDetailsSimple started with', items.length, 'items');        
         
         var data = { result: [] };        
         
@@ -4101,19 +4119,19 @@
                 });  
                 
                 // Логирование с правильным получением названия  
-                console.log('[MyShows] Sorted items (first 5):');  
+                Log.info('Sorted items (first 5):');  
                 for (var i = 0; i < Math.min(5, data.result.length); i++) {  
                     var item = data.result[i];  
                     var dateStr = item.type === 'movie' ?   
                         (item.release_date || 'no date') :   
                         (item.last_episode_date || item.first_air_date || 'no date');  
-                    console.log('[MyShows]] ' + i + ': ' + (item.title || item.name || 'undefined') + ' (' + item.type + ') - ' + dateStr);  
+                    Log.info('' + i + ': ' + (item.title || item.name || 'undefined') + ' (' + item.type + ') - ' + dateStr);  
                 }  
 
             if (cacheKey) {  
                 var cacheData = {shows: data.result};  
                 saveCacheToServer(cacheData, cacheKey, function(success) {  
-                    console.log('[MyShows] Cache saved for:', cacheKey, 'success:', success);  
+                    Log.info('Cache saved for:', cacheKey, 'success:', success);  
                 });  
             }  
             
@@ -4122,7 +4140,7 @@
         
         for (var i = 0; i < items.length; i++) {        
             var item = items[i];      
-            console.log('[MyShows] Processing item', i, ':', item.title);      
+            // Log.info('Processing item', i, ':', item.title);      
             
             if (item.type === 'movie') {        
                 var searchUrl = 'search/movie' +        
@@ -4133,7 +4151,7 @@
         
                 var network = new Lampa.Reguest();        
                 network.silent(Lampa.TMDB.api(searchUrl), function (searchResponse) {        
-                    console.log('[MyShows] Movie search response for', item.title, ':', searchResponse ? 'found' : 'not found');      
+                    Log.info('Movie search response for', item.title, ':', searchResponse ? 'found' : 'not found');      
                     if (searchResponse && searchResponse.results && searchResponse.results.length > 0) {        
                         var foundMovie = searchResponse.results[0];        
                         foundMovie.myshowsId = item.myshowsId;        
@@ -4144,7 +4162,7 @@
                     }        
                     status.append('movie_' + i, {});      
                 }, function(error) {      
-                    console.log('[MyShows] Movie search error for', item.title, ':', error);      
+                    Log.info('Movie search error for', item.title, ':', error);      
                     status.error();      
                 });        
             } else {        
@@ -4157,7 +4175,7 @@
         
                 var network = new Lampa.Reguest();        
                 network.silent(Lampa.TMDB.api(searchUrl), function (searchResponse) {        
-                    console.log('[MyShows] TV search response for', item.title, ':', searchResponse ? 'found' : 'not found');      
+                    Log.info('TV search response for', item.title, ':', searchResponse ? 'found' : 'not found');      
                     if (searchResponse && searchResponse.results && searchResponse.results.length > 0) {        
                         var foundShow = searchResponse.results[0];    
                         
@@ -4188,7 +4206,7 @@
                             }    
                             status.append('tv_' + i, {});    
                         }, function(error) {    
-                            console.log('[MyShows] TV detail error for', item.title, ':', error);    
+                            Log.info('TV detail error for', item.title, ':', error);    
                             // Если не удалось получить детали, добавляем базовую информацию    
                             foundShow.myshowsId = item.myshowsId;        
                             foundShow.watchStatus = item.watchStatus;    
@@ -4201,7 +4219,7 @@
                         status.append('tv_' + i, {});    
                     }    
                 }, function(error) {      
-                    console.log('[MyShows] TV search error for', item.title, ':', error);      
+                    Log.info('TV search error for', item.title, ':', error);      
                     status.error();      
                 });        
             }        
@@ -4219,10 +4237,10 @@
                      
                     loadCacheFromServer('watchlist', 'shows', function(cachedResult) {  
                         if (cachedResult && cachedResult.shows && cachedResult.shows.length > 0 && cachedResult.shows[0].poster_path) {  
-                            console.log('[MyShows] Using cached watchlist data');  
+                            Log.info('Using cached watchlist data');  
                             this.build({results: cachedResult.shows});  
                         // } else {  
-                        //     console.log('[MyShows] Fetching fresh watchlist data');  
+                        //     Log.info('Fetching fresh watchlist data');  
                         //     fetchWatchlistShows(function(result) {  
                         //         if (result && result.results && Array.isArray(result.results) && result.results.length > 0) {  
                         //             this.build({results: result.results});  
@@ -4265,10 +4283,10 @@
                     
                     loadCacheFromServer('watched', 'shows', function(cachedResult) {  
                         if (cachedResult && cachedResult.shows && cachedResult.shows.length > 0 && cachedResult.shows[0].poster_path) {  
-                            console.log('[MyShows] Using cached watched data');  
+                            Log.info('Using cached watched data');  
                             this.build({results: cachedResult.shows});  
                         // } else {  
-                        //     console.log('[MyShows] Fetching fresh watched data');  
+                        //     Log.info('Fetching fresh watched data');  
                         //     fetchWatchedShows(function(result) {  
                         //         if (result && result.results && Array.isArray(result.results) && result.results.length > 0) {  
                         //             this.build({results: result.results});  
@@ -4310,10 +4328,10 @@
                     
                     loadCacheFromServer('cancelled', 'shows', function(cachedResult) {  
                         if (cachedResult && cachedResult.shows && cachedResult.shows.length > 0 && cachedResult.shows[0].poster_path) {  
-                            console.log('[MyShows] Using cached cancelled data');  
+                            Log.info('Using cached cancelled data');  
                             this.build({results: cachedResult.shows});  
                         // } else {  
-                        //     console.log('[MyShows] Fetching fresh cancelled data');  
+                        //     Log.info('Fetching fresh cancelled data');  
                         //     fetchCancelledShows(function(result) {  
                         //         if (result && result.results && Array.isArray(result.results) && result.results.length > 0) {  
                         //             this.build({results: result.results});  
@@ -4405,19 +4423,19 @@
     }
 
     function preloadMyShowsCache() {  
-        console.log('[MyShows] Preloading cache at startup');  
+        Log.info('Preloading cache at startup');  
         
         // Предзагружаем все типы данных асинхронно  
         fetchWatchlistShows(function(result) {  
-            console.log('[MyShows] Watchlist preloaded:', result.results.length);  
+            Log.info('Watchlist preloaded:', result.results.length);  
         });  
         
         fetchWatchedShows(function(result) {  
-            console.log('[MyShows] Watched preloaded:', result.results.length);  
+            Log.info('Watched preloaded:', result.results.length);  
         });  
         
         fetchCancelledShows(function(result) {  
-            console.log('[MyShows] Cancelled preloaded:', result.results.length);  
+            Log.info('Cancelled preloaded:', result.results.length);  
         });  
     }  
     //
@@ -4486,7 +4504,7 @@
                 
                 // Проверяем наличие кастомных данных MyShows  
                 if (cardData && (cardData.progress_marker || cardData.next_episode)) {  
-                    console.log('[MyShows] Card visible, adding markers:', cardData.original_title || cardData.title);  
+                    Log.info('Card visible, adding markers:', cardData.original_title || cardData.title);  
                     addProgressMarkerToCard(cardElement, cardData);  
                 }  
             }  
