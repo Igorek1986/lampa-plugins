@@ -3872,23 +3872,138 @@
         }    
     });
 
-    //
-    // "Хочу посмотреть" - без кеша и прогресса  
-    function fetchWatchlistShows(callback) {  
-        Log.info('fetchWatchlistShows started');  
+   //
+    // Создаем API через фабрику  
+    function ApiMyShows() {  
         
-        makeMyShowsJSONRPCRequest('profile.Shows', {}, function(success, showsData) {  
-            makeMyShowsJSONRPCRequest('profile.UnwatchedMovies', {  
-                page: 0,  
-                pageSize: 50  
-            }, function(success, moviesData) {  
+        Log.info('=== ApiMyShows Factory START ===');  
+        
+        function myshowsWatchlist(object, oncomplite, onerror) {  
+            Log.info('=== API myshowsWatchlist START ===');  
+            Log.info('API myshowsWatchlist: object params:', {  
+                url: object.url,  
+                title: object.title,  
+                component: object.component,  
+                page: object.page  
+            });   
+            
+            makeMyShowsJSONRPCRequest('profile.Shows', {}, function(success, showsData) {  
+                Log.info('API myshowsWatchlist: Shows request - success:', success);  
+                Log.info('API myshowsWatchlist: Shows data:', showsData ? JSON.stringify(showsData).substring(0, 200) + '...' : 'null');  
+                
+                makeMyShowsJSONRPCRequest('profile.UnwatchedMovies', {  
+                    page: (object.page || 1) - 1,  
+                    pageSize: 50  
+                }, function(success, moviesData) {  
+                    Log.info('API myshowsWatchlist: Movies request - success:', success);  
+                    Log.info('API myshowsWatchlist: Movies data:', moviesData ? JSON.stringify(moviesData).substring(0, 200) + '...' : 'null');  
+                    
+                    var allItems = [];  
+                    
+                    // Обработка сериалов  
+                    if (showsData && showsData.result) {  
+                        Log.info('API myshowsWatchlist: Processing', showsData.result.length, 'shows');  
+                        for (var i = 0; i < showsData.result.length; i++) {  
+                            var item = showsData.result[i];  
+                            if (item.watchStatus === 'later') {  
+                                allItems.push({  
+                                    myshowsId: item.show.id,  
+                                    title: item.show.title,  
+                                    originalTitle: item.show.titleOriginal,  
+                                    year: item.show.year,  
+                                    watchStatus: item.watchStatus,  
+                                    type: 'show'  
+                                });  
+                            }  
+                        }  
+                    }  
+                    
+                    // Обработка фильмов  
+                    if (moviesData && moviesData.result) {  
+                        Log.info('API myshowsWatchlist: Processing', moviesData.result.length, 'movies');  
+                        for (var i = 0; i < moviesData.result.length; i++) {  
+                            var movie = moviesData.result[i];  
+                            allItems.push({  
+                                myshowsId: movie.id,  
+                                title: movie.title,  
+                                originalTitle: movie.titleOriginal,  
+                                year: movie.year,  
+                                watchStatus: 'later',  
+                                type: 'movie'  
+                            });  
+                        }  
+                    }  
+                    
+                    Log.info('API myshowsWatchlist: Total items before TMDB:', allItems.length);  
+                    
+                    // Обогащение через TMDB  
+                    getTMDBDetailsSimple(allItems, function(result) {  
+                        Log.info('API myshowsWatchlist: TMDB enrichment complete');  
+                        Log.info('API myshowsWatchlist: Final result count:', result.results ? result.results.length : 0);  
+                        Log.info('=== API myshowsWatchlist END ===');  
+                        oncomplite(result);  
+                    });  
+                });  
+            });  
+        }  
+        
+        function myshowsWatched(object, oncomplite, onerror) {  
+            Log.info('=== API myshowsWatched START ===');  
+            
+            makeMyShowsJSONRPCRequest('profile.Shows', {}, function(success, showsData) {  
+                makeMyShowsJSONRPCRequest('profile.WatchedMovies', {}, function(success, moviesData) {  
+                    var allItems = [];  
+                    
+                    // Обработка сериалов  
+                    if (showsData && showsData.result) {  
+                        for (var i = 0; i < showsData.result.length; i++) {  
+                            var item = showsData.result[i];  
+                            if (item.watchStatus === 'watching' || item.watchStatus === 'finished') {  
+                                allItems.push({  
+                                    myshowsId: item.show.id,  
+                                    title: item.show.title,  
+                                    originalTitle: item.show.titleOriginal,  
+                                    year: item.show.year,  
+                                    watchStatus: item.watchStatus,  
+                                    type: 'show'  
+                                });  
+                            }  
+                        }  
+                    }  
+                    
+                    // Обработка фильмов  
+                    if (moviesData && moviesData.result) {  
+                        for (var i = 0; i < moviesData.result.length; i++) {  
+                            var movie = moviesData.result[i];  
+                            allItems.push({  
+                                myshowsId: movie.id,  
+                                title: movie.title,  
+                                originalTitle: movie.titleOriginal,  
+                                year: movie.year,  
+                                watchStatus: 'finished',  
+                                type: 'movie'  
+                            });  
+                        }  
+                    }  
+                    
+                    getTMDBDetailsSimple(allItems, function(result) {  
+                        Log.info('=== API myshowsWatched END ===');  
+                        oncomplite(result);  
+                    });  
+                });  
+            });  
+        }  
+        
+        function myshowsCancelled(object, oncomplite, onerror) {  
+            Log.info('=== API myshowsCancelled START ===');  
+            
+            makeMyShowsJSONRPCRequest('profile.Shows', {}, function(success, showsData) {  
                 var allItems = [];  
                 
-                // Обрабатываем сериалы  
                 if (showsData && showsData.result) {  
                     for (var i = 0; i < showsData.result.length; i++) {  
                         var item = showsData.result[i];  
-                        if (item.watchStatus === 'later') {  
+                        if (item.watchStatus === 'cancelled') {  
                             allItems.push({  
                                 myshowsId: item.show.id,  
                                 title: item.show.title,  
@@ -3901,358 +4016,163 @@
                     }  
                 }  
                 
-                // Обрабатываем фильмы  
-                if (moviesData && moviesData.result) {  
-                    for (var i = 0; i < moviesData.result.length; i++) {  
-                        var movie = moviesData.result[i];  
-                        allItems.push({  
-                            myshowsId: movie.id,  
-                            title: movie.title,  
-                            originalTitle: movie.titleOriginal,  
-                            year: movie.year,  
-                            watchStatus: 'later',  
-                            type: 'movie'  
-                        });  
-                    }  
-                }  
-                
-                Log.info('Total items from API:', allItems.length);  
-                
-                // Проверяем кеш  
-                loadCacheFromServer('watchlist', 'shows', function(cachedResult) {  
-                    var cachedItems = [];  
-                    var newItems = [];  
-                    var cachedIndex = {};  
-                    
-                    if (cachedResult && cachedResult.shows && cachedResult.shows.length > 0) {  
-                        Log.info('Found cached items:', cachedResult.shows.length);  
-                        
-                        // Создаем индекс кешированных элементов  
-                        for (var i = 0; i < cachedResult.shows.length; i++) {  
-                            var cached = cachedResult.shows[i];  
-                            // Убираем строгую проверку poster_path - используем любые кешированные данные  
-                            if (cached.myshowsId) {  
-                                cachedIndex[cached.myshowsId] = cached;  
-                                Log.info('Cached item:', cached.myshowsId, cached.title);  
-                            }  
-                        }  
-                        
-                        // Разделяем элементы  
-                        for (var i = 0; i < allItems.length; i++) {  
-                            var item = allItems[i];  
-                            Log.info('Checking item:', item.myshowsId, item.title);  
-                            
-                            if (cachedIndex[item.myshowsId]) {  
-                                cachedItems.push(cachedIndex[item.myshowsId]);  
-                                Log.info('Using cached for:', item.myshowsId);  
-                            } else {  
-                                newItems.push(item);  
-                                Log.info('New item to fetch:', item.myshowsId);  
-                            }  
-                        }  
-                        
-                        Log.info('Final - Cached:', cachedItems.length, 'New:', newItems.length);  
-                    } else {  
-                        Log.info('No cache found, fetching all items');  
-                        newItems = allItems;  
-                    }  
-                    
-                    if (newItems.length > 0) {  
-                        Log.info('Fetching TMDB for', newItems.length, 'new items');  
-                        
-                        // Обогащаем только новые элементы с сохранением в кеш  
-                        getTMDBDetailsSimple(newItems, function(result) {  
-                            var allResults = cachedItems.concat(result.results || []);  
-                            
-                            // Сортируем  
-                            allResults.sort(function(a, b) {  
-                                var dateA = a.type === 'movie' ?   
-                                    (a.release_date ? new Date(a.release_date).getTime() : 0) :   
-                                    (a.last_episode_date ? new Date(a.last_episode_date).getTime() :   
-                                    (a.first_air_date ? new Date(a.first_air_date).getTime() : 0));  
-                                
-                                var dateB = b.type === 'movie' ?   
-                                    (b.release_date ? new Date(b.release_date).getTime() : 0) :   
-                                    (b.last_episode_date ? new Date(b.last_episode_date).getTime() :   
-                                    (b.first_air_date ? new Date(b.first_air_date).getTime() : 0));  
-                                
-                                return dateB - dateA;  
-                            });  
-                            
-                            // Сохраняем полный кеш  
-                            var cacheData = {shows: allResults};  
-                            saveCacheToServer(cacheData, 'watchlist', function(success) {  
-                                Log.info('Cache saved, success:', success);  
-                            });  
-                            
-                            callback({results: allResults});  
-                        }, 'watchlist');  
-                    } else {  
-                        Log.info('All items from cache, sorting and returning');  
-                        
-                        // Просто сортируем кешированные элементы  
-                        cachedItems.sort(function(a, b) {  
-                            var dateA = a.type === 'movie' ?   
-                                (a.release_date ? new Date(a.release_date).getTime() : 0) :   
-                                (a.last_episode_date ? new Date(a.last_episode_date).getTime() :   
-                                (a.first_air_date ? new Date(a.first_air_date).getTime() : 0));  
-                            
-                            var dateB = b.type === 'movie' ?   
-                                (b.release_date ? new Date(b.release_date).getTime() : 0) :   
-                                (b.last_episode_date ? new Date(b.last_episode_date).getTime() :   
-                                (b.first_air_date ? new Date(b.first_air_date).getTime() : 0));  
-                            
-                            return dateB - dateA;  
-                        });  
-                        
-                        callback({results: cachedItems});  
-                    }  
+                getTMDBDetailsSimple(allItems, function(result) {  
+                    Log.info('=== API myshowsCancelled END ===');  
+                    oncomplite(result);  
                 });  
             });  
-        });  
+        }  
+        
+        Log.info('=== ApiMyShows Factory END ===');  
+        
+        return {  
+            myshowsWatchlist: myshowsWatchlist,  
+            myshowsWatched: myshowsWatched,  
+            myshowsCancelled: myshowsCancelled  
+        };  
     }
+        
+    // Создаем экземпляр API  
+    var Api = ApiMyShows();  
+    Log.info('Api object created:', typeof Api, 'methods:', Object.keys(Api));
 
-    
-    // "Просмотрел" - без кеша и прогресса  
-    function fetchWatchedShows(callback) {  
-        makeMyShowsJSONRPCRequest('profile.Shows', {}, function(success, showsData) {  
-            makeMyShowsJSONRPCRequest('profile.WatchedMovies', {}, function(success, moviesData) {  
-                var allItems = [];  
+    function getTMDBDetailsSimple(items, callback) {  
+        Log.info('getTMDBDetailsSimple: Started with', items.length, 'items to enrich');  
+        
+        var data = { result: [] };  
+        
+        if (items.length === 0) {  
+            Log.info('getTMDBDetailsSimple: No items to process, returning empty result');  
+            callback({results: []});  
+            return;  
+        }  
+        
+        var status = new Lampa.Status(items.length);  
+        status.onComplite = function() {  
+            Log.info('getTMDBDetailsSimple: All requests completed, have', data.result.length, 'enriched items');  
+            
+            // Сортировка  
+            data.result.sort(function(a, b) {  
+                var dateA, dateB;  
                 
-                // Обрабатываем сериалы  
-                if (showsData && showsData.result) {  
-                    for (var i = 0; i < showsData.result.length; i++) {  
-                        var item = showsData.result[i];  
-                        if (item.watchStatus === 'watching' || item.watchStatus === 'finished') {  
-                            allItems.push({  
-                                myshowsId: item.show.id,  
-                                title: item.show.title,  
-                                originalTitle: item.show.titleOriginal,  
-                                year: item.show.year,  
-                                watchStatus: item.watchStatus,  
-                                type: 'show'  
-                            });  
-                        }  
-                    }  
+                if (a.type === 'movie') {  
+                    dateA = a.release_date ? new Date(a.release_date).getTime() : 0;  
+                } else {  
+                    dateA = a.last_episode_date ? new Date(a.last_episode_date).getTime() :   
+                            (a.first_air_date ? new Date(a.first_air_date).getTime() : 0);  
                 }  
                 
-                // Обрабатываем фильмы  
-                if (moviesData && moviesData.result) {  
-                    for (var i = 0; i < moviesData.result.length; i++) {  
-                        var movie = moviesData.result[i];  
-                        allItems.push({  
-                            myshowsId: movie.id,  
-                            title: movie.title,  
-                            originalTitle: movie.titleOriginal,  
-                            year: movie.year,  
-                            watchStatus: 'finished',  
-                            type: 'movie'  
-                        });  
-                    }  
+                if (b.type === 'movie') {  
+                    dateB = b.release_date ? new Date(b.release_date).getTime() : 0;  
+                } else {  
+                    dateB = b.last_episode_date ? new Date(b.last_episode_date).getTime() :   
+                            (b.first_air_date ? new Date(b.first_air_date).getTime() : 0);  
                 }  
-    
-                getTMDBDetailsSimple(allItems, callback, 'watched');  
+                
+                return dateB - dateA;  
             });  
-        });  
-    }  
-    
-    // "Бросил смотреть" - без кеша и прогресса  
-    function fetchCancelledShows(callback) {  
-        makeMyShowsJSONRPCRequest('profile.Shows', {}, function(success, data) {  
-            if (success && data && data.result) {  
-                var cancelledShows = [];  
-                
-                for (var i = 0; i < data.result.length; i++) {  
-                    var item = data.result[i];  
-                    if (item.watchStatus === 'cancelled') {  
-                        cancelledShows.push({  
-                            myshowsId: item.show.id,  
-                            title: item.show.title,  
-                            originalTitle: item.show.titleOriginal,  
-                            year: item.show.year,  
-                            watchStatus: item.watchStatus,  
-                            type: 'show'  
-                        });  
-                    }  
-                }  
-    
-                getTMDBDetailsSimple(cancelledShows, callback, 'cancelled');  
-            } else {  
-                callback(null);  
-            }  
-        });  
-    }
-
-    function getTMDBDetailsSimple(items, callback, cacheKey) {          
-        Log.info('getTMDBDetailsSimple started with', items.length, 'items');        
-        
-        var data = { result: [] };        
-        
-        if (items.length === 0) {        
-            callback({results: []});        
-            return;        
-        }        
-        
-        var status = new Lampa.Status(items.length);      
-            status.onComplite = function() {  
-                // Сортировка с правильным получением названия  
-                data.result.sort(function(a, b) {  
-                    var dateA, dateB;  
-                    
-                    // Получаем дату для элемента A  
-                    if (a.type === 'movie') {  
-                        dateA = a.release_date ? new Date(a.release_date).getTime() : 0;  
-                    } else {  
-                        dateA = a.last_episode_date ? new Date(a.last_episode_date).getTime() :   
-                                (a.first_air_date ? new Date(a.first_air_date).getTime() : 0);  
-                    }  
-                    
-                    // Получаем дату для элемента B  
-                    if (b.type === 'movie') {  
-                        dateB = b.release_date ? new Date(b.release_date).getTime() : 0;  
-                    } else {  
-                        dateB = b.last_episode_date ? new Date(b.last_episode_date).getTime() :   
-                                (b.first_air_date ? new Date(b.first_air_date).getTime() : 0);  
-                    }  
-                    
-                    return dateB - dateA;  
-                });  
-                
-                // Логирование с правильным получением названия  
-                Log.info('Sorted items (first 5):');  
-                for (var i = 0; i < Math.min(5, data.result.length); i++) {  
-                    var item = data.result[i];  
-                    var dateStr = item.type === 'movie' ?   
-                        (item.release_date || 'no date') :   
-                        (item.last_episode_date || item.first_air_date || 'no date');  
-                    Log.info('' + i + ': ' + (item.title || item.name || 'undefined') + ' (' + item.type + ') - ' + dateStr);  
-                }  
-
-            if (cacheKey) {  
-                var cacheData = {shows: data.result};  
-                saveCacheToServer(cacheData, cacheKey, function(success) {  
-                    Log.info('Cache saved for:', cacheKey, 'success:', success);  
-                });  
-            }  
             
-            callback({results: data.result});      
-        };    
+            callback({results: data.result});  
+        };  
         
-        for (var i = 0; i < items.length; i++) {        
-            var item = items[i];      
-            // Log.info('Processing item', i, ':', item.title);      
+        for (var i = 0; i < items.length; i++) {  
+            var item = items[i];  
             
-            if (item.type === 'movie') {        
-                var searchUrl = 'search/movie' +        
-                    '?api_key=' + Lampa.TMDB.key() +        
-                    '&query=' + encodeURIComponent(item.originalTitle || item.title) +        
-                    '&year=' + item.year +        
-                    '&language=' + Lampa.Storage.get('tmdb_lang', 'ru');        
-        
-                var network = new Lampa.Reguest();        
-                network.silent(Lampa.TMDB.api(searchUrl), function (searchResponse) {        
-                    Log.info('Movie search response for', item.title, ':', searchResponse ? 'found' : 'not found');      
-                    if (searchResponse && searchResponse.results && searchResponse.results.length > 0) {        
-                        var foundMovie = searchResponse.results[0];        
-                        foundMovie.myshowsId = item.myshowsId;        
-                        foundMovie.watchStatus = item.watchStatus;        
-                        // Убедимся что у фильма есть тип  
+            if (item.type === 'movie') {  
+                var searchUrl = 'search/movie' +   
+                    '?api_key=' + Lampa.TMDB.key() +   
+                    '&query=' + encodeURIComponent(item.originalTitle || item.title) +   
+                    '&year=' + item.year +   
+                    '&language=' + Lampa.Storage.get('tmdb_lang', 'ru');  
+                
+                var network = new Lampa.Reguest();  
+                network.silent(Lampa.TMDB.api(searchUrl), function (searchResponse) {  
+                    if (searchResponse && searchResponse.results && searchResponse.results.length > 0) {  
+                        var foundMovie = searchResponse.results[0];  
+                        // ВАЖНО: Устанавливаем правильные ID  
+                        foundMovie.id = foundMovie.id; // TMDB ID  
+                        foundMovie.myshowsId = item.myshowsId; // Сохраняем MyShows ID  
+                        foundMovie.watchStatus = item.watchStatus;  
                         foundMovie.type = 'movie';  
-                        data.result.push(foundMovie);      
-                    }        
-                    status.append('movie_' + i, {});      
-                }, function(error) {      
-                    Log.info('Movie search error for', item.title, ':', error);      
-                    status.error();      
-                });        
-            } else {        
-                // Для сериалов делаем два запроса: поиск и полная информация для получения даты последней серии    
-                var searchUrl = 'search/tv' +        
-                    '?api_key=' + Lampa.TMDB.key() +        
-                    '&query=' + encodeURIComponent(item.originalTitle || item.title) +        
-                    '&year=' + item.year +        
-                    '&language=' + Lampa.Storage.get('tmdb_lang', 'ru');        
-        
-                var network = new Lampa.Reguest();        
-                network.silent(Lampa.TMDB.api(searchUrl), function (searchResponse) {        
-                    Log.info('TV search response for', item.title, ':', searchResponse ? 'found' : 'not found');      
-                    if (searchResponse && searchResponse.results && searchResponse.results.length > 0) {        
-                        var foundShow = searchResponse.results[0];    
-                        
-                        // Делаем дополнительный запрос для получения полной информации о сериале    
-                        var detailUrl = 'tv/' + foundShow.id +     
-                            '?api_key=' + Lampa.TMDB.key() +     
-                            '&language=' + Lampa.Storage.get('tmdb_lang', 'ru');    
-                        
-                        var detailNetwork = new Lampa.Reguest();    
-                        detailNetwork.silent(Lampa.TMDB.api(detailUrl), function(detailResponse) {    
-                            if (detailResponse) {    
-                                // Добавляем MyShows данные    
-                                detailResponse.myshowsId = item.myshowsId;        
-                                detailResponse.watchStatus = item.watchStatus;    
-                                // Убедимся что у сериала есть тип  
-                                detailResponse.type = 'tv';  
-                                
-                                // Устанавливаем дату последней серии    
-                                if (detailResponse.last_episode_to_air && detailResponse.last_episode_to_air.air_date) {    
-                                    detailResponse.last_episode_date = detailResponse.last_episode_to_air.air_date;    
-                                } else if (detailResponse.next_episode_to_air && detailResponse.next_episode_to_air.air_date) {    
-                                    detailResponse.last_episode_date = detailResponse.next_episode_to_air.air_date;    
-                                } else {    
-                                    detailResponse.last_episode_date = detailResponse.first_air_date;    
-                                }    
-                                
-                                data.result.push(detailResponse);    
-                            }    
-                            status.append('tv_' + i, {});    
-                        }, function(error) {    
-                            Log.info('TV detail error for', item.title, ':', error);    
-                            // Если не удалось получить детали, добавляем базовую информацию    
-                            foundShow.myshowsId = item.myshowsId;        
-                            foundShow.watchStatus = item.watchStatus;    
-                            foundShow.type = 'tv';  
-                            foundShow.last_episode_date = foundShow.first_air_date;    
-                            data.result.push(foundShow);    
-                            status.append('tv_' + i, {});    
-                        });    
-                    } else {    
-                        status.append('tv_' + i, {});    
-                    }    
-                }, function(error) {      
-                    Log.info('TV search error for', item.title, ':', error);      
-                    status.error();      
-                });        
-            }        
-        }        
+                        data.result.push(foundMovie);  
+                        Log.info('getTMDBDetailsSimple: Added movie with TMDB ID:', foundMovie.id, 'for MyShows ID:', item.myshowsId);  
+                    }  
+                    status.append('movie_' + i, {});  
+                }, function(error) {  
+                    Log.info('getTMDBDetailsSimple: Movie search error for', item.title, ':', error);  
+                    status.error();  
+                });  
+            } else {  
+                var searchUrl = 'search/tv' +   
+                    '?api_key=' + Lampa.TMDB.key() +   
+                    '&query=' + encodeURIComponent(item.originalTitle || item.title) +   
+                    '&year=' + item.year +   
+                    '&language=' + Lampa.Storage.get('tmdb_lang', 'ru');  
+                
+                var network = new Lampa.Reguest();  
+                network.silent(Lampa.TMDB.api(searchUrl), function (searchResponse) {  
+                    if (searchResponse && searchResponse.results && searchResponse.results.length > 0) {  
+                        var foundShow = searchResponse.results[0];  
+                        foundShow.id = foundShow.id; // TMDB ID  
+                        foundShow.myshowsId = item.myshowsId; // Сохраняем MyShows ID  
+                        foundShow.watchStatus = item.watchStatus;  
+                        foundShow.type = 'tv';  
+                        foundShow.last_episode_date = foundShow.first_air_date;  
+                        data.result.push(foundShow);  
+                        Log.info('getTMDBDetailsSimple: Added TV show with TMDB ID:', foundShow.id, 'for MyShows ID:', item.myshowsId);  
+                    }  
+                    status.append('tv_' + i, {});  
+                }, function(error) {  
+                    Log.info('getTMDBDetailsSimple: TV search error for', item.title, ':', error);  
+                    status.error();  
+                });  
+            }  
+        }  
     }
 
+    // Регистрируем компоненты  
     function addMyShowsComponents() {  
+        var token = getProfileSetting('myshows_token', '');    
+            
+        if (!token) {    
+            return;    
+        }   
+
         // "Хочу посмотреть"  
         Lampa.Component.add('myshows_watchlist', function(object) {  
+            Log.info('=== COMPONENT myshows_watchlist FACTORY START ===');  
+            
+            // Убираем модуль пагинации для теста  
             var comp = Lampa.Maker.make('Category', object);  
+            
+            Log.info('Component myshows_watchlist: Maker.create completed');  
             
             comp.use({  
                 onCreate: function() {  
+                    Log.info('=== COMPONENT myshows_watchlist onCreate START ===');  
                     this.activity.loader(true);  
-                     
-                    loadCacheFromServer('watchlist', 'shows', function(cachedResult) {  
-                        if (cachedResult && cachedResult.shows && cachedResult.shows.length > 0 && cachedResult.shows[0].poster_path) {  
-                            Log.info('Using cached watchlist data');  
-                            this.build({results: cachedResult.shows});  
-                        // } else {  
-                        //     Log.info('Fetching fresh watchlist data');  
-                        //     fetchWatchlistShows(function(result) {  
-                        //         if (result && result.results && Array.isArray(result.results) && result.results.length > 0) {  
-                        //             this.build({results: result.results});  
-                        //         } else {  
-                        //             this.empty();  
-                        //         }  
-                        //     }.bind(this));  
-                        // }  
-                        }
-                    }.bind(this));  
+                    
+                    Log.info('Component myshows_watchlist: Calling Api.myshowsWatchlist');  
+                    Api.myshowsWatchlist(this.object,   
+                        function(result) {  
+                            Log.info('Component myshows_watchlist: API success callback');  
+                            if (result && result.results) {  
+                                Log.info('Component myshows_watchlist: Building with', result.results.length, 'items');  
+                                this.build(result);  
+                            } else {  
+                                Log.error('Component myshows_watchlist: No results in API response');  
+                                this.empty();  
+                            }  
+                        }.bind(this),  
+                        function(error) {  
+                            Log.error('Component myshows_watchlist: API error callback:', error);  
+                            this.empty();  
+                        }.bind(this)  
+                    );  
                 },  
+                
                 onInstance: function(item, data) {  
+                    Log.info('Component myshows_watchlist: onInstance for:', data.title || data.name);  
                     item.use({  
                         onEnter: function() {  
                             Lampa.Activity.push({  
@@ -4267,37 +4187,48 @@
                             Lampa.Background.change(Lampa.Utils.cardImgBackground(data));  
                         }  
                     });  
-                }     
+                }  
             });  
             
+            Log.info('=== COMPONENT myshows_watchlist FACTORY END ===');  
             return comp;  
-        });  
-        
+        });   
+    
         // "Просмотрел"  
         Lampa.Component.add('myshows_watched', function(object) {  
+            Log.info('=== COMPONENT myshows_watchlist FACTORY START ===');  
+            
+            // Убираем модуль пагинации для теста  
             var comp = Lampa.Maker.make('Category', object);  
+            
+            Log.info('Component myshows_watched: Maker.create completed');  
             
             comp.use({  
                 onCreate: function() {  
+                    Log.info('=== COMPONENT myshows_watched onCreate START ===');  
                     this.activity.loader(true);  
                     
-                    loadCacheFromServer('watched', 'shows', function(cachedResult) {  
-                        if (cachedResult && cachedResult.shows && cachedResult.shows.length > 0 && cachedResult.shows[0].poster_path) {  
-                            Log.info('Using cached watched data');  
-                            this.build({results: cachedResult.shows});  
-                        // } else {  
-                        //     Log.info('Fetching fresh watched data');  
-                        //     fetchWatchedShows(function(result) {  
-                        //         if (result && result.results && Array.isArray(result.results) && result.results.length > 0) {  
-                        //             this.build({results: result.results});  
-                        //         } else {  
-                        //             this.empty();  
-                        //         }  
-                        //     }.bind(this));  
-                        }  
-                    }.bind(this));  
+                    Log.info('Component myshows_watched: Calling Api.myshowsWatched');  
+                    Api.myshowsWatched(this.object,   
+                        function(result) {  
+                            Log.info('Component myshows_watched: API success callback');  
+                            if (result && result.results) {  
+                                Log.info('Component myshows_watched: Building with', result.results.length, 'items');  
+                                this.build(result);  
+                            } else {  
+                                Log.error('Component myshows_watched: No results in API response');  
+                                this.empty();  
+                            }  
+                        }.bind(this),  
+                        function(error) {  
+                            Log.error('Component myshows_watched: API error callback:', error);  
+                            this.empty();  
+                        }.bind(this)  
+                    );  
                 },  
+                
                 onInstance: function(item, data) {  
+                    Log.info('Component myshows_watched: onInstance for:', data.title || data.name);  
                     item.use({  
                         onEnter: function() {  
                             Lampa.Activity.push({  
@@ -4312,37 +4243,48 @@
                             Lampa.Background.change(Lampa.Utils.cardImgBackground(data));  
                         }  
                     });  
-                }     
+                }  
             });  
             
+            Log.info('=== COMPONENT myshows_watched FACTORY END ===');  
             return comp;  
-        });  
-        
-        // "Бросил смотреть"  
+        });   
+    
+        // "Бросил смотреть" 
         Lampa.Component.add('myshows_cancelled', function(object) {  
+            Log.info('=== COMPONENT myshows_watchlist FACTORY START ===');  
+            
+            // Убираем модуль пагинации для теста  
             var comp = Lampa.Maker.make('Category', object);  
+            
+            Log.info('Component myshows_cancelled: Maker.create completed');  
             
             comp.use({  
                 onCreate: function() {  
+                    Log.info('=== COMPONENT myshows_cancelled onCreate START ===');  
                     this.activity.loader(true);  
                     
-                    loadCacheFromServer('cancelled', 'shows', function(cachedResult) {  
-                        if (cachedResult && cachedResult.shows && cachedResult.shows.length > 0 && cachedResult.shows[0].poster_path) {  
-                            Log.info('Using cached cancelled data');  
-                            this.build({results: cachedResult.shows});  
-                        // } else {  
-                        //     Log.info('Fetching fresh cancelled data');  
-                        //     fetchCancelledShows(function(result) {  
-                        //         if (result && result.results && Array.isArray(result.results) && result.results.length > 0) {  
-                        //             this.build({results: result.results});  
-                        //         } else {  
-                        //             this.empty();  
-                        //         }  
-                        //     }.bind(this));  
-                        }  
-                    }.bind(this));  
+                    Log.info('Component myshows_cancelled: Calling Api.myshowsCancelled');  
+                    Api.myshowsCancelled(this.object,   
+                        function(result) {  
+                            Log.info('Component myshows_cancelled: API success callback');  
+                            if (result && result.results) {  
+                                Log.info('Component myshows_cancelled: Building with', result.results.length, 'items');  
+                                this.build(result);  
+                            } else {  
+                                Log.error('Component myshows_cancelled: No results in API response');  
+                                this.empty();  
+                            }  
+                        }.bind(this),  
+                        function(error) {  
+                            Log.error('Component myshows_cancelled: API error callback:', error);  
+                            this.empty();  
+                        }.bind(this)  
+                    );  
                 },  
+                
                 onInstance: function(item, data) {  
+                    Log.info('Component myshows_cancelled: onInstance for:', data.title || data.name);  
                     item.use({  
                         onEnter: function() {  
                             Lampa.Activity.push({  
@@ -4357,22 +4299,21 @@
                             Lampa.Background.change(Lampa.Utils.cardImgBackground(data));  
                         }  
                     });  
-                }     
+                }  
             });  
             
+            Log.info('=== COMPONENT myshows_cancelled FACTORY END ===');  
             return comp;  
-        });  
+        });   
     }
 
     function addMyShowsMenuItems() {  
         // "Хочу посмотреть"  
-        var watchlistButton = $('<li class="menu__item selector">' +  
-            '<div class="menu__ico">' +  
-            later_icon +
-            '</div>' +  
-            '<div class="menu__text">Хочу посмотреть</div>' +  
+        var watchlistButton = $('<li class="menu__item selector">' +   
+            '<div class="menu__ico">' + later_icon + '</div>' +   
+            '<div class="menu__text">Хочу посмотреть</div>' +   
             '</li>');  
-    
+        
         watchlistButton.on('hover:enter', function () {  
             Lampa.Activity.push({  
                 url: '',  
@@ -4381,15 +4322,13 @@
                 page: 1  
             });  
         });  
-    
+        
         // "Просмотрел"  
-        var watchedButton = $('<li class="menu__item selector">' +  
-            '<div class="menu__ico">' +  
-            watch_icon +
-            '</div>' +  
-            '<div class="menu__text">Просмотрел</div>' +  
+        var watchedButton = $('<li class="menu__item selector">' +   
+            '<div class="menu__ico">' + watch_icon + '</div>' +   
+            '<div class="menu__text">Просмотрел</div>' +   
             '</li>');  
-    
+        
         watchedButton.on('hover:enter', function () {  
             Lampa.Activity.push({  
                 url: '',  
@@ -4398,15 +4337,13 @@
                 page: 1  
             });  
         });  
-    
+        
         // "Бросил смотреть"  
-        var cancelledButton = $('<li class="menu__item selector">' +  
-            '<div class="menu__ico">' +  
-            cancelled_icon +
-            '</div>' +  
-            '<div class="menu__text">Бросил смотреть</div>' +  
+        var cancelledButton = $('<li class="menu__item selector">' +   
+            '<div class="menu__ico">' + cancelled_icon + '</div>' +   
+            '<div class="menu__text">Бросил смотреть</div>' +   
             '</li>');  
-    
+        
         cancelledButton.on('hover:enter', function () {  
             Lampa.Activity.push({  
                 url: '',  
@@ -4415,36 +4352,19 @@
                 page: 1  
             });  
         });  
-    
+        
         // Добавляем кнопки в меню  
         $('.menu .menu__list').eq(0).append(watchlistButton);  
         $('.menu .menu__list').eq(0).append(watchedButton);  
         $('.menu .menu__list').eq(0).append(cancelledButton);  
     }
 
-    function preloadMyShowsCache() {  
-        Log.info('Preloading cache at startup');  
-        
-        // Предзагружаем все типы данных асинхронно  
-        fetchWatchlistShows(function(result) {  
-            Log.info('Watchlist preloaded:', result.results.length);  
-        });  
-        
-        fetchWatchedShows(function(result) {  
-            Log.info('Watched preloaded:', result.results.length);  
-        });  
-        
-        fetchCancelledShows(function(result) {  
-            Log.info('Cancelled preloaded:', result.results.length);  
-        });  
-    }  
     //
   
     // Инициализация  
     if (window.appready) {    
         initSettings();    
         initMyShowsCaches();  
-        preloadMyShowsCache();
         addMyShowsComponents();
         addMyShowsMenuItems();
         cleanupOldMappings();  
@@ -4459,7 +4379,6 @@
             if (event.type === 'ready') {    
                 initSettings();    
                 initMyShowsCaches();  
-                preloadMyShowsCache();
                 addMyShowsComponents();
                 addMyShowsMenuItems();
                 cleanupOldMappings();  
