@@ -3935,8 +3935,8 @@
                     Log.info('API myshowsWatchlist: Total items before TMDB:', allItems.length);    
                     
                     // --- виртуальная пагинация ---  
-                    const PAGE_SIZE = 20;  
-                    const currentPage = object.page || 1;  
+                    var PAGE_SIZE = 20;  
+                    var currentPage = object.page || 1;  
                     var totalPages = Math.ceil(allItems.length / PAGE_SIZE);  
                     var start = (currentPage - 1) * PAGE_SIZE;  
                     var end = start + PAGE_SIZE;  
@@ -3961,8 +3961,8 @@
         function myshowsWatched(object, oncomplite, onerror) {  
             Log.info('=== API myshowsWatched START (Virtual Pagination) ===');  
     
-            const PAGE_SIZE = 20;                   
-            const currentPage = object.page || 1;  
+            var PAGE_SIZE = 20;                   
+            var currentPage = object.page || 1;  
     
             makeMyShowsJSONRPCRequest('profile.Shows', {}, function(success, showsData) {  
                 makeMyShowsJSONRPCRequest('profile.WatchedMovies', {}, function(success, moviesData) {  
@@ -4010,7 +4010,7 @@
                     var itemsForPage = allItems.slice(start, end);  
     
                     Log.info(  
-                        `myshowsWatched: page ${currentPage}/${totalPages}, sending ${itemsForPage.length} items`  
+                        'myshowsWatched: page ${currentPage}/${totalPages}, sending ${itemsForPage.length} items'  
                     );  
     
                     // Загружаем TMDB только для текущей страницы!  
@@ -4048,8 +4048,8 @@
                 }    
                 
                 // --- виртуальная пагинация ---  
-                const PAGE_SIZE = 20;  
-                const currentPage = object.page || 1;  
+                var PAGE_SIZE = 20;  
+                var currentPage = object.page || 1;  
                 var totalPages = Math.ceil(allItems.length / PAGE_SIZE);  
                 var start = (currentPage - 1) * PAGE_SIZE;  
                 var end = start + PAGE_SIZE;  
@@ -4091,9 +4091,9 @@
         
         // "Хочу посмотреть"  
         Lampa.Component.add('myshows_watchlist', function(object) {  
-            var comp = Lampa.Maker.make('Category', object, (module) =>     
-                module.toggle(module.MASK.base, 'Pagination')  
-            );  
+            var comp = Lampa.Maker.make('Category', object, function(module) { 
+                return module.toggle(module.MASK.base, 'Pagination');  
+            });  
             
             comp.use({  
                 onCreate: function() {  
@@ -4142,13 +4142,13 @@
         
         // "Просмотрел"  
         Lampa.Component.add('myshows_watched', function(object) {  
-            var comp = Lampa.Maker.make('Category', object, (module) =>     
-                module.toggle(module.MASK.base, 'Pagination')  
-            );  
+            var comp = Lampa.Maker.make('Category', object, function(module) { 
+                return module.toggle(module.MASK.base, 'Pagination');  
+            }); 
             
             comp.use({  
                 onCreate: function() {  
-                    this.activity.loader(true);  
+                    this.activity.loader(true); 
                     this.object.page = 1;  
                     
                     Api.myshowsWatched(this.object,  
@@ -4193,9 +4193,9 @@
         
         // "Бросил смотреть"  
         Lampa.Component.add('myshows_cancelled', function(object) {  
-            var comp = Lampa.Maker.make('Category', object, (module) =>     
-                module.toggle(module.MASK.base, 'Pagination')  
-            );  
+            var comp = Lampa.Maker.make('Category', object, function(module) { 
+                return module.toggle(module.MASK.base, 'Pagination');  
+            }); 
             
             comp.use({  
                 onCreate: function() {  
@@ -4245,95 +4245,97 @@
 
     function getTMDBDetailsSimple(items, callback) {  
         Log.info('getTMDBDetailsSimple: Started with', items.length, 'items to enrich');  
-        
-        var data = { result: [] };  
+            
+        var data = { results: [] }; 
         
         if (items.length === 0) {  
             Log.info('getTMDBDetailsSimple: No items to process, returning empty result');  
             callback({results: []});  
             return;  
         }  
-        
+            
         var status = new Lampa.Status(items.length);  
         status.onComplite = function() {  
-            Log.info('getTMDBDetailsSimple: All requests completed, have', data.result.length, 'enriched items');  
-            
-            // Сортировка  
-            data.result.sort(function(a, b) {  
-                var dateA, dateB;  
+            Log.info('getTMDBDetailsSimple: All requests completed, have', data.results.length, 'enriched items');  
                 
+            // Сортировка  
+            data.results.sort(function(a, b) {  
+                var dateA, dateB;  
+                    
                 if (a.type === 'movie') {  
                     dateA = a.release_date ? new Date(a.release_date).getTime() : 0;  
                 } else {  
                     dateA = a.last_episode_date ? new Date(a.last_episode_date).getTime() :   
                             (a.first_air_date ? new Date(a.first_air_date).getTime() : 0);  
                 }  
-                
+                    
                 if (b.type === 'movie') {  
                     dateB = b.release_date ? new Date(b.release_date).getTime() : 0;  
                 } else {  
                     dateB = b.last_episode_date ? new Date(b.last_episode_date).getTime() :   
                             (b.first_air_date ? new Date(b.first_air_date).getTime() : 0);  
                 }  
-                
+                    
                 return dateB - dateA;  
             });  
-            
-            callback({results: data.result});  
+                
+            callback({results: data.results});  
         };  
-        
+            
         for (var i = 0; i < items.length; i++) {  
             var item = items[i];  
-            
-            if (item.type === 'movie') {  
-                var searchUrl = 'search/movie' +   
-                    '?api_key=' + Lampa.TMDB.key() +   
-                    '&query=' + encodeURIComponent(item.originalTitle || item.title) +   
-                    '&year=' + item.year +   
-                    '&language=' + Lampa.Storage.get('tmdb_lang', 'ru');  
                 
-                var network = new Lampa.Reguest();  
-                network.silent(Lampa.TMDB.api(searchUrl), function (searchResponse) {  
-                    if (searchResponse && searchResponse.results && searchResponse.results.length > 0) {  
-                        var foundMovie = searchResponse.results[0];  
-                        // ВАЖНО: Устанавливаем правильные ID  
-                        foundMovie.id = foundMovie.id; // TMDB ID  
-                        foundMovie.myshowsId = item.myshowsId; // Сохраняем MyShows ID  
-                        foundMovie.watchStatus = item.watchStatus;  
-                        foundMovie.type = 'movie';  
-                        data.result.push(foundMovie);  
-                        Log.info('getTMDBDetailsSimple: Added movie with TMDB ID:', foundMovie.id, 'for MyShows ID:', item.myshowsId);  
-                    }  
-                    status.append('movie_' + i, {});  
-                }, function(error) {  
-                    Log.info('getTMDBDetailsSimple: Movie search error for', item.title, ':', error);  
-                    status.error();  
-                });  
-            } else {  
-                var searchUrl = 'search/tv' +   
-                    '?api_key=' + Lampa.TMDB.key() +   
-                    '&query=' + encodeURIComponent(item.originalTitle || item.title) +   
-                    '&year=' + item.year +   
-                    '&language=' + Lampa.Storage.get('tmdb_lang', 'ru');  
-                
-                var network = new Lampa.Reguest();  
-                network.silent(Lampa.TMDB.api(searchUrl), function (searchResponse) {  
-                    if (searchResponse && searchResponse.results && searchResponse.results.length > 0) {  
-                        var foundShow = searchResponse.results[0];  
-                        foundShow.id = foundShow.id; // TMDB ID  
-                        foundShow.myshowsId = item.myshowsId; // Сохраняем MyShows ID  
-                        foundShow.watchStatus = item.watchStatus;  
-                        foundShow.type = 'tv';  
-                        foundShow.last_episode_date = foundShow.first_air_date;  
-                        data.result.push(foundShow);  
-                        Log.info('getTMDBDetailsSimple: Added TV show with TMDB ID:', foundShow.id, 'for MyShows ID:', item.myshowsId);  
-                    }  
-                    status.append('tv_' + i, {});  
-                }, function(error) {  
-                    Log.info('getTMDBDetailsSimple: TV search error for', item.title, ':', error);  
-                    status.error();  
-                });  
-            }  
+            (function(currentItem, index) {
+                if (currentItem.type === 'movie') {  
+                    var searchUrl = 'search/movie' +   
+                        '?api_key=' + Lampa.TMDB.key() +   
+                        '&query=' + encodeURIComponent(currentItem.originalTitle || currentItem.title) +   
+                        '&year=' + currentItem.year +   
+                        '&language=' + Lampa.Storage.get('tmdb_lang', 'ru');  
+                        
+                    var network = new Lampa.Reguest();  
+                    network.silent(Lampa.TMDB.api(searchUrl), function (searchResponse) {  
+                        if (searchResponse && searchResponse.results && searchResponse.results.length > 0) {  
+                            var foundMovie = searchResponse.results[0];  
+                            // ВАЖНО: Устанавливаем правильные ID  
+                            foundMovie.id = foundMovie.id; // TMDB ID  
+                            foundMovie.myshowsId = currentItem.myshowsId; // Сохраняем MyShows ID  
+                            foundMovie.watchStatus = currentItem.watchStatus;  
+                            foundMovie.type = 'movie';  
+                            data.results.push(foundMovie);  
+                            Log.info('getTMDBDetailsSimple: Added movie with TMDB ID:', foundMovie.id, 'for MyShows ID:', currentItem.myshowsId);  
+                        }  
+                        status.append('movie_' + index, {});  
+                    }, function(error) {  
+                        Log.info('getTMDBDetailsSimple: Movie search error for', currentItem.title, ':', error);  
+                        status.error();  
+                    });  
+                } else {  
+                    var searchUrl = 'search/tv' +   
+                        '?api_key=' + Lampa.TMDB.key() +   
+                        '&query=' + encodeURIComponent(currentItem.originalTitle || currentItem.title) +   
+                        '&year=' + currentItem.year +   
+                        '&language=' + Lampa.Storage.get('tmdb_lang', 'ru');  
+                        
+                    var network = new Lampa.Reguest();  
+                    network.silent(Lampa.TMDB.api(searchUrl), function (searchResponse) {  
+                        if (searchResponse && searchResponse.results && searchResponse.results.length > 0) {  
+                            var foundShow = searchResponse.results[0];  
+                            foundShow.id = foundShow.id; // TMDB ID  
+                            foundShow.myshowsId = currentItem.myshowsId; // Сохраняем MyShows ID  
+                            foundShow.watchStatus = currentItem.watchStatus;  
+                            foundShow.type = 'tv';  
+                            foundShow.last_episode_date = foundShow.first_air_date;  
+                            data.results.push(foundShow);  
+                            Log.info('getTMDBDetailsSimple: Added TV show with TMDB ID:', foundShow.id, 'for MyShows ID:', currentItem.myshowsId);  
+                        }  
+                        status.append('tv_' + index, {});  
+                    }, function(error) {  
+                        Log.info('getTMDBDetailsSimple: TV search error for', currentItem.title, ':', error);  
+                        status.error();  
+                    });  
+                }
+            })(item, i);
         }  
     }
 
