@@ -3933,6 +3933,7 @@
                     }    
                     
                     Log.info('API myshowsWatchlist: Total items before TMDB:', allItems.length);    
+                    allItems = Lampa.Arrays.shuffle(allItems);
                     
                     // --- виртуальная пагинация ---  
                     var PAGE_SIZE = 20;  
@@ -4002,6 +4003,7 @@
                     }  
     
                     Log.info('myshowsWatched: TOTAL ITEMS = ' + allItems.length);  
+                    allItems = Lampa.Arrays.shuffle(allItems);
     
                     // --- виртуальная пагинация ---  
                     var totalPages = Math.ceil(allItems.length / PAGE_SIZE);  
@@ -4046,6 +4048,8 @@
                         }    
                     }    
                 }    
+
+                allItems = Lampa.Arrays.shuffle(allItems);
                 
                 // --- виртуальная пагинация ---  
                 var PAGE_SIZE = 20;  
@@ -4256,29 +4260,7 @@
             
         var status = new Lampa.Status(items.length);  
         status.onComplite = function() {  
-            Log.info('getTMDBDetailsSimple: All requests completed, have', data.results.length, 'enriched items');  
-                
-            // Сортировка  
-            data.results.sort(function(a, b) {  
-                var dateA, dateB;  
-                    
-                if (a.type === 'movie') {  
-                    dateA = a.release_date ? new Date(a.release_date).getTime() : 0;  
-                } else {  
-                    dateA = a.last_episode_date ? new Date(a.last_episode_date).getTime() :   
-                            (a.first_air_date ? new Date(a.first_air_date).getTime() : 0);  
-                }  
-                    
-                if (b.type === 'movie') {  
-                    dateB = b.release_date ? new Date(b.release_date).getTime() : 0;  
-                } else {  
-                    dateB = b.last_episode_date ? new Date(b.last_episode_date).getTime() :   
-                            (b.first_air_date ? new Date(b.first_air_date).getTime() : 0);  
-                }  
-                    
-                return dateB - dateA;  
-            });  
-                
+            Log.info('getTMDBDetailsSimple: All requests completed, have', data.results.length, 'enriched items');    
             callback({results: data.results});  
         };  
             
