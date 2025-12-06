@@ -3874,6 +3874,7 @@
     });
 
     //
+    var cachedShuffledItems = {}; 
     // Создаем API через фабрику  
     function ApiMyShows() {    
         
@@ -3934,7 +3935,17 @@
                     }    
                     
                     Log.info('API myshowsWatchlist: Total items before TMDB:', allItems.length);    
-                    allItems = Lampa.Arrays.shuffle(allItems);
+
+                    // Создаем ключ для кеширования  
+                    var cacheKey = 'watchlist';  
+                    
+                    // Если массив еще не перемешан, перемешиваем и кешируем  
+                    if (!cachedShuffledItems[cacheKey]) {  
+                        Lampa.Arrays.shuffle(allItems);  
+                        cachedShuffledItems[cacheKey] = allItems.slice(); // Копируем массив  
+                    } else {  
+                        allItems = cachedShuffledItems[cacheKey].slice(); // Используем кешированный  
+                    } 
                     
                     // --- виртуальная пагинация ---  
                     var PAGE_SIZE = 20;  
@@ -3945,11 +3956,13 @@
                     var itemsForPage = allItems.slice(start, end);  
                     
                     Log.info('myshowsWatchlist: page ' + currentPage + '/' + totalPages + ', sending ' + itemsForPage.length + ' items');  
+                    Log.info('API myshowsWatchlist: allItems:', allItems);
                     
                     // Обогащение через TMDB только для текущей страницы  
                     getTMDBDetailsSimple(itemsForPage, function(result) {    
                         result.page = currentPage;  
                         result.total_pages = totalPages;  
+                        result.total_results = allItems.length;
                         
                         Log.info('API myshowsWatchlist: TMDB enrichment complete');    
                         Log.info('API myshowsWatchlist: Final result count:', result.results ? result.results.length : 0);    
@@ -4004,7 +4017,17 @@
                     }  
     
                     Log.info('myshowsWatched: TOTAL ITEMS = ' + allItems.length);  
-                    allItems = Lampa.Arrays.shuffle(allItems);
+
+                    // Создаем ключ для кеширования  
+                    var cacheKey = 'watched';  
+                    
+                    // Если массив еще не перемешан, перемешиваем и кешируем  
+                    if (!cachedShuffledItems[cacheKey]) {  
+                        Lampa.Arrays.shuffle(allItems);  
+                        cachedShuffledItems[cacheKey] = allItems.slice(); // Копируем массив  
+                    } else {  
+                        allItems = cachedShuffledItems[cacheKey].slice(); // Используем кешированный  
+                    }  
     
                     // --- виртуальная пагинация ---  
                     var totalPages = Math.ceil(allItems.length / PAGE_SIZE);  
@@ -4020,6 +4043,7 @@
                     getTMDBDetailsSimple(itemsForPage, function(result) {  
                         result.page = currentPage;  
                         result.total_pages = totalPages;  
+                        result.total_results = allItems.length;
     
                         Log.info('=== API myshowsWatched END ===');  
                         oncomplite(result);  
@@ -4050,7 +4074,16 @@
                     }    
                 }    
 
-                allItems = Lampa.Arrays.shuffle(allItems);
+                // Создаем ключ для кеширования  
+                var cacheKey = 'cancelled';  
+                
+                // Если массив еще не перемешан, перемешиваем и кешируем  
+                if (!cachedShuffledItems[cacheKey]) {  
+                    Lampa.Arrays.shuffle(allItems);  
+                    cachedShuffledItems[cacheKey] = allItems.slice(); // Копируем массив  
+                } else {  
+                    allItems = cachedShuffledItems[cacheKey].slice(); // Используем кешированный  
+                }  
                 
                 // --- виртуальная пагинация ---  
                 var PAGE_SIZE = 20;  
@@ -4066,6 +4099,7 @@
                 getTMDBDetailsSimple(itemsForPage, function(result) {    
                     result.page = currentPage;  
                     result.total_pages = totalPages;  
+                    result.total_results = allItems.length;
                     
                     Log.info('=== API myshowsCancelled END ===');    
                     oncomplite(result);    
@@ -4094,110 +4128,215 @@
             return;  
         }  
         
-        // "Хочу посмотреть"  
+        Lampa.Component.add('myshows_all', function(object) {  
+            var comp = Lampa.Maker.make('Main', object);  
+            
+            comp.use({  
+                onCreate: function() {  
+                    this.activity.loader(true);  
+                    
+                    var allData = {};  
+                    var loaded = 0;  
+                    var total = 3;  
+                    
+                    function checkComplete() {  
+                        loaded++;  
+                        if (loaded === total) {  
+                            buildLines.call(this);  
+                        }  
+                    }  
+                    
+                    Api.myshowsWatchlist({page: 0}, function(result) { // page: 0 означает "все данные"  
+                        allData.watchlist = result;  
+                        checkComplete.call(this);  
+                    }.bind(this));  
+                    
+                    Api.myshowsWatched({page: 0}, function(result) {  
+                        allData.watched = result;  
+                        checkComplete.call(this);  
+                    }.bind(this));  
+                    
+                    Api.myshowsCancelled({page: 0}, function(result) {  
+                        allData.cancelled = result;  
+                        checkComplete.call(this);  
+                    }.bind(this));
+                    
+                    function buildLines() {  
+                        Log.info('Watchlist total_pages:', allData.watchlist.total_pages);  
+                        Log.info('Watched total_pages:', allData.watched.total_pages);  
+                        Log.info('Cancelled total_pages:', allData.cancelled.total_pages);
+                        var lines = [];  
+
+                        getUnwatchedShowsWithDetails(function(result) {  
+                            if (result && result.shows && result.shows.length > 0) {  
+                                lines.unshift({  
+                                    title: 'Непросмотренные сериалы (MyShows)',  
+                                    results: result.shows,  
+                                    params: {  
+                                        module: Lampa.Maker.module('Line').only('Items', 'Create', 'More', 'Event'),  
+                                        emit: {  
+                                            onMore: function() {  
+                                                Lampa.Activity.push({  
+                                                    url: '',  
+                                                    title: 'Непросмотренные сериалы (MyShows)',  
+                                                    component: 'myshows_unwatched',  
+                                                    page: 2  
+                                                });  
+                                            }  
+                                        }  
+                                    }  
+                                });  
+                            }  
+                            
+                            // Добавляем остальные линии  
+                            if (allData.watchlist && allData.watchlist.results && allData.watchlist.results.length) {  
+                                lines.push({  
+                                    title: 'Хочу посмотреть',  
+                                    results: allData.watchlist.results,  
+                                    total_pages: allData.watchlist.total_pages || 1,  
+                                    params: {  
+                                        module: Lampa.Maker.module('Line').only('Items', 'Create', 'More', 'Event'),  
+                                        emit: {  
+                                            onMore: function() {  
+                                                Lampa.Activity.push({  
+                                                    url: '',  
+                                                    title: 'Хочу посмотреть (MyShows)',  
+                                                    component: 'myshows_watchlist',  
+                                                    page: 1  
+                                                });  
+                                            }  
+                                        }  
+                                    }  
+                                });  
+                            }  
+                            
+                            if (allData.watched && allData.watched.results && allData.watched.results.length) {    
+                                Log.info('allData.watched', allData.watched);  
+                            
+                                lines.push({  
+                                    title: 'История',  
+                                    results: allData.watched.results,  
+                                    total_pages: allData.watched.total_pages || 1,  
+                                    params: {  
+                                        module: Lampa.Maker.module('Line').only('Items', 'Create', 'More', 'Event'),  
+                                        emit: {  
+                                            onMore: function() {  
+                                                Log.info('onMore: opening watched page');  
+                                                Lampa.Activity.push({  
+                                                    url: '',  
+                                                    title: 'История (MyShows)',  
+                                                    component: 'myshows_watched',  
+                                                    page: 1  
+                                                });  
+                                            }  
+                                        }  
+                                    }  
+                                });
+                            }
+                            
+                            if (allData.cancelled && allData.cancelled.results && allData.cancelled.results.length) {  
+                                lines.push({  
+                                    title: 'Бросил смотреть',  
+                                    results: allData.cancelled.results,  
+                                    total_pages: allData.cancelled.total_pages || 1,  
+                                    params: {  
+                                        module: Lampa.Maker.module('Line').only('Items', 'Create', 'More', 'Event'),  
+                                        emit: {  
+                                            onMore: function() {  
+                                                Lampa.Activity.push({  
+                                                    url: '',  
+                                                    title: 'Бросил смотреть (MyShows)',  
+                                                    component: 'myshows_cancelled',  
+                                                    page: 1  
+                                                });  
+                                            }  
+                                        }  
+                                    }  
+                                });
+                            }   
+                            
+                            if (lines.length) {  
+                                this.build(lines);  
+                            } else {  
+                                this.empty();  
+                            }  
+                            
+                            this.activity.loader(false);  
+                        }.bind(this));  
+                    }
+                },  
+                
+                onInstance: function(item, data) {  
+                    item.use({  
+                        onInstance: function(card, data) {  
+                            card.use({  
+                                onEnter: function() {  
+                                    Lampa.Activity.push({  
+                                        url: '',  
+                                        component: 'full',  
+                                        id: data.id,  
+                                        method: data.name ? 'tv' : 'movie',  
+                                        card: data  
+                                    });  
+                                },  
+                                onFocus: function() {  
+                                    Lampa.Background.change(Lampa.Utils.cardImgBackground(data));  
+                                }  
+                            });  
+                        }  
+                    });  
+                }  
+            });  
+            
+            return comp;  
+        });
+        
         Lampa.Component.add('myshows_watchlist', function(object) {  
-            var comp = Lampa.Maker.make('Category', object, function(module) { 
-                return module.toggle(module.MASK.base, 'Pagination');  
-            });  
+            var comp = Lampa.Maker.make('Category', object, function(module) {   
+                return module.toggle(module.MASK.base, 'Pagination');    
+            });   
             
-            comp.use({  
-                onCreate: function() {  
-                    this.activity.loader(true);  
-                    this.object.page = 1;  
+            comp.use({    
+                onCreate: function() {    
+                    this.activity.loader(true);    
                     
-                    Api.myshowsWatchlist(this.object,  
-                        function(result) {  
-                            this.build(Lampa.Utils.addSource(result, 'myshows'));  
-                        }.bind(this),  
-                        function(error) {  
-                            this.empty();  
-                        }.bind(this)  
-                    );  
-                },  
-                onNext: function(resolve, reject) {  
-                    Api.myshowsWatchlist(this.object,   
-                        function(result) {  
-                            resolve(Lampa.Utils.addSource(result, 'myshows'));  
-                        },  
-                        function(error) {  
-                            reject();  
-                        }  
-                    );  
-                },  
-                onInstance: function(item, data) {  
-                    item.use({  
-                        onEnter: function() {  
-                            Lampa.Activity.push({  
-                                url: '',  
-                                component: 'full',  
-                                id: data.id,  
-                                method: data.name ? 'tv' : 'movie',  
-                                card: data  
-                            });  
-                        },  
-                        onFocus: function() {  
-                            Lampa.Background.change(Lampa.Utils.cardImgBackground(data));  
-                        }  
-                    });  
-                }  
-            });  
+                    Api.myshowsWatchlist(object, function(result) {    
+                        this.build(Lampa.Utils.addSource(result, 'myshows'));    
+                    }.bind(this), function(error) {    
+                        this.empty();    
+                    }.bind(this));    
+                },    
+                onNext: function(resolve, reject) {    
+                    Api.myshowsWatchlist(object, function(result) {    
+                        resolve(Lampa.Utils.addSource(result, 'myshows'));    
+                    }, function(error) {    
+                        reject();    
+                    });    
+                },    
+                onInstance: function(item, data) {    
+                    item.use({    
+                        onEnter: function() {    
+                            Lampa.Activity.push({    
+                                url: '',    
+                                component: 'full',    
+                                id: data.id,    
+                                method: data.name ? 'tv' : 'movie',    
+                                card: data    
+                            });    
+                        },    
+                        onFocus: function() {    
+                            Lampa.Background.change(Lampa.Utils.cardImgBackground(data));    
+                        }    
+                    });    
+                }    
+            });    
             
-            return comp;  
-        });  
+            return comp;    
+        });
         
-        // "Просмотрел"  
+        // myshows_watched  
         Lampa.Component.add('myshows_watched', function(object) {  
-            var comp = Lampa.Maker.make('Category', object, function(module) { 
-                return module.toggle(module.MASK.base, 'Pagination');  
-            }); 
-            
-            comp.use({  
-                onCreate: function() {  
-                    this.activity.loader(true); 
-                    this.object.page = 1;  
-                    
-                    Api.myshowsWatched(this.object,  
-                        function(result) {  
-                            this.build(Lampa.Utils.addSource(result, 'myshows'));  
-                        }.bind(this),  
-                        function(error) {  
-                            this.empty();  
-                        }.bind(this)  
-                    );  
-                },  
-                onNext: function(resolve, reject) {  
-                    Api.myshowsWatched(this.object,   
-                        function(result) {  
-                            resolve(Lampa.Utils.addSource(result, 'myshows'));  
-                        },  
-                        function(error) {  
-                            reject();  
-                        }  
-                    );  
-                },  
-                onInstance: function(item, data) {  
-                    item.use({  
-                        onEnter: function() {  
-                            Lampa.Activity.push({  
-                                url: '',  
-                                component: 'full',  
-                                id: data.id,  
-                                method: data.name ? 'tv' : 'movie',  
-                                card: data  
-                            });  
-                        },  
-                        onFocus: function() {  
-                            Lampa.Background.change(Lampa.Utils.cardImgBackground(data));  
-                        }  
-                    });  
-                }  
-            });  
-            
-            return comp;  
-        });  
-        
-        // "Бросил смотреть"  
-        Lampa.Component.add('myshows_cancelled', function(object) {  
+ 
             var comp = Lampa.Maker.make('Category', object, function(module) { 
                 return module.toggle(module.MASK.base, 'Pagination');  
             }); 
@@ -4205,26 +4344,20 @@
             comp.use({  
                 onCreate: function() {  
                     this.activity.loader(true);  
-                    this.object.page = 1;  
                     
-                    Api.myshowsCancelled(this.object,  
-                        function(result) {  
-                            this.build(Lampa.Utils.addSource(result, 'myshows'));  
-                        }.bind(this),  
-                        function(error) {  
-                            this.empty();  
-                        }.bind(this)  
-                    );  
+                    // НЕ перезаписывайте page - используйте переданный параметр  
+                    Api.myshowsWatched(object, function(result) {  
+                        this.build(Lampa.Utils.addSource(result, 'myshows'));  
+                    }.bind(this), function(error) {  
+                        this.empty();  
+                    }.bind(this));  
                 },  
                 onNext: function(resolve, reject) {  
-                    Api.myshowsCancelled(this.object,   
-                        function(result) {  
-                            resolve(Lampa.Utils.addSource(result, 'myshows'));  
-                        },  
-                        function(error) {  
-                            reject();  
-                        }  
-                    );  
+                    Api.myshowsWatched(object, function(result) {  
+                        resolve(Lampa.Utils.addSource(result, 'myshows'));  
+                    }, function(error) {  
+                        reject();  
+                    });  
                 },  
                 onInstance: function(item, data) {  
                     item.use({  
@@ -4245,7 +4378,51 @@
             });  
             
             return comp;  
-        });  
+        });
+        
+        // myshows_cancelled  
+        Lampa.Component.add('myshows_cancelled', function(object) {  
+            var comp = Lampa.Maker.make('Category', object, function(module) {   
+                return module.toggle(module.MASK.base, 'Pagination');    
+            });   
+            
+            comp.use({    
+                onCreate: function() {    
+                    this.activity.loader(true);    
+                    
+                    Api.myshowsCancelled(object, function(result) {    
+                        this.build(Lampa.Utils.addSource(result, 'myshows'));    
+                    }.bind(this), function(error) {    
+                        this.empty();    
+                    }.bind(this));    
+                },    
+                onNext: function(resolve, reject) {    
+                    Api.myshowsCancelled(object, function(result) {    
+                        resolve(Lampa.Utils.addSource(result, 'myshows'));    
+                    }, function(error) {    
+                        reject();    
+                    });    
+                },    
+                onInstance: function(item, data) {    
+                    item.use({    
+                        onEnter: function() {    
+                            Lampa.Activity.push({    
+                                url: '',    
+                                component: 'full',    
+                                id: data.id,    
+                                method: data.name ? 'tv' : 'movie',    
+                                card: data    
+                            });    
+                        },    
+                        onFocus: function() {    
+                            Lampa.Background.change(Lampa.Utils.cardImgBackground(data));    
+                        }    
+                    });    
+                }    
+            });    
+            
+            return comp;    
+        });
     }
 
     function getTMDBDetailsSimple(items, callback) {  
@@ -4253,11 +4430,16 @@
             
         var data = { results: [] }; 
         
-        if (items.length === 0) {  
-            Log.info('getTMDBDetailsSimple: No items to process, returning empty result');  
-            callback({results: []});  
-            return;  
-        }  
+        if (items.length === 0) {    
+            Log.info('getTMDBDetailsSimple: No items to process, returning empty result');    
+            callback({  
+                page: 1,  
+                results: [],  
+                total_pages: 0,  
+                total_results: 0 
+            });    
+            return;    
+        }
             
         var status = new Lampa.Status(items.length);  
         status.onComplite = function() {  
@@ -4323,55 +4505,20 @@
     }
 
     function addMyShowsMenuItems() {  
-        // "Хочу посмотреть"  
-        var watchlistButton = $('<li class="menu__item selector">' +   
-            '<div class="menu__ico">' + later_icon + '</div>' +   
-            '<div class="menu__text">Хочу посмотреть</div>' +   
+        var allButton = $('<li class="menu__item selector">' +  
+            '<div class="menu__ico">' + myshows_icon + '</div>' +  
+            '<div class="menu__text">MyShows</div>' +  
             '</li>');  
         
-        watchlistButton.on('hover:enter', function () {  
+        allButton.on('hover:enter', function() {  
             Lampa.Activity.push({  
                 url: '',  
-                title: 'Хочу посмотреть (MyShows)',  
-                component: 'myshows_watchlist',  
-                page: 1  
+                title: 'MyShows',  
+                component: 'myshows_all',  
             });  
         });  
         
-        // "Просмотрел"  
-        var watchedButton = $('<li class="menu__item selector">' +   
-            '<div class="menu__ico">' + watch_icon + '</div>' +   
-            '<div class="menu__text">Просмотрел</div>' +   
-            '</li>');  
-        
-        watchedButton.on('hover:enter', function () {  
-            Lampa.Activity.push({  
-                url: '',  
-                title: 'Просмотрел (MyShows)',  
-                component: 'myshows_watched',  
-                page: 1  
-            });  
-        });  
-        
-        // "Бросил смотреть"  
-        var cancelledButton = $('<li class="menu__item selector">' +   
-            '<div class="menu__ico">' + cancelled_icon + '</div>' +   
-            '<div class="menu__text">Бросил смотреть</div>' +   
-            '</li>');  
-        
-        cancelledButton.on('hover:enter', function () {  
-            Lampa.Activity.push({  
-                url: '',  
-                title: 'Бросил смотреть (MyShows)',  
-                component: 'myshows_cancelled',  
-                page: 1  
-            });  
-        });  
-        
-        // Добавляем кнопки в меню  
-        $('.menu .menu__list').eq(0).append(watchlistButton);  
-        $('.menu .menu__list').eq(0).append(watchedButton);  
-        $('.menu .menu__list').eq(0).append(cancelledButton);  
+        $('.menu .menu__list').eq(0).append(allButton);  
     }
 
     //
