@@ -659,7 +659,7 @@
 
         // Очищаем кешированные данные для текущего профиля
         cachedShuffledItems = {};
-        
+
         // Обновляем значения в UI, если настройки открыты
         setTimeout(function() {
         var settingsPanel = document.querySelector('[data-component="myshows"]');
@@ -3841,7 +3841,7 @@
                         updateButtonStates('remove', false, false);
                     }
 
-                    if (getProfileSetting('myshows_button_view', true)) {
+                    if (getProfileSetting('myshows_button_view', true) && getProfileSetting('myshows_token', false)) {
                         createMyShowsButtons(e, cachedStatus, false);
                     }
                 });
@@ -3874,7 +3874,7 @@
                         updateButtonStates('remove', true, false); 
                     }  
 
-                    if (getProfileSetting('myshows_button_view', true)) {    
+                    if (getProfileSetting('myshows_button_view', true) && getProfileSetting('myshows_token', false)) {
                         createMyShowsButtons(e, cachedStatus, true);   
                     }
                 });  
