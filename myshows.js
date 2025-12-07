@@ -1633,6 +1633,7 @@
                     if (movieId) {
                         checkMovieMyShows(movieId, function(success) {
                             if (success) {
+                                cachedShuffledItems = {}; 
                                 fetchStatusMovies(function(data) {})
                             }
                         });
@@ -1680,6 +1681,7 @@
         if (hash === firstEpisodeHash && percent >= addThreshold) {    
  
             setMyShowsStatus(card, 'watching', function(success) {
+                cachedShuffledItems = {}; 
                 // Обновляем кеш только если НЕ достигнут minProgress    
                 if (success && percent < minProgress) {
                     fetchFromMyShowsAPI(function(data) {});
