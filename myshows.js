@@ -924,6 +924,9 @@
                 // var success = !data.error;  
                 
                 if (success && data && data.result) {  
+                    // Сбрасываем кеш
+                    cachedShuffledItems = {};
+                    
                     // Обновляем кэш при успешном изменении статуса   
                     fetchShowStatus(function(data) {})
                     fetchFromMyShowsAPI(function(data) {})
@@ -1138,6 +1141,9 @@
             }, function(success, data) {  
                 
                 if (success && data && data.result) {  
+                    // Сбрасываем кеш 
+                    cachedShuffledItems = {};
+
                     // Обновляем кэш фильмов при успешном изменении статуса  
                     fetchStatusMovies(function(data) {})
                     
