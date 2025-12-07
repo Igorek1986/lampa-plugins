@@ -660,6 +660,52 @@
         // Очищаем кешированные данные для текущего профиля
         cachedShuffledItems = {};
 
+        // Проверяем текущую активность - если мы в MyShows, но в новом профиле нет токена
+        var currentActivity = Lampa.Activity.active();
+        var newToken = getProfileSetting('myshows_token', '');
+        
+        // Если мы находимся в компоненте MyShows и в новом профиле нет токена
+        if (currentActivity && 
+            currentActivity.component && 
+            currentActivity.component.indexOf('myshows_') === 0 && 
+            !newToken) {
+            
+            Log.info('Switched from MyShows to profile without token, redirecting to start page');
+            
+            // Получаем тип стартовой страницы  
+            var start_from = Lampa.Storage.field("start_page");  
+            Log.info('start_from:', start_from);
+            
+            // Получаем сохраненную активность  
+            var active = Lampa.Storage.get('activity','false');  
+            Log.info('active:', active);
+            
+            // Определяем параметры на основе настроек  
+            var startParams;  
+            
+            if(window.start_deep_link){  
+                startParams = window.start_deep_link;  
+            } else if(active && start_from === "last"){  
+                startParams = active;  
+            } else {  
+                // По умолчанию главная страница  
+                startParams = {  
+                    url: '',  
+                    title: Lang.translate('title_main') + ' - ' + Storage.field('source').toUpperCase(),  
+                    component: 'main',  
+                    source: Storage.field('source'),  
+                    page: 1  
+                };  
+            }
+            Log.info('startParams:', startParams);
+            
+            // Перенаправляем на стартовую страницу с небольшой задержкой
+            setTimeout(function() {
+                Lampa.Activity.replace(startParams);
+                Lampa.Noty.show('Профиль изменен. Нет данных MyShows в этом профиле');
+            }, 1000);
+        }
+        
         // Обновляем значения в UI, если настройки открыты
         setTimeout(function() {
         var settingsPanel = document.querySelector('[data-component="myshows"]');
