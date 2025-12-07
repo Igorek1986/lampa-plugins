@@ -656,6 +656,9 @@
     function handleProfileChange() {
         // Пересоздаем настройки для нового профиля
         initSettings();
+
+        // Очищаем кешированные данные для текущего профиля
+        cachedShuffledItems = {};
         
         // Обновляем значения в UI, если настройки открыты
         setTimeout(function() {
@@ -4122,11 +4125,6 @@
    
     // Регистрируем компоненты      
     function addMyShowsComponents() {  
-        var token = getProfileSetting('myshows_token', '');  
-        
-        if (!token) {  
-            return;  
-        }  
         
         Lampa.Component.add('myshows_all', function(object) {  
             var comp = Lampa.Maker.make('Main', object);  
@@ -4134,6 +4132,15 @@
             comp.use({  
                 onCreate: function() {  
                     this.activity.loader(true);  
+                    
+                    var token = getProfileSetting('myshows_token', '');  
+                    
+                    // Проверяем токен только при создании компонента
+                    if (!token) {  
+                        this.empty();  
+                        this.activity.loader(false);  
+                        return;  
+                    }  
                     
                     var allData = {};  
                     var loaded = 0;  
@@ -4146,7 +4153,7 @@
                         }  
                     }  
                     
-                    Api.myshowsWatchlist({page: 0}, function(result) { // page: 0 означает "все данные"  
+                    Api.myshowsWatchlist({page: 0}, function(result) {  
                         allData.watchlist = result;  
                         checkComplete.call(this);  
                     }.bind(this));  
@@ -4300,6 +4307,15 @@
                 onCreate: function() {    
                     this.activity.loader(true);    
                     
+                    var token = getProfileSetting('myshows_token', '');  
+                    
+                    // Проверяем токен только при создании компонента
+                    if (!token) {  
+                        this.empty();  
+                        this.activity.loader(false);  
+                        return;  
+                    }  
+                    
                     Api.myshowsWatchlist(object, function(result) {    
                         this.build(Lampa.Utils.addSource(result, 'myshows'));    
                     }.bind(this), function(error) {    
@@ -4336,7 +4352,6 @@
         
         // myshows_watched  
         Lampa.Component.add('myshows_watched', function(object) {  
- 
             var comp = Lampa.Maker.make('Category', object, function(module) { 
                 return module.toggle(module.MASK.base, 'Pagination');  
             }); 
@@ -4344,6 +4359,15 @@
             comp.use({  
                 onCreate: function() {  
                     this.activity.loader(true);  
+                    
+                    var token = getProfileSetting('myshows_token', '');  
+                    
+                    // Проверяем токен только при создании компонента
+                    if (!token) {  
+                        this.empty();  
+                        this.activity.loader(false);  
+                        return;  
+                    }  
                     
                     // НЕ перезаписывайте page - используйте переданный параметр  
                     Api.myshowsWatched(object, function(result) {  
@@ -4389,6 +4413,15 @@
             comp.use({    
                 onCreate: function() {    
                     this.activity.loader(true);    
+                    
+                    var token = getProfileSetting('myshows_token', '');  
+                    
+                    // Проверяем токен только при создании компонента
+                    if (!token) {  
+                        this.empty();  
+                        this.activity.loader(false);  
+                        return;  
+                    }  
                     
                     Api.myshowsCancelled(object, function(result) {    
                         this.build(Lampa.Utils.addSource(result, 'myshows'));    
@@ -4505,20 +4538,50 @@
     }
 
     function addMyShowsMenuItems() {  
-        var allButton = $('<li class="menu__item selector">' +  
-            '<div class="menu__ico">' + myshows_icon + '</div>' +  
-            '<div class="menu__text">MyShows</div>' +  
-            '</li>');  
+        // Функция обновления пункта меню
+        function updateMyShowsMenuItem() {
+            var token = getProfileSetting('myshows_token', '');  
+            var menuItem = $('.menu__item.selector .menu__text:contains("MyShows")').closest('.menu__item');
+            
+            // Если токен есть, добавляем кнопку (если её ещё нет)
+            if (token) {
+                if (menuItem.length === 0) {
+                    var allButton = $('<li class="menu__item selector">' +  
+                        '<div class="menu__ico">' + myshows_icon + '</div>' +  
+                        '<div class="menu__text">MyShows</div>' +  
+                        '</li>');  
+                    
+                    allButton.on('hover:enter', function() {  
+                        Lampa.Activity.push({  
+                            url: '',  
+                            title: 'MyShows',  
+                            component: 'myshows_all',  
+                        });  
+                    });  
+                    
+                    $('.menu .menu__list').eq(0).append(allButton);  
+                    Log.info('MyShows menu item added for profile');
+                }
+            } 
+            // Если токена нет, удаляем кнопку
+            else {
+                if (menuItem.length > 0) {
+                    menuItem.remove();
+                    Log.info('MyShows menu item removed for profile');
+                }
+            }
+        }
         
-        allButton.on('hover:enter', function() {  
-            Lampa.Activity.push({  
-                url: '',  
-                title: 'MyShows',  
-                component: 'myshows_all',  
-            });  
-        });  
+        // Инициализация
+        updateMyShowsMenuItem();
         
-        $('.menu .menu__list').eq(0).append(allButton);  
+        // Слушаем изменения профиля для обновления меню
+        Lampa.Listener.follow('profile', function(e) {
+            if (e.type === 'changed') {
+                Log.info('Profile changed, updating MyShows menu');
+                setTimeout(updateMyShowsMenuItem, 100);
+            }
+        });
     }
 
     //
