@@ -1821,6 +1821,7 @@
                     existingCard.card_data = existingCard.card_data || {};  
                     existingCard.card_data.progress_marker = newShowsMap[newKey].progress_marker;  
                     existingCard.card_data.next_episode = newShowsMap[newKey].next_episode;  
+                    existingCard.card_data.remaining = newShowsMap[newKey].remaining;
                     addProgressMarkerToCard(existingCard, existingCard.card_data);  
                 }  
             }  
@@ -1843,7 +1844,7 @@
                 if (oldShow.progress_marker !== newShow.progress_marker ||   
                     oldShow.next_episode !== newShow.next_episode) {  
                     Log.info('Updating show:', key);  
-                    updateAllMyShowsCards(key, newShow.progress_marker, newShow.next_episode);  
+                    updateAllMyShowsCards(key, newShow.progress_marker, newShow.next_episode, newShow.remaining);  
                 }  
             }  
         }  
@@ -1853,7 +1854,8 @@
         var enriched = Object.assign({}, fullResponse);  
         
         if (myshowsData) {  
-            enriched.progress_marker = myshowsData.progress_marker;  // ✅ Сохраняем маркер  
+            enriched.progress_marker = myshowsData.progress_marker;  
+            enriched.remaining = myshowsData.remaining;  
             enriched.watched_count = myshowsData.watched_count;  
             enriched.total_count = myshowsData.total_count;  
             enriched.released_count = myshowsData.released_count;  
@@ -2046,6 +2048,7 @@
 
     function appendEnriched(fullResponse, foundShow, currentShow, totalEpisodes, releasedEpisodes, index, status) {  
         var watchedEpisodes = Math.max(0, releasedEpisodes - currentShow.unwatchedCount);  
+        var remainingEpisodes = releasedEpisodes - watchedEpisodes;
         
         // ✅ Находим следующую непросмотренную серию  
         var nextEpisode = null;  
@@ -2069,6 +2072,7 @@
     
         var myshowsData = {  
             progress_marker: watchedEpisodes + '/' + totalEpisodes,  
+            remaining: remainingEpisodes,
             watched_count: watchedEpisodes,  
             total_count: totalEpisodes,  
             released_count: releasedEpisodes,  
@@ -2133,10 +2137,11 @@
         }, 250);  
     }
 
-    function updateAllMyShowsCards(showName, newProgressMarker, newNextEpisode) {  
+    function updateAllMyShowsCards(showName, newProgressMarker, newNextEpisode, newRemainingMarker) {  
         Log.info('updateAllMyShowsCards called:', {  
             showName: showName,  
             progress: newProgressMarker,  
+            remaining: newRemainingMarker,
             nextEpisode: newNextEpisode,  
             nextEpisodeType: typeof newNextEpisode  
         });  
@@ -2160,6 +2165,9 @@
                 if (newNextEpisode && typeof newNextEpisode === 'string') {  
                     cardData.next_episode = newNextEpisode;  
                 }  
+                if (newRemainingMarker) {
+                    cardData.remaining = newRemainingMarker;
+                }
                 
                 // ✅ Подписываемся на события (если ещё не подписаны)  
                 if (!cardElement.dataset.myshowsListeners) {  
@@ -2235,9 +2243,9 @@
                                         return (show.original_name || show.name || show.title) === originalName;  
                                     });  
                                     
-                                    if (foundShow && (foundShow.progress_marker || foundShow.next_episode)) {  
+                                    if (foundShow && (foundShow.progress_marker || foundShow.next_episode || foundShow.remaining)) {  
                                         Log.info('Updating markers on full page');  
-                                        updateMarkersOnFullCard(foundShow.progress_marker, foundShow.next_episode);  
+                                        updateMarkersOnFullCard(foundShow.progress_marker, foundShow.next_episode, foundShow.remaining);  
                                     }  
                                 }  
                             });
@@ -2314,7 +2322,8 @@
                                     updateAllMyShowsCards(  
                                         originalName,   
                                         foundShow.progress_marker,   
-                                        foundShow.next_episode  
+                                        foundShow.next_episode,
+                                        foundShow.remaining   
                                     ); 
                                 } else if (!existingCard) {  
                                     insertNewCardIntoMyShowsSection(foundShow);  
@@ -2338,7 +2347,7 @@
                         
                         if (foundShow && foundShow.progress_marker) {  
                             // Обновляем UI  
-                            updateAllMyShowsCards(originalName, foundShow.progress_marker, foundShow.next_episode);
+                            updateAllMyShowsCards(originalName, foundShow.progress_marker, foundShow.next_episode, foundShow.remaining);
                         }
                     }  
                 });  
@@ -2375,7 +2384,7 @@
         if (!posterElement.length) return;  
         
         // Удаляем старые маркеры, если есть  
-        posterElement.find('.myshows-progress, .myshows-next-episode').remove();  
+        posterElement.find('.myshows-progress, .myshows-next-episode', '.myshows-remaining').remove();  
         
         // Добавляем маркер прогресса  
         if (showData.progress_marker) {  
@@ -2383,6 +2392,14 @@
             progressMarker.className = 'myshows-progress';  
             progressMarker.textContent = showData.progress_marker;  
             posterElement.append(progressMarker);  
+        }  
+
+        // Добавляем маркер оставшиеся  
+        if (showData.remaining) {  
+            var remainingMarker = document.createElement('div');  
+            remainingMarker.className = 'myshows-remaining';  
+            remainingMarker.textContent = showData.remaining;  
+            posterElement.append(remainingMarker);  
         }  
         
         // Добавляем маркер следующей серии  
@@ -2394,7 +2411,7 @@
         }  
     }
 
-    function updateMarkersOnFullCard(progressMarker, nextEpisode) {  
+    function updateMarkersOnFullCard(progressMarker, nextEpisode, remainingMarker) {  
         Log.info('updateMarkersOnFullCard called');  
         
         var posterElement = $('.full-start-new__poster');  
@@ -2405,7 +2422,7 @@
         }  
         
         // Удаляем старые маркеры  
-        posterElement.find('.myshows-progress, .myshows-next-episode').remove();  
+        posterElement.find('.myshows-progress, .myshows-next-episode', '.myshows-remaining').remove();  
         
         // Добавляем маркер прогресса с анимацией  
         if (progressMarker) {  
@@ -2423,6 +2440,24 @@
             }, 50);  
             
             Log.info('Progress marker added:', progressMarker);  
+        }  
+
+        // Добавляем маркер оставшихся с анимацией  
+        if (remainingMarker) {  
+            var remainingDiv = document.createElement('div');  
+            remainingDiv.className = 'myshows-remaining';  
+            remainingDiv.textContent = remainingMarker;  
+            posterElement.append(remainingDiv);  
+            
+            // ✅ Добавляем анимацию  
+            setTimeout(function() {  
+                remainingDiv.classList.add('marker-update');  
+                setTimeout(function() {  
+                    remainingDiv.classList.remove('marker-update');  
+                }, 300);  
+            }, 50);  
+            
+            Log.info('Progress marker added:', remainingMarker);  
         }  
         
         // Добавляем маркер следующей серии с анимацией  
@@ -2576,6 +2611,7 @@
         Log.info('insertNewCardIntoMyShowsSection called with:', {  
             name: showData.name || showData.title,  
             progress_marker: showData.progress_marker,  
+            remaining: showData.remaining, 
             next_episode: showData.next_episode  
         });  
         
@@ -2661,6 +2697,7 @@
                 // ✅ Сохраняем кастомные данные  
                 cardElement.card_data = cardElement.card_data || {};  
                 cardElement.card_data.progress_marker = showData.progress_marker;  
+                cardElement.card_data.remaining = showData.remaining;
                 cardElement.card_data.next_episode = showData.next_episode;  
                 cardElement.card_data.watched_count = showData.watched_count;  
                 cardElement.card_data.total_count = showData.total_count;  
@@ -2709,6 +2746,20 @@
                 z-index: 2;    
                 box-shadow: 0 2px 8px rgba(0,0,0,0.15);    
                 background: #4CAF50;    
+                color: #fff;  
+                transition: all 0.3s ease;  /* ✅ Добавьте transition */  
+            }    
+
+            .myshows-remaining {    
+                position: absolute;    
+                right: 0em;    
+                top: 0em;    
+                padding: 0.2em 0.4em;    
+                font-size: 1.2em;    
+                border-radius: 1em;    
+                font-weight: bold;    
+                z-index: 2;      
+                background: rgba(0, 0, 0, 0.5);    
                 color: #fff;  
                 transition: all 0.3s ease;  /* ✅ Добавьте transition */  
             }    
@@ -4701,7 +4752,7 @@
                 var cardData = cardElement.card_data;  
                 
                 // Проверяем наличие кастомных данных MyShows  
-                if (cardData && (cardData.progress_marker || cardData.next_episode)) {  
+                if (cardData && (cardData.progress_marker || cardData.next_episode || cardData.remaining)) {  
                     Log.info('Card visible, adding markers:', cardData.original_title || cardData.title);  
                     addProgressMarkerToCard(cardElement, cardData);  
                 }  
@@ -4714,7 +4765,7 @@
                 var cards = document.querySelectorAll('.card');  
                 cards.forEach(function(cardElement) {  
                     var cardData = cardElement.card_data;  
-                    if (cardData && (cardData.progress_marker || cardData.next_episode)) {  
+                    if (cardData && (cardData.progress_marker || cardData.next_episode || cardData.remaining)) {  
                         addProgressMarkerToCard(cardElement, cardData);  
                     }  
                 });  
@@ -4758,6 +4809,27 @@
                 progressMarker.className = 'myshows-progress';  
                 progressMarker.textContent = cardData.progress_marker;  
                 cardView.appendChild(progressMarker);  
+            }  
+        }  
+
+        // ✅ Маркер оставшихся серии  
+        if (cardData.remaining) {  
+            var remainingMarker = cardView.querySelector('.myshows-remaining');  
+            
+            if (remainingMarker) {  
+                if (remainingMarker.textContent !== cardData.remaining) {  
+                    remainingMarker.classList.add('marker-update');  
+                    remainingMarker.textContent = cardData.remaining;  
+                    
+                    setTimeout(function() {  
+                        remainingMarker.classList.remove('marker-update');  
+                    }, 300);  
+                }  
+            } else {  
+                remainingMarker = document.createElement('div');  
+                remainingMarker.className = 'myshows-remaining';  
+                remainingMarker.textContent = cardData.remaining;  
+                cardView.appendChild(remainingMarker);  
             }  
         }  
         
