@@ -31,7 +31,8 @@
         '}',    
         '.card__status {',    
         '    position: absolute;',    
-        '    right: -0.8em;',    
+        '    left: 0;',    
+        '    top: 2.8em;',      
         '    padding: 0.2em 0.8em;',    
         '    font-size: 0.9em;',    
         '    border-radius: 0.5em;',    
@@ -57,10 +58,7 @@
         '.card__status[data-status="canceled"] {',    
         '    background: #FFC107;',    
         '    color: #222;',    
-        '}',    
-        '.card__type + .card__status, .card__status + .card__type {',    
-        '    top: 0.8em;',    
-        '}'    
+        '}',     
     ].join('\n');    
     document.head.appendChild(style);    
     log('CSS styles injected');    
