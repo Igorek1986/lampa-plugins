@@ -886,8 +886,11 @@
     }  
 
     function getShowIdByOriginalTitle(title, year, callback) {  
-        makeMyShowsJSONRPCRequest('shows.Search', {  
-            "query": title  
+        makeMyShowsJSONRPCRequest('shows.GetCatalog', {  
+            search: { 
+                "query": title,
+                "year": parseInt(year)
+            }  
         }, function(success, data) {  
             if (success && data && data.result) {  
                 getShowCandidates(data.result, title, year, function(candidates) {  
@@ -902,9 +905,10 @@
     // Поиск по оригинальному названию
     function getMovieIdByOriginalTitle(title, year, callback) {
         makeMyShowsJSONRPCRequest('movies.GetCatalog', {
-                search: { "query": title },
-                page: 0,
-                pageSize: 50
+                search: { 
+                    "query": title,
+                    "year": parseInt(year)
+                }
         }, function(success, data) {
             if (success && data && data.result) {
                 getMovieCandidates(data.result, title, year, function(candidates) {
@@ -1226,6 +1230,15 @@
         })
     }
 
+    function normalizeForComparison(str) {
+        if (!str) return '';
+        return str
+            .toLowerCase()
+            .normalize('NFD')  // декомпозиция: é → e +  ́
+            .replace(/[\u0300-\u036f]/g, '')  // удаляем все комбинирующие знаки
+            .trim();
+    }
+
     function getMovieCandidates(data, title, year, callback) {
         var candidates = [];
         for (var i = 0; i < data.length; ++i) {
@@ -1234,7 +1247,7 @@
                 if (!movie) {
                     continue
                 }
-                var titleMatch = movie.titleOriginal && movie.titleOriginal.toLowerCase() === title.toLowerCase();
+                var titleMatch = movie.titleOriginal && normalizeForComparison(movie.titleOriginal.toLowerCase()) === normalizeForComparison(title.toLowerCase());
                 var yearMatch = movie.year == year;
 
                 if (titleMatch && yearMatch) {
