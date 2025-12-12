@@ -593,51 +593,63 @@
             }  
         });  
 
-        if (isLampac && tokenValue) {
-            Log.info('Adding Sync button to Lampac settings');
-            Lampa.SettingsApi.addParam({  
-                component: 'myshows', // Ваш компонент настроек  
-                param: {  
-                    type: 'button'  
-                },  
-                field: {  
-                    name: 'Синхронизация с Lampac'  
-                },  
-                onChange: function() {  
-                    Lampa.Select.show({  
-                        title: 'Синхронизация MyShows',  
-                        items: [  
-                            {  
-                                title: 'Синхронизировать',  
-                                subtitle: 'Добавить просмотренные фильмы и сериалы в историю Lampa. (Требуется модуль TimecodeUser)',  
-                                confirm: true  
+        var xhr = new XMLHttpRequest();  
+        xhr.open('GET', '/timecode/batch_add', true);  
+        
+        xhr.onload = function() {  
+            var isEnabled = xhr.status !== 404;  
+            Log.info('✅ Модуль TimecodeUser ' + (isEnabled ? 'установлен' : 'не установлен'));  
+            
+            // Сразу добавляем настройки если модуль включен  
+            if (isEnabled && isLampac && tokenValue) {  
+                Lampa.SettingsApi.addParam({  
+                    component: 'myshows',  
+                    param: {  
+                        type: 'button'  
+                    },  
+                    field: {  
+                        name: 'Синхронизация с Lampac'  
+                    },  
+                    onChange: function() {  
+                        Lampa.Select.show({  
+                            title: 'Синхронизация MyShows',  
+                            items: [  
+                                {  
+                                    title: 'Синхронизировать',  
+                                    subtitle: 'Добавить просмотренные фильмы и сериалы в историю Lampa. (Требуется модуль TimecodeUser)',  
+                                    confirm: true  
+                                },  
+                                {  
+                                    title: 'Отмена'  
+                                }  
+                            ],  
+                            onSelect: function(item) {  
+                                if (item.confirm) {  
+                                    Lampa.Noty.show('Начинаем синхронизацию...');  
+                                    syncMyShows(function(success, message) {  
+                                        if (success) {  
+                                            Lampa.Noty.show(message);  
+                                        } else {  
+                                            Lampa.Noty.show('Ошибка: ' + message);  
+                                        }  
+                                    });  
+                                }  
+                                Lampa.Controller.toggle('settings_component');  
                             },  
-                            {  
-                                title: 'Отмена'  
+                            onBack: function() {  
+                                Lampa.Controller.toggle('settings_component');  
                             }  
-                        ],  
-                        onSelect: function(item) {  
-                            if (item.confirm) {  
-                                Lampa.Noty.show('Начинаем синхронизацию...');  
-                                
-                                syncMyShows(function(success, message) {  
-                                    if (success) {  
-                                        Lampa.Noty.show(message);  
-                                    } else {  
-                                        Lampa.Noty.show('Ошибка: ' + message);  
-                                    }  
-                                });  
-                            }  
-                            
-                            Lampa.Controller.toggle('settings_component');  
-                        },  
-                        onBack: function() {  
-                            Lampa.Controller.toggle('settings_component');  
-                        }  
-                    });  
-                }  
-            });
-        }
+                        });  
+                    }  
+                });  
+            }  
+        };  
+        
+        xhr.onerror = function(e) {  
+            Log.info('❌ Ошибка проверки модуля: ' + e.type);  
+        }; 
+        
+        xhr.send();  
 
         if (!tokenValue) {  
             Lampa.SettingsApi.addParam({    
