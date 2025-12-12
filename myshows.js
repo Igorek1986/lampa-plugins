@@ -2024,7 +2024,7 @@
     }
 
     function fetchSeasonDetails(foundShow, fullResponse, currentShow, totalEpisodes, lastSeason, index, status) {
-            var targetSeason = lastSeason;  
+        var targetSeason = lastSeason;  
         if (currentShow.unwatchedEpisodes && currentShow.unwatchedEpisodes.length > 0) {  
             targetSeason = currentShow.unwatchedEpisodes[0].seasonNumber;  
         }  
@@ -2045,7 +2045,18 @@
         var seasonNetwork = new Lampa.Reguest();
         seasonNetwork.silent(Lampa.TMDB.api(seasonUrl), function (seasonResponse) {
             var releasedEpisodes = getReleasedEpisodesCount(seasonResponse, currentShow, totalEpisodes);
-            appendEnriched(fullResponse, foundShow, currentShow, totalEpisodes, releasedEpisodes, index, status);
+
+            var futureEpisodesCount = 0;
+            if (targetSeason < lastSeason) {
+
+                futureEpisodesCount = getFutureSeasonsEpisodesCount(fullResponse, targetSeason, lastSeason);
+                Log.info('Найдено будущих эпизодов:', futureEpisodesCount, 
+                        '(сезоны с', targetSeason + 1, 'по', lastSeason, ')');
+            }
+
+            var finalReleasedEpisodes = releasedEpisodes - futureEpisodesCount;
+        
+            appendEnriched(fullResponse, foundShow, currentShow, totalEpisodes, finalReleasedEpisodes, index, status);
         }, function () {
             appendEnriched(fullResponse, foundShow, currentShow, totalEpisodes, totalEpisodes, index, status);
         });
@@ -2069,6 +2080,24 @@
         }, 0);
 
         return totalEpisodes - unreleased;
+    }
+
+    function getFutureSeasonsEpisodesCount(fullResponse, fromSeason, toSeason) {
+        var futureEpisodes = 0;
+        
+        for (var seasonNumber = fromSeason + 1; seasonNumber <= toSeason; seasonNumber++) {
+            var season = fullResponse.seasons.find(function(s) {
+                return s.season_number === seasonNumber;
+            });
+            
+            if (season && season.episode_count > 0) {
+                futureEpisodes += season.episode_count;
+                Log.info('Будущий сезон', seasonNumber, 
+                        'имеет', season.episode_count, 'эпизодов');
+            }
+        }
+        
+        return futureEpisodes;
     }
 
     function appendEnriched(fullResponse, foundShow, currentShow, totalEpisodes, releasedEpisodes, index, status) {  
@@ -2096,7 +2125,7 @@
         }  
     
         var myshowsData = {  
-            progress_marker: watchedEpisodes + '/' + totalEpisodes,  
+            progress_marker: watchedEpisodes + '/' + releasedEpisodes,  
             remaining: remainingEpisodes,
             watched_count: watchedEpisodes,  
             total_count: totalEpisodes,  
