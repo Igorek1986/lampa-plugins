@@ -2343,7 +2343,7 @@
             }  
         }  
         
-        if (event.type === 'archive' && (event.component === 'main' || event.component === 'category')) {  
+        if (event.type === 'archive' && (event.component === 'main' || event.component === 'category' || event.component === 'myshows_all')) {  
             var lastCard = Lampa.Storage.get('myshows_last_card', null);  
             var currentCard = Lampa.Storage.get('myshows_current_card', null);  
             var wasWatching = Lampa.Storage.get('myshows_was_watching', false);  
