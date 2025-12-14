@@ -3017,7 +3017,7 @@
             var isActive = currentStatus === buttonData.status;
             var activeClass = isActive ? ' myshows-active' : '';
             
-            var btn = $('<div class="full-start__button selector ' + buttonClass + activeClass + '">' +
+            var btn = $('<div class="full-start__button selector myshows-btn ' + buttonClass + activeClass + '">' +
                 buttonIcon +
                 '<span>' + buttonData.title + '</span>' +
                 '</div>');
@@ -3038,6 +3038,12 @@
                     }
                 });
             });
+            
+            if (!isMovie) {
+                e.object.activity.render()
+                    .find('.full-start-new__buttons')
+                    .addClass('myshows-btn-series');
+            }
             
             e.object.activity.render().find('.full-start-new__buttons').append(btn);
         });
@@ -3102,46 +3108,77 @@
     }
 
     function addMyShowsButtonStyles() {  
-        var style = document.createElement('style');  
-        style.textContent = `  
-            /* Общие transition для всех кнопок */  
-            .full-start__button[class*="myshows-"] svg {  
-                transition: color 0.5s ease, filter 0.5s ease;  
-            }  
-            
-            /* СЕРИАЛЫ */  
-            .full-start__button.myshows-watching.myshows-active svg {  
-                color: #FFC107;  
-                filter: drop-shadow(0 0 3px rgba(255, 193, 7, 0.8));  
-            }  
-            .full-start__button.myshows-scheduled.myshows-active svg {  
-                color: #2196F3;  
-                filter: drop-shadow(0 0 3px rgba(33, 150, 243, 0.8));  
-            }  
-            .full-start__button.myshows-thrown.myshows-active svg {  
-                color: #FF9800;  
-                filter: drop-shadow(0 0 3px rgba(255, 152, 0, 0.8));  
-            }  
-            .full-start__button.myshows-cancelled.myshows-active svg {  
-                color: #F44336;  
-                filter: drop-shadow(0 0 3px rgba(244, 67, 54, 0.8));  
-            }  
-            
-            /* ФИЛЬМЫ */  
-            .full-start__button.myshows-movie-watched.myshows-active svg {  
-                color: #4CAF50;  
-                filter: drop-shadow(0 0 3px rgba(76, 175, 80, 0.8));  
-            }  
-            .full-start__button.myshows-movie-later.myshows-active svg {  
-                color: #2196F3;  
-                filter: drop-shadow(0 0 3px rgba(33, 150, 243, 0.8));  
-            }  
-            .full-start__button.myshows-movie-remove.myshows-active svg {  
-                color: #F44336;  
-                filter: drop-shadow(0 0 3px rgba(244, 67, 54, 0.8));  
-            }  
-        `;  
-        document.head.appendChild(style);  
+        if (getProfileSetting('myshows_button_view', true) && getProfileSetting('myshows_token', false)) {
+
+            var style = document.createElement('style');  
+            style.textContent = `  
+                /* Общие transition для всех кнопок */  
+                .full-start__button[class*="myshows-"] svg {  
+                    transition: color 0.5s ease, filter 0.5s ease;  
+                }  
+                
+                /* СЕРИАЛЫ */  
+                .full-start__button.myshows-watching.myshows-active svg {  
+                    color: #FFC107;  
+                    filter: drop-shadow(0 0 3px rgba(255, 193, 7, 0.8));  
+                }  
+                .full-start__button.myshows-scheduled.myshows-active svg {  
+                    color: #2196F3;  
+                    filter: drop-shadow(0 0 3px rgba(33, 150, 243, 0.8));  
+                }  
+                .full-start__button.myshows-thrown.myshows-active svg {  
+                    color: #FF9800;  
+                    filter: drop-shadow(0 0 3px rgba(255, 152, 0, 0.8));  
+                }  
+                .full-start__button.myshows-cancelled.myshows-active svg {  
+                    color: #F44336;  
+                    filter: drop-shadow(0 0 3px rgba(244, 67, 54, 0.8));  
+                }  
+                
+                /* ФИЛЬМЫ */  
+                .full-start__button.myshows-movie-watched.myshows-active svg {  
+                    color: #4CAF50;  
+                    filter: drop-shadow(0 0 3px rgba(76, 175, 80, 0.8));  
+                }  
+                .full-start__button.myshows-movie-later.myshows-active svg {  
+                    color: #2196F3;  
+                    filter: drop-shadow(0 0 3px rgba(33, 150, 243, 0.8));  
+                }  
+                .full-start__button.myshows-movie-remove.myshows-active svg {  
+                    color: #F44336;  
+                    filter: drop-shadow(0 0 3px rgba(244, 67, 54, 0.8));  
+                }  
+
+                /* Дополнительно: медиа-запрос для телефонов по ширине экрана */  
+                @media screen and (max-width: 580px) {
+
+                    /* по умолчанию (фильмы) */
+                    .full-start-new__buttons {
+                        flex-wrap: nowrap;
+                    }
+
+                    /* только если есть сериалы */
+                    .full-start-new__buttons.myshows-btn-series {
+                        flex-wrap: wrap;
+                    }
+
+                    /* разрыв строки */
+                    .full-start-new__buttons.myshows-btn-series::after {
+                        content: '';
+                        flex-basis: 100%;
+                        width: 100%;
+                        order: 1;
+                        margin-bottom: 0.75em;
+                    }
+
+                    /* кнопки сериалов идут вниз */
+                    .full-start-new__buttons.myshows-btn-series .myshows-btn {
+                        order: 2;
+                    }
+                }
+            `;  
+            document.head.appendChild(style);  
+        }
     }
 
     function getStatusByTitle(title, isMovie, callback) {
