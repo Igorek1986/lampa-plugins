@@ -4,7 +4,6 @@
     var DEFAULT_ADD_THRESHOLD = '0';  
     var DEFAULT_MIN_PROGRESS = 90;    
     var API_URL = 'https://api.myshows.me/v3/rpc/';
-    var isInitialized = false;  
     var MAP_KEY = 'myshows_hash_map';  
     var PROXY_URL = 'https://numparser.igorek1986.ru/myshows/auth';  
     var DEFAULT_CACHE_DAYS = 30;
@@ -397,16 +396,10 @@
   
     // Инициализация компонента настроек  
     function initSettings() {  
-        if (isInitialized) {    
-            loadProfileSettings();  
-            autoSetupToken();
-
-            return;    
-        }   
 
         try {  
-            if (Lampa.SettingsApi.remove) {  
-            Lampa.SettingsApi.remove('myshows');  
+            if (Lampa.SettingsApi.removeComponent) {  
+                Lampa.SettingsApi.removeComponent('myshows');  
             }  
         } catch (e) {}  
 
@@ -416,7 +409,6 @@
             icon: myshows_icon
         });  
 
-        isInitialized = true;    
         loadProfileSettings();    
         autoSetupToken();
         var tokenValue = getProfileSetting('myshows_token', '');
@@ -665,11 +657,46 @@
         }
     }  
 
+    var originalProfileWaiter = window.__profile_extra_waiter;
+    var myshowsProfileSynced = false; // Флаг синхронизации
+    var currentProfileId = ''; // Текущий ID профиля
+
+    window.__profile_extra_waiter = function() {
+        var synced = myshowsProfileSynced;
+        
+        if (typeof originalProfileWaiter === 'function') {
+            synced = synced && originalProfileWaiter();
+        }
+        
+        return synced;
+    };
+
     function handleProfileChange() {
+        // Сбрасываем флаг синхронизации при смене профиля
+        myshowsProfileSynced = false;
+        
+        // Получаем новый ID профиля
+        var newProfileId = isLampac 
+            ? Lampa.Storage.get('lampac_profile_id', '')
+            : (Lampa.Account.Permit.account && Lampa.Account.Permit.account.profile && Lampa.Account.Permit.account.profile.id 
+            ? '_' + Lampa.Account.Permit.account.profile.id 
+            : '');
+        
+        // Если профиль не изменился, выходим
+        if (currentProfileId === newProfileId) {
+            myshowsProfileSynced = true;
+            return;
+        }
+        
+        // Сохраняем новый ID профиля
+        currentProfileId = newProfileId;
+        
+        Log.info('🔄 Profile changed to:', newProfileId);
+        
         // Пересоздаем настройки для нового профиля
         initSettings();
 
-        // Очищаем кешированные данные для текущего профиля
+        // Очищаем кешированные данные
         cachedShuffledItems = {};
 
         // Проверяем текущую активность - если мы в MyShows, но в новом профиле нет токена
@@ -715,7 +742,28 @@
             setTimeout(function() {
                 Lampa.Activity.replace(startParams);
                 Lampa.Noty.show('Профиль изменен. Нет данных MyShows в этом профиле');
+                myshowsProfileSynced = true; // Синхронизация завершена
             }, 1000);
+        } else {
+            // Если есть токен или мы не в компоненте MyShows
+            // Загружаем данные для нового профиля
+            if (newToken) {
+                // Асинхронно загружаем данные
+                setTimeout(function() {
+                    try {
+                        // Инициализируем кеши для нового профиля
+                        initMyShowsCaches();
+                        Log.info('✅ MyShows data loaded for profile:', newProfileId);
+                    } catch (e) {
+                        Log.error('Error loading MyShows data:', e);
+                    }
+                    myshowsProfileSynced = true; // Синхронизация завершена
+                }, 500);
+            } else {
+                // Нет токена - синхронизация завершена
+                myshowsProfileSynced = true;
+                Log.info('✅ No MyShows token for this profile');
+            }
         }
         
         // Обновляем значения в UI, если настройки открыты
@@ -751,6 +799,19 @@
             if (passwordInput) passwordInput.value = getProfileSetting('myshows_password', '');
         }
         }, 100);
+    }
+
+    function initCurrentProfile() {
+        currentProfileId = isLampac 
+            ? Lampa.Storage.get('lampac_profile_id', '')
+            : (Lampa.Account.Permit.account && Lampa.Account.Permit.account.profile && Lampa.Account.Permit.account.profile.id 
+            ? '_' + Lampa.Account.Permit.account.profile.id 
+            : '');
+        
+        // Устанавливаем флаг синхронизации в true при старте
+        myshowsProfileSynced = true;
+        
+        Log.info('📊 Current profile initialized:', currentProfileId);
     }
 
     // Обновляем UI при смене профиля Lampa
@@ -4783,7 +4844,8 @@
     //
   
     // Инициализация  
-    if (window.appready) {    
+    if (window.appready) {  
+        initCurrentProfile();  
         initSettings();    
         initMyShowsCaches();  
         addMyShowsComponents();
@@ -4797,7 +4859,8 @@
         init();
     } else {    
         Lampa.Listener.follow('app', function (event) {    
-            if (event.type === 'ready') {    
+            if (event.type === 'ready') {   
+                initCurrentProfile(); 
                 initSettings();    
                 initMyShowsCaches();  
                 addMyShowsComponents();
