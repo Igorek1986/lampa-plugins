@@ -17,7 +17,7 @@
     var later_icon = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z" fill="currentColor"/></svg>';
     var remove_icon = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" fill="currentColor"/></svg>';
     var cancelled_icon = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm5 11H7v-2h10v2z" fill="currentColor"/></svg>';
-    var isLampac = window.lampac_plugin || false;
+    var isLampac = Boolean(window.lampac_plugin);
 
 
     function createLogMethod(emoji, consoleMethod) {
@@ -2217,39 +2217,98 @@
 
     };
 
-    function updateCardWithAnimation(cardElement, newText, markerClass) {  
-        if (!cardElement || !markerClass) return;  
+    function updateCardWithAnimation(cardElement, newText, markerClass) {
+        Log.info('>>> updateCardWithAnimation START:', {
+            cardElement: cardElement ? 'found' : 'null',
+            newText: newText,
+            markerClass: markerClass
+        });
         
-        if (typeof newText !== 'string') {  
-            Log.warn('Invalid newText type:', typeof newText, newText);  
-            return;  
-        }  
+        if (!cardElement || !markerClass) {
+            Log.warn('updateCardWithAnimation: missing cardElement or markerClass');
+            return;
+        }
         
-        // ✅ ИСПРАВЛЕНО: Работаем с самим маркером, а не с <span>  
-        var marker = cardElement.querySelector('.' + markerClass);  
-        if (!marker) {  
-            Log.info('Marker not found:', markerClass);  
-            return;  
-        }  
+        if (typeof newText !== 'string') {
+            Log.warn('Invalid newText type:', typeof newText, newText);
+            return;
+        }
         
-        var oldText = marker.textContent;  
-        if (oldText === newText) return;  
+        var marker = cardElement.querySelector('.' + markerClass);
+        if (!marker) {
+            Log.info('Marker not found:', markerClass, 'in card');
+            return;
+        }
         
-        Log.info('Updating marker:', markerClass, 'from', oldText, 'to', newText);  
+        var oldText = marker.textContent || '';
+        Log.info('Old text:', oldText, 'New text:', newText);
         
-        // Добавляем CSS анимацию  
-        marker.style.transition = 'all 0.5s ease';  
-        marker.style.transform = 'scale(1.5)';  
-        marker.style.color = '#FFD700';  
+        if (oldText && oldText === newText) {
+            Log.info('Text unchanged, skipping animation');
+            return;
+        }
         
-        setTimeout(function() {  
-            marker.textContent = newText;  
+        // Новый маркер
+        if (!oldText) {
+            Log.info('New marker created');
+            marker.textContent = newText;
+            marker.classList.add('digit-animating');
+            setTimeout(function() {
+                marker.classList.remove('digit-animating');
+            }, 400);
+            return;
+        }
+        
+        // Определяем тип маркера
+        var markerType = 'progress';
+        if (markerClass === 'myshows-remaining') markerType = 'remaining';
+        else if (markerClass === 'myshows-next-episode') markerType = 'next';
+        
+        // ✅ ПРОГРЕСС (формат "X/Y")
+        if (markerType === 'progress') {
+            var oldParts = oldText.split('/');
+            var newParts = newText.split('/');
             
-            setTimeout(function() {  
-                marker.style.transform = 'scale(1)';  
-                marker.style.color = '';  
-            }, 500);  
-        }, 250);  
+            if (oldParts.length === 2 && newParts.length === 2) {
+                var oldWatched = parseInt(oldParts[0], 10);
+                var newWatched = parseInt(newParts[0], 10);
+                var oldTotal = oldParts[1];
+                var newTotal = newParts[1];
+                
+                if (!isNaN(oldWatched) && !isNaN(newWatched)) {
+                    if (oldTotal === newTotal && oldWatched !== newWatched) {
+                        Log.info('Progress animation:', oldWatched, '→', newWatched);
+                        animateDigitByDigit(marker, oldWatched, newWatched, newTotal);
+                        return;
+                    }
+                }
+            }
+        }
+        // ✅ ОСТАВШИЕСЯ (число)
+        else if (markerType === 'remaining') {
+            var oldRemaining = parseInt(oldText, 10);
+            var newRemaining = parseInt(newText, 10);
+            
+            if (!isNaN(oldRemaining) && !isNaN(newRemaining) && oldRemaining !== newRemaining) {
+                Log.info('Remaining animation:', oldRemaining, '→', newRemaining);
+                animateCounter(marker, oldRemaining, newRemaining, 'remaining');
+                return;
+            }
+        }
+        // ✅ СЛЕДУЮЩАЯ СЕРИЯ
+        else if (markerType === 'next') {
+            Log.info('Next episode animation');
+            animateNextEpisode(marker, oldText, newText);
+            return;
+        }
+        
+        // Простое обновление
+        Log.info('Simple update');
+        marker.textContent = newText;
+        marker.classList.add('digit-animating');
+        setTimeout(function() {
+            marker.classList.remove('digit-animating');
+        }, 400);
     }
 
     function updateAllMyShowsCards(showName, newProgressMarker, newNextEpisode, newRemainingMarker) {  
@@ -2309,6 +2368,44 @@
         });  
     }
     
+    function animateDigitByDigit(container, startNum, endNum, totalEpisodes) {
+        Log.info('animateDigitByDigit:', startNum, '→', endNum, '/', totalEpisodes);
+        
+        if (startNum === endNum) {
+            container.classList.add('digit-animating');
+            setTimeout(function() {
+                container.classList.remove('digit-animating');
+            }, 400);
+            return;
+        }
+        
+        var direction = startNum < endNum ? 'up' : 'down';
+        var current = startNum;
+        var speed = 250;
+        
+        // ✅ Убираем изменение цветов
+        function updateDigit() {
+            container.textContent = current + '/' + totalEpisodes;
+            
+            // Легкая пульсация
+            container.style.transform = 'scale(1.05)';
+            
+            setTimeout(function() {
+                container.style.transform = 'scale(1)';
+                
+                if (direction === 'up' && current < endNum) {
+                    current++;
+                    setTimeout(updateDigit, speed);
+                } else if (direction === 'down' && current > endNum) {
+                    current--;
+                    setTimeout(updateDigit, speed);
+                }
+            }, 80);
+        }
+        
+        updateDigit();
+    }
+
     Lampa.Listener.follow('activity', function(event) {  
 
         Log.info('Activity event:', {  
@@ -2498,31 +2595,101 @@
         
         if (!posterElement.length) return;  
         
-        // Удаляем старые маркеры, если есть  
-        posterElement.find('.myshows-progress, .myshows-next-episode', '.myshows-remaining').remove();  
+        var posterDom = posterElement[0];
         
-        // Добавляем маркер прогресса  
+        // Находим существующие маркеры
+        var existingProgress = posterDom.querySelector('.myshows-progress');
+        var existingRemaining = posterDom.querySelector('.myshows-remaining');
+        var existingNext = posterDom.querySelector('.myshows-next-episode');
+        
+        // ✅ Добавляем маркер прогресса
         if (showData.progress_marker) {  
-            var progressMarker = document.createElement('div');  
-            progressMarker.className = 'myshows-progress';  
-            progressMarker.textContent = showData.progress_marker;  
-            posterElement.append(progressMarker);  
-        }  
+            if (existingProgress) {
+                animateFullCardMarker(existingProgress, showData.progress_marker, 'progress');
+            } else {
+                var progressMarker = document.createElement('div');  
+                progressMarker.className = 'myshows-progress';  
+                progressMarker.textContent = showData.progress_marker;  
+                posterDom.appendChild(progressMarker);  
+                
+                // ✅ Анимация плавного появления
+                setTimeout(function() {  
+                    progressMarker.style.opacity = '0';
+                    progressMarker.style.transform = 'translateY(10px)';
+                    progressMarker.style.transition = 'all 0.4s ease';
+                    
+                    setTimeout(function() {  
+                        progressMarker.style.opacity = '1';
+                        progressMarker.style.transform = 'translateY(0)';
+                    }, 10);
+                    
+                    setTimeout(function() {  
+                        progressMarker.style.transition = '';
+                    }, 410);
+                }, 50);  
+            }
+        } else if (existingProgress) {
+            existingProgress.remove();
+        }
 
-        // Добавляем маркер оставшиеся  
-        if (showData.remaining) {  
-            var remainingMarker = document.createElement('div');  
-            remainingMarker.className = 'myshows-remaining';  
-            remainingMarker.textContent = showData.remaining;  
-            posterElement.append(remainingMarker);  
+        // ✅ Добавляем маркер оставшиеся  
+        if (showData.remaining !== undefined && showData.remaining !== null) {  
+            if (existingRemaining) {
+                animateFullCardMarker(existingRemaining, showData.remaining.toString(), 'remaining');
+            } else {
+                var remainingMarker = document.createElement('div');  
+                remainingMarker.className = 'myshows-remaining';  
+                remainingMarker.textContent = showData.remaining;  
+                posterDom.appendChild(remainingMarker);  
+                
+                // Анимация плавного появления
+                setTimeout(function() {  
+                    remainingMarker.style.opacity = '0';
+                    remainingMarker.style.transform = 'translateY(10px)';
+                    remainingMarker.style.transition = 'all 0.4s ease';
+                    
+                    setTimeout(function() {  
+                        remainingMarker.style.opacity = '1';
+                        remainingMarker.style.transform = 'translateY(0)';
+                    }, 10);
+                    
+                    setTimeout(function() {  
+                        remainingMarker.style.transition = '';
+                    }, 410);
+                }, 50);  
+            }
+        } else if (existingRemaining) {
+            existingRemaining.remove();
         }  
         
-        // Добавляем маркер следующей серии  
+        // ✅ Добавляем маркер следующей серии  
         if (showData.next_episode) {  
-            var nextEpisodeMarker = document.createElement('div');  
-            nextEpisodeMarker.className = 'myshows-next-episode';  
-            nextEpisodeMarker.textContent = showData.next_episode;  
-            posterElement.append(nextEpisodeMarker);  
+            if (existingNext) {
+                animateFullCardMarker(existingNext, showData.next_episode, 'next');
+            } else {
+                var nextEpisodeMarker = document.createElement('div');  
+                nextEpisodeMarker.className = 'myshows-next-episode';  
+                nextEpisodeMarker.textContent = showData.next_episode;  
+                posterDom.appendChild(nextEpisodeMarker);  
+                
+                // Анимация плавного появления
+                setTimeout(function() {  
+                    nextEpisodeMarker.style.opacity = '0';
+                    nextEpisodeMarker.style.transform = 'translateY(10px)';
+                    nextEpisodeMarker.style.transition = 'all 0.4s ease';
+                    
+                    setTimeout(function() {  
+                        nextEpisodeMarker.style.opacity = '1';
+                        nextEpisodeMarker.style.transform = 'translateY(0)';
+                    }, 10);
+                    
+                    setTimeout(function() {  
+                        nextEpisodeMarker.style.transition = '';
+                    }, 410);
+                }, 50);  
+            }
+        } else if (existingNext) {
+            existingNext.remove();
         }  
     }
 
@@ -2536,62 +2703,437 @@
             return;  
         }  
         
-        // Удаляем старые маркеры  
-        posterElement.find('.myshows-progress, .myshows-next-episode', '.myshows-remaining').remove();  
+        var posterDom = posterElement[0];
         
-        // Добавляем маркер прогресса с анимацией  
+        // Находим существующие маркеры
+        var existingProgress = posterDom.querySelector('.myshows-progress');
+        var existingRemaining = posterDom.querySelector('.myshows-remaining');
+        var existingNext = posterDom.querySelector('.myshows-next-episode');
+        
+        // ✅ Добавляем маркер прогресса
         if (progressMarker) {  
-            var progressDiv = document.createElement('div');  
-            progressDiv.className = 'myshows-progress';  
-            progressDiv.textContent = progressMarker;  
-            posterElement.append(progressDiv);  
-            
-            // ✅ Добавляем анимацию  
-            setTimeout(function() {  
-                progressDiv.classList.add('marker-update');  
+            if (existingProgress) {
+                // Если маркер уже есть - анимируем изменение
+                animateFullCardMarker(existingProgress, progressMarker, 'progress');
+                Log.info('Progress marker UPDATED with animation:', progressMarker);  
+            } else {
+                // ✅ ИСПРАВЛЕНО: НОВЫЙ МАРКЕР - анимация появления БЕЗ SCALE
+                var progressDiv = document.createElement('div');  
+                progressDiv.className = 'myshows-progress';  
+                progressDiv.textContent = progressMarker;  
+                posterDom.appendChild(progressDiv);  
+                
+                // ✅ Анимация ПЛАВНОГО ПОЯВЛЕНИЯ (не scale!)
                 setTimeout(function() {  
-                    progressDiv.classList.remove('marker-update');  
-                }, 300);  
-            }, 50);  
-            
-            Log.info('Progress marker added:', progressMarker);  
-        }  
+                    progressDiv.style.opacity = '0';
+                    progressDiv.style.transform = 'translateY(10px)';
+                    progressDiv.style.transition = 'all 0.4s ease';
+                    
+                    // Запускаем анимацию
+                    setTimeout(function() {  
+                        progressDiv.style.opacity = '1';
+                        progressDiv.style.transform = 'translateY(0)';
+                    }, 10);
+                    
+                    // Убираем transition после анимации
+                    setTimeout(function() {  
+                        progressDiv.style.transition = '';
+                    }, 410);
+                }, 50);  
+                
+                Log.info('Progress marker ADDED (first appearance):', progressMarker);  
+            }
+        } else if (existingProgress) {
+            existingProgress.remove();
+        }
 
-        // Добавляем маркер оставшихся с анимацией  
-        if (remainingMarker) {  
-            var remainingDiv = document.createElement('div');  
-            remainingDiv.className = 'myshows-remaining';  
-            remainingDiv.textContent = remainingMarker;  
-            posterElement.append(remainingDiv);  
-            
-            // ✅ Добавляем анимацию  
-            setTimeout(function() {  
-                remainingDiv.classList.add('marker-update');  
+        // ✅ Добавляем маркер оставшихся  
+        if (remainingMarker !== undefined && remainingMarker !== null) {  
+            if (existingRemaining) {
+                animateFullCardMarker(existingRemaining, remainingMarker.toString(), 'remaining');
+                Log.info('Remaining marker updated:', remainingMarker);  
+            } else {
+                var remainingDiv = document.createElement('div');  
+                remainingDiv.className = 'myshows-remaining';  
+                remainingDiv.textContent = remainingMarker;  
+                posterDom.appendChild(remainingDiv);  
+                
+                // ✅ Анимация плавного появления
                 setTimeout(function() {  
-                    remainingDiv.classList.remove('marker-update');  
-                }, 300);  
-            }, 50);  
-            
-            Log.info('Progress marker added:', remainingMarker);  
+                    remainingDiv.style.opacity = '0';
+                    remainingDiv.style.transform = 'translateY(10px)';
+                    remainingDiv.style.transition = 'all 0.4s ease';
+                    
+                    setTimeout(function() {  
+                        remainingDiv.style.opacity = '1';
+                        remainingDiv.style.transform = 'translateY(0)';
+                    }, 10);
+                    
+                    setTimeout(function() {  
+                        remainingDiv.style.transition = '';
+                    }, 410);
+                }, 50);  
+            }
+        } else if (existingRemaining) {
+            existingRemaining.remove();
         }  
         
-        // Добавляем маркер следующей серии с анимацией  
+        // ✅ Добавляем маркер следующей серии  
         if (nextEpisode) {  
-            var nextDiv = document.createElement('div');  
-            nextDiv.className = 'myshows-next-episode';  
-            nextDiv.textContent = nextEpisode;  
-            posterElement.append(nextDiv);  
-            
-            // ✅ Добавляем анимацию  
-            setTimeout(function() {  
-                nextDiv.classList.add('marker-update');  
+            if (existingNext) {
+                animateFullCardMarker(existingNext, nextEpisode, 'next');
+                Log.info('Next episode marker updated:', nextEpisode);  
+            } else {
+                var nextDiv = document.createElement('div');  
+                nextDiv.className = 'myshows-next-episode';  
+                nextDiv.textContent = nextEpisode;  
+                posterDom.appendChild(nextDiv);  
+                
+                // ✅ Анимация плавного появления
                 setTimeout(function() {  
-                    nextDiv.classList.remove('marker-update');  
-                }, 300);  
-            }, 50);  
-            
-            Log.info('Next episode marker added:', nextEpisode);  
+                    nextDiv.style.opacity = '0';
+                    nextDiv.style.transform = 'translateY(10px)';
+                    nextDiv.style.transition = 'all 0.4s ease';
+                    
+                    setTimeout(function() {  
+                        nextDiv.style.opacity = '1';
+                        nextDiv.style.transform = 'translateY(0)';
+                    }, 10);
+                    
+                    setTimeout(function() {  
+                        nextDiv.style.transition = '';
+                    }, 410);
+                }, 50);  
+            }
+        } else if (existingNext) {
+            existingNext.remove();
         }  
+    }
+
+    function animateFullCardMarker(markerElement, newValue, markerType) {
+        var oldValue = markerElement.textContent || '';
+        
+        if (oldValue === newValue) {
+            Log.info('Marker unchanged:', markerType, oldValue);
+            return;
+        }
+        
+        Log.info('Animating', markerType, 'from', oldValue, 'to', newValue);
+        
+        // Новый маркер
+        if (!oldValue.trim()) {
+            markerElement.textContent = newValue;
+            markerElement.classList.add('digit-animating');
+            setTimeout(function() {
+                markerElement.classList.remove('digit-animating');
+            }, 400);
+            return;
+        }
+        
+        // ✅ ПРОГРЕСС
+        if (markerType === 'progress') {
+            var oldParts = oldValue.split('/');
+            var newParts = newValue.split('/');
+            
+            if (oldParts.length === 2 && newParts.length === 2) {
+                var oldWatched = parseInt(oldParts[0], 10);
+                var newWatched = parseInt(newParts[0], 10);
+                var oldTotal = oldParts[1];
+                var newTotal = newParts[1];
+                
+                if (!isNaN(oldWatched) && !isNaN(newWatched) && 
+                    oldTotal === newTotal && oldWatched !== newWatched) {
+                    animateDigitByDigit(markerElement, oldWatched, newWatched, newTotal);
+                    return;
+                }
+            }
+        }
+        // ✅ ОСТАВШИЕСЯ
+        else if (markerType === 'remaining') {
+            var oldRemaining = parseInt(oldValue, 10);
+            var newRemaining = parseInt(newValue, 10);
+            
+            if (!isNaN(oldRemaining) && !isNaN(newRemaining) && oldRemaining !== newRemaining) {
+                animateCounter(markerElement, oldRemaining, newRemaining, 'remaining');
+                return;
+            }
+        }
+        // ✅ СЛЕДУЮЩАЯ СЕРИЯ
+        else if (markerType === 'next') {
+            animateNextEpisode(markerElement, oldValue, newValue);
+            return;
+        }
+        
+        // Простое обновление
+        markerElement.textContent = newValue;
+        markerElement.classList.add('digit-animating');
+        setTimeout(function() {
+            markerElement.classList.remove('digit-animating');
+        }, 400);
+    }
+
+    function animateCounter(container, startNum, endNum, type) {
+        Log.info('animateCounter:', type, startNum, '→', endNum);
+        
+        // Если значения одинаковые или разница 1 - простая анимация
+        if (startNum === endNum) {
+            container.classList.add('counter-pulse');
+            setTimeout(function() {
+                container.classList.remove('counter-pulse');
+            }, 400);
+            return;
+        }
+        
+        var direction = startNum < endNum ? 'up' : 'down';
+        var current = startNum;
+        var speed = 250; // Нормальная скорость для 1-2 шагов
+        
+        // ✅ Упрощаем: не меняем цвета
+        function updateCounter() {
+            container.textContent = current;
+            
+            // Легкая анимация пульсации
+            container.style.transform = 'scale(1.05)';
+            
+            setTimeout(function() {
+                container.style.transform = 'scale(1)';
+                
+                // Переход к следующему числу
+                if (direction === 'up' && current < endNum) {
+                    current++;
+                    setTimeout(updateCounter, speed);
+                } else if (direction === 'down' && current > endNum) {
+                    current--;
+                    setTimeout(updateCounter, speed);
+                }
+            }, 80);
+        }
+        
+        updateCounter();
+    }
+
+
+    function animateNextEpisode(container, oldEpisode, newEpisode) {
+        Log.info('>>> animateNextEpisode START:', {
+            oldEpisode: oldEpisode,
+            newEpisode: newEpisode,
+            areEqual: oldEpisode === newEpisode
+        });
+        
+        // ✅ Исправляем: добавляем trim и точное сравнение
+        var oldTrimmed = (oldEpisode || '').toString().trim();
+        var newTrimmed = (newEpisode || '').toString().trim();
+        
+        if (oldTrimmed === newTrimmed) {
+            Log.info('Episode unchanged, skipping animation');
+            return;
+        }
+        
+        Log.info('Parsing episodes...');
+        
+        var oldMatch = oldTrimmed.match(/S(\d+)\/E(\d+)/);
+        var newMatch = newTrimmed.match(/S(\d+)\/E(\d+)/);
+        
+        if (!oldMatch || !newMatch) {
+            Log.info('Not episode format or parsing failed');
+            simpleUpdate(container, newTrimmed);
+            return;
+        }
+        
+        var oldSeason = parseInt(oldMatch[1], 10);
+        var oldEpNum = parseInt(oldMatch[2], 10);
+        var newSeason = parseInt(newMatch[1], 10);
+        var newEpNum = parseInt(newMatch[2], 10);
+        
+        Log.info('Parsed values:', {
+            oldSeason: oldSeason,
+            oldEpNum: oldEpNum,
+            newSeason: newSeason,
+            newEpNum: newEpNum
+        });
+        
+        // ✅ ПРАВИЛО 1: Сезон уменьшился
+        if (newSeason < oldSeason) {
+            Log.info('Rule 1: Season decreased');
+            countDownEpisodes(container, oldSeason, oldEpNum, newSeason, newEpNum);
+            return;
+        }
+        
+        // ✅ ПРАВИЛО 2: Сезон увеличился
+        if (newSeason > oldSeason) {
+            Log.info('Rule 2: Season increased');
+            animateSeasonTransition(container, oldSeason, oldEpNum, newSeason, newEpNum);
+            return;
+        }
+        
+        // ✅ ПРАВИЛО 3: Тот же сезон, эпизод изменился
+        if (oldSeason === newSeason && oldEpNum !== newEpNum) {
+            Log.info('Rule 3: Same season, episode changed');
+            // Определяем направление
+            if (oldEpNum < newEpNum) {
+                animateInSameSeason(container, oldSeason, oldEpNum, newEpNum, 'forward');
+            } else {
+                animateInSameSeason(container, oldSeason, oldEpNum, newEpNum, 'backward');
+            }
+            return;
+        }
+        
+        // ✅ ПРАВИЛО 4: Ничего не изменилось (но мы уже проверили)
+        Log.info('Rule 4: No significant change');
+        simpleUpdate(container, newTrimmed);
+    }
+
+    function countDownEpisodes(container, oldSeason, oldEpNum, newSeason, newEpNum) {
+        Log.info('countDownEpisodes:', oldSeason, oldEpNum, '→', newSeason, newEpNum);
+        
+        // ✅ Упрощаем: просто анимируем уменьшение номера эпизода
+        // Не делаем предположений о количестве эпизодов в сезоне
+        
+        var currentSeason = oldSeason;
+        var currentEp = oldEpNum;
+        var speed = 250;
+        
+        function update() {
+            var seasonStr = "S" + currentSeason.toString().padStart(2, '0');
+            var epStr = "E" + currentEp.toString().padStart(2, '0');
+            container.textContent = seasonStr + "/" + epStr;
+            
+            // Легкая анимация
+            container.style.transform = 'scale(1.05)';
+            
+            setTimeout(function() {
+                container.style.transform = 'scale(1)';
+                
+                // ✅ Логика обратного счета:
+                // 1. Если мы в старом сезоне и еще не дошли до E01
+                if (currentSeason === oldSeason && currentEp > 1) {
+                    currentEp--;
+                    setTimeout(update, speed);
+                }
+                // 2. Если дошли до E01 старого сезона, но нужен другой сезон
+                else if (currentSeason === oldSeason && currentEp === 1 && newSeason < oldSeason) {
+                    // Переходим к предыдущему сезону
+                    currentSeason--;
+                    // Начинаем с последнего эпизода? НЕТ - начинаем с E01!
+                    currentEp = 1; // Начинаем новый сезон с E01
+                    setTimeout(update, speed);
+                }
+                // 3. Если в новом сезоне, но еще не дошли до целевого эпизода
+                else if (currentSeason === newSeason && currentEp < newEpNum) {
+                    currentEp++;
+                    setTimeout(update, speed);
+                }
+                // 4. Если в новом сезоне и текущий эпизод больше целевого
+                else if (currentSeason === newSeason && currentEp > newEpNum) {
+                    currentEp--;
+                    setTimeout(update, speed);
+                }
+                // 5. Достигли цели
+                else {
+                    Log.info('Countdown complete:', currentSeason, '/', currentEp);
+                }
+            }, 80);
+        }
+        
+        update();
+    }
+
+    // ✅ Функция обновления с пульсацией
+    function simpleUpdate(container, text) {
+        Log.info('simpleUpdate:', text);
+        container.textContent = text;
+        container.classList.add('digit-animating');
+        setTimeout(function() {
+            container.classList.remove('digit-animating');
+        }, 400);
+    }
+
+    // ✅ Переход между сезонами (старый → новый)
+    function animateSeasonTransition(container, oldSeason, oldEpNum, newSeason, newEpNum) {
+        Log.info('animateSeasonTransition:', oldSeason, oldEpNum, '→', newSeason, newEpNum);
+        
+        var speed = 250;
+        
+        // ✅ ВАРИАНТ 1: Плавный единый счетчик
+        // Просто считаем от старого эпизода к новому, меняя сезон по пути
+        
+        var currentSeason = oldSeason;
+        var currentEp = oldEpNum;
+        
+        function update() {
+            var seasonStr = "S" + currentSeason.toString().padStart(2, '0');
+            var epStr = "E" + currentEp.toString().padStart(2, '0');
+            container.textContent = seasonStr + "/" + epStr;
+            
+            // Легкая анимация
+            container.style.transform = 'scale(1.05)';
+            
+            setTimeout(function() {
+                container.style.transform = 'scale(1)';
+                
+                // ✅ Логика: если еще не в нужном сезоне, сначала меняем сезон
+                if (currentSeason < newSeason) {
+                    // Переходим к следующему сезону, начиная с E01
+                    currentSeason++;
+                    currentEp = 1;
+                    setTimeout(update, speed);
+                }
+                // ✅ Если в нужном сезоне, но еще не дошли до нужного эпизода
+                else if (currentSeason === newSeason && currentEp < newEpNum) {
+                    currentEp++;
+                    setTimeout(update, speed);
+                }
+                // ✅ Достигли цели
+                else {
+                    Log.info('Season transition complete');
+                }
+            }, 80);
+        }
+        
+        update();
+    }
+
+    // ✅ Счетчик в одном сезоне
+    function animateInSameSeason(container, season, startEp, endEp, direction) {
+        Log.info('animateInSameSeason:', season, startEp, '→', endEp, 'direction:', direction);
+        
+        var seasonPrefix = "S" + season.toString().padStart(2, '0') + "/E";
+        var current = startEp;
+        var speed = 250;
+        
+        Log.info('Starting counter with prefix:', seasonPrefix);
+        
+        function update() {
+            var epStr = current.toString().padStart(2, '0');
+            var fullText = seasonPrefix + epStr;
+            Log.info('Update step:', current, '->', fullText);
+            
+            container.textContent = fullText;
+            container.style.transform = 'scale(1.05)';
+            
+            setTimeout(function() {
+                container.style.transform = 'scale(1)';
+                
+                var shouldContinue = false;
+                if (direction === 'forward' && current < endEp) {
+                    current++;
+                    shouldContinue = true;
+                    Log.info('Moving forward to:', current);
+                } else if (direction === 'backward' && current > endEp) {
+                    current--;
+                    shouldContinue = true;
+                    Log.info('Moving backward to:', current);
+                } else {
+                    Log.info('Counter complete at:', current);
+                }
+                
+                if (shouldContinue) {
+                    setTimeout(update, speed);
+                }
+            }, 80);
+        }
+        
+        update();
     }
 
     function updateCompletedShowCard(showName) {  
@@ -2652,7 +3194,7 @@
         // Добавляем анимацию исчезновения    
         cardElement.style.transition = 'opacity 0.5s ease, transform 0.5s ease';    
         cardElement.style.opacity = '0';    
-        cardElement.style.transform = 'scale(0.8)';    
+        // cardElement.style.transform = 'scale(0.8)';    
         
         // Удаляем элемент после анимации  
         setTimeout(function() {    
@@ -2862,8 +3404,104 @@
                 box-shadow: 0 2px 8px rgba(0,0,0,0.15);    
                 background: #4CAF50;    
                 color: #fff;  
-                transition: all 0.3s ease;  /* ✅ Добавьте transition */  
-            }    
+                transition: all 0.3s ease, transform 0.15s ease !important;
+                will-change: transform, color, background-color;
+            }
+
+            /* Стили для анимации перелистывания */
+            @keyframes digitFlip {
+                0% { 
+                    transform: translateY(0) scale(1); 
+                    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+                }
+                50% { 
+                    transform: translateY(-5px) scale(1); 
+                    box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+                }
+                100% { 
+                    transform: translateY(0) scale(1); 
+                    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+                }
+            }
+
+            @keyframes pulse {
+                0% { transform: scale(1); }
+                50% { transform: scale(1); }
+                100% { transform: scale(1); }
+            }
+
+            .digit-animating {
+                animation: digitFlip 0.6s ease;
+            }
+
+            .marker-update {
+                animation: pulse 0.6s ease;
+            }
+
+            /* Анимация для счетчика */
+            .counter-animating {
+                animation: counterPulse 0.8s ease;
+            }
+
+            @keyframes counterPulse {
+                0% { 
+                    transform: scale(1); 
+                    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+                }
+                25% { 
+                    transform: scale(1); 
+                    box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+                }
+                50% { 
+                    transform: scale(1); 
+                    box-shadow: 0 3px 10px rgba(0,0,0,0.2);
+                }
+                100% { 
+                    transform: scale(1); 
+                    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+                }
+            }
+
+            /* Анимация для смены серии */
+            /* .episode-changing {
+                animation: episodeChange 0.6s ease;
+            }
+
+            @keyframes episodeChange {
+                0% { 
+                    transform: translateY(0) scale(1); 
+                    opacity: 1;
+                }
+                50% { 
+                    transform: translateY(-8px) scale(1); 
+                    opacity: 0.7;
+                }
+                100% { 
+                    transform: translateY(0) scale(1); 
+                    opacity: 1;
+                }
+            } */
+
+            /* Специфичные цвета для анимаций */
+            .myshows-remaining.animating-up {
+                background-color: #EF6C00 !important;
+                color: #FF9800 !important;
+            }
+
+            .myshows-remaining.animating-down {
+                background-color: #2E7D32 !important;
+                color: #4CAF50 !important;
+            }
+
+            .myshows-next-episode.animating-season {
+                background-color: #0D47A1 !important;
+                color: #2196F3 !important;
+            }
+
+            .myshows-next-episode.animating-episode {
+                background-color: #0277BD !important;
+                color: #03A9F4 !important;
+            }
 
             .myshows-remaining {    
                 position: absolute;    
@@ -2907,6 +3545,29 @@
                 z-index: 3;  
             }  
             
+            .full-start-new__poster .myshows-progress,
+            .full-start-new__poster .myshows-remaining,
+            .full-start-new__poster .myshows-next-episode {
+                transition: all 0.3s ease !important;
+                will-change: transform, color, background-color;
+            }
+
+            .full-start-new__poster .myshows-progress.digit-animating,
+            .full-start-new__poster .myshows-remaining.digit-animating,
+            .full-start-new__poster .myshows-next-episode.digit-animating {
+                animation: digitFlip 0.6s ease;
+            }
+
+            .full-start-new__poster .marker-update {
+                animation: gentlePulse 0.6s ease;
+            }
+
+            @keyframes gentlePulse {
+                0% { transform: scale(1); }
+                50% { transform: scale(1); }
+                100% { transform: scale(1); }
+            }
+                        
             .full-start-new__poster .myshows-progress {  
                 bottom: 0.5em;  
             }  
@@ -2966,9 +3627,31 @@
             /* ✅ Анимация */  
             .myshows-progress.marker-update,  
             .myshows-next-episode.marker-update {  
-                transform: scale(1.3);    
                 font-weight: 900;    
+                animation: gentleAppear 0.4s ease;
             }  
+            
+            @keyframes gentleAppear {
+                0% { 
+                    opacity: 0;
+                    transform: translateY(10px);
+                }
+                100% { 
+                    opacity: 1;
+                    transform: translateY(0);
+                }
+            }
+
+            @keyframes gentlePulse {
+                0% { transform: scale(1); }
+                50% { transform: scale(1); } 
+                100% { transform: scale(1); }
+            }
+
+            /* Для scale анимации (только при изменениях) */
+            .scale-animation {
+                animation: gentlePulse 0.6s ease;
+            }
         `;          
         document.head.appendChild(style);          
     }
@@ -4945,67 +5628,97 @@
         var cardView = cardElement.querySelector('.card__view');  
         if (!cardView) return;  
         
-        // ✅ Маркер прогресса  
+        // ✅ Маркер прогресса
         if (cardData.progress_marker) {  
             var progressMarker = cardView.querySelector('.myshows-progress');  
             
             if (progressMarker) {  
-                if (progressMarker.textContent !== cardData.progress_marker) {  
-                    progressMarker.classList.add('marker-update');  
-                    progressMarker.textContent = cardData.progress_marker;  
-                    
-                    setTimeout(function() {  
-                        progressMarker.classList.remove('marker-update');  
-                    }, 300);  
+                var oldText = progressMarker.textContent || '';
+                var newText = cardData.progress_marker;
+                
+                if (oldText !== newText) {  
+                    // ✅ Запускаем анимацию для прогресса
+                    updateCardWithAnimation(cardElement, newText, 'myshows-progress');
                 }  
             } else {  
+                // Создаем новый маркер
                 progressMarker = document.createElement('div');  
                 progressMarker.className = 'myshows-progress';  
                 progressMarker.textContent = cardData.progress_marker;  
                 cardView.appendChild(progressMarker);  
+                
+                // Анимация появления
+                setTimeout(function() {  
+                    progressMarker.classList.add('digit-animating');  
+                    setTimeout(function() {  
+                        progressMarker.classList.remove('digit-animating');  
+                    }, 600);  
+                }, 50);  
             }  
         }  
 
-        // ✅ Маркер оставшихся серии  
-        if (cardData.remaining) {  
+        // ✅ Маркер оставшихся серий (СЕЙЧАС ТОЖЕ С АНИМАЦИЕЙ!)
+        if (cardData.remaining !== undefined && cardData.remaining !== null) {  
             var remainingMarker = cardView.querySelector('.myshows-remaining');  
             
             if (remainingMarker) {  
-                if (remainingMarker.textContent !== cardData.remaining) {  
-                    remainingMarker.classList.add('marker-update');  
-                    remainingMarker.textContent = cardData.remaining;  
-                    
-                    setTimeout(function() {  
-                        remainingMarker.classList.remove('marker-update');  
-                    }, 300);  
+                var oldRemaining = remainingMarker.textContent || '';
+                var newRemaining = cardData.remaining.toString();
+                
+                if (oldRemaining !== newRemaining) {  
+                    // ✅ Запускаем анимацию для оставшихся
+                    updateCardWithAnimation(cardElement, newRemaining, 'myshows-remaining');
                 }  
             } else {  
                 remainingMarker = document.createElement('div');  
                 remainingMarker.className = 'myshows-remaining';  
                 remainingMarker.textContent = cardData.remaining;  
                 cardView.appendChild(remainingMarker);  
+                
+                // Анимация появления
+                setTimeout(function() {  
+                    remainingMarker.classList.add('digit-animating');  
+                    setTimeout(function() {  
+                        remainingMarker.classList.remove('digit-animating');  
+                    }, 600);  
+                }, 50);  
             }  
+        } else {
+            // Удаляем если не нужно
+            var existingRemaining = cardView.querySelector('.myshows-remaining');
+            if (existingRemaining) existingRemaining.remove();
         }  
         
-        // ✅ Маркер следующей серии  
+        // ✅ Маркер следующей серии (СЕЙЧАС ТОЖЕ С АНИМАЦИЕЙ!)
         if (cardData.next_episode) {  
             var nextEpisodeMarker = cardView.querySelector('.myshows-next-episode');  
             
             if (nextEpisodeMarker) {  
-                if (nextEpisodeMarker.textContent !== cardData.next_episode) {  
-                    nextEpisodeMarker.classList.add('marker-update');  
-                    nextEpisodeMarker.textContent = cardData.next_episode;  
-                    
-                    setTimeout(function() {  
-                        nextEpisodeMarker.classList.remove('marker-update');  
-                    }, 300);  
+                var oldNext = nextEpisodeMarker.textContent || '';
+                var newNext = cardData.next_episode;
+                
+                if (oldNext !== newNext) {  
+                    // ✅ Запускаем анимацию для следующей серии
+                    updateCardWithAnimation(cardElement, newNext, 'myshows-next-episode');
                 }  
             } else {  
                 nextEpisodeMarker = document.createElement('div');  
                 nextEpisodeMarker.className = 'myshows-next-episode';  
                 nextEpisodeMarker.textContent = cardData.next_episode;  
                 cardView.appendChild(nextEpisodeMarker);  
+                
+                // Анимация появления
+                setTimeout(function() {  
+                    nextEpisodeMarker.classList.add('digit-animating');  
+                    setTimeout(function() {  
+                        nextEpisodeMarker.classList.remove('digit-animating');  
+                    }, 600);  
+                }, 50);  
             }  
+        } else {
+            // Удаляем если не нужно
+            var existingNext = cardView.querySelector('.myshows-next-episode');
+            if (existingNext) existingNext.remove();
         }  
     }
 })();
