@@ -15,6 +15,7 @@
     var newProgress = MIN_PROGRESS;
     Lampa.Storage.set('base_url_numparser', BASE_URL);
     var IS_LAMPAC = null;
+    var HAS_TIMECODE_USER = null;
 
 
     // ✅ НОВАЯ ЛОГИКА: Глобальное хранилище таймкодов  
@@ -968,65 +969,68 @@
         });
 
         // Добавляем переключатель фильтрации
-        Lampa.SettingsApi.addParam({
-            component: 'numparser_settings',
-            param: {
-                name: 'numparser_hide_watched',
-                type: 'trigger',
-                default: getProfileSetting('numparser_hide_watched', "true"),
-            },
-            field: {
-                name: 'Скрыть просмотренные',
-                description: 'Скрывать просмотренные фильмы и сериалы (Требуется модуль TimecodeUser)'
-            },
-
-            onChange: function (value) {
-                setProfileSetting('numparser_hide_watched', value === true || value === "true");
-
-                var active = Lampa.Activity.active();
-                if (active && active.activity_line && active.activity_line.listener && typeof active.activity_line.listener.send === 'function') {
-                    active.activity_line.listener.send({
-                        type: 'append',
-                        data: active.activity_line.card_data,
-                        line: active.activity_line
-                    });
-                } else {
-                    location.reload();
-                }
-            }
-        });
-
-        // Добавляем настройку прогресса
-        Lampa.SettingsApi.addParam({
-            component: 'numparser_settings',
-            param: {
-                name: 'numparser_min_progress',
-                type: 'select',
-                values: {
-                    '50': '50%',
-                    '55': '55%',
-                    '60': '60%',
-                    '65': '65%',
-                    '70': '70%',
-                    '75': '75%',
-                    '80': '80%',
-                    '85': '85%',
-                    '90': '90%',
-                    '95': '95%',
-                    '100': '100%'
+        console.log('Numparser', 'TimecodeUser!', HAS_TIMECODE_USER, 'LAMPAC:', IS_LAMPAC);
+        if (IS_LAMPAC && HAS_TIMECODE_USER) {
+            Lampa.SettingsApi.addParam({
+                component: 'numparser_settings',
+                param: {
+                    name: 'numparser_hide_watched',
+                    type: 'trigger',
+                    default: getProfileSetting('numparser_hide_watched', "true"),
                 },
-                default: getProfileSetting('numparser_min_progress', DEFAULT_MIN_PROGRESS).toString(),
-            },
-            field: {
-                name: 'Порог просмотра',
-                description: 'Минимальный процент просмотра для скрытия контента'
-            },
-            onChange: function (value) {
-                newProgress = parseInt(value);
-                setProfileSetting('numparser_min_progress', newProgress);
-                MIN_PROGRESS = newProgress;
-            }
-        });
+                field: {
+                    name: 'Скрыть просмотренные',
+                    description: 'Скрывать просмотренные фильмы и сериалы (Требуется модуль TimecodeUser)'
+                },
+
+                onChange: function (value) {
+                    setProfileSetting('numparser_hide_watched', value === true || value === "true");
+
+                    var active = Lampa.Activity.active();
+                    if (active && active.activity_line && active.activity_line.listener && typeof active.activity_line.listener.send === 'function') {
+                        active.activity_line.listener.send({
+                            type: 'append',
+                            data: active.activity_line.card_data,
+                            line: active.activity_line
+                        });
+                    } else {
+                        location.reload();
+                    }
+                }
+            });
+
+            // Добавляем настройку прогресса
+            Lampa.SettingsApi.addParam({
+                component: 'numparser_settings',
+                param: {
+                    name: 'numparser_min_progress',
+                    type: 'select',
+                    values: {
+                        '50': '50%',
+                        '55': '55%',
+                        '60': '60%',
+                        '65': '65%',
+                        '70': '70%',
+                        '75': '75%',
+                        '80': '80%',
+                        '85': '85%',
+                        '90': '90%',
+                        '95': '95%',
+                        '100': '100%'
+                    },
+                    default: getProfileSetting('numparser_min_progress', DEFAULT_MIN_PROGRESS).toString(),
+                },
+                field: {
+                    name: 'Порог просмотра',
+                    description: 'Минимальный процент просмотра для скрытия контента'
+                },
+                onChange: function (value) {
+                    newProgress = parseInt(value);
+                    setProfileSetting('numparser_min_progress', newProgress);
+                    MIN_PROGRESS = newProgress;
+                }
+            });
+        };
 
         // Настройка для изменения названия источника
         Lampa.SettingsApi.addParam({
@@ -1118,6 +1122,23 @@
         });
     }
 
+    // Проверка TimecodeUser
+    function checkTimecodeUser(callback) {
+        // Проверка через /timecode/all_views
+        var xhr = new XMLHttpRequest();
+        xhr.open('GET', '/timecode/all_views', true);
+        
+        xhr.onload = function() {
+            callback(xhr.status === 200);
+        };
+        
+        xhr.onerror = function() {
+            callback(false);
+        };
+        
+        xhr.send();
+    }
+
     // Проверка Lampac
     function checkLampacEnvironment(callback) {
         // Быстрая проверка
@@ -1145,15 +1166,18 @@
         // Сначала проверяем среду
         checkLampacEnvironment(function(isLampac) {
             IS_LAMPAC = isLampac;
-            // Log.info('✅ Среда:', IS_LAMPAC ? 'Lampac' : 'Обычная Lampa');
             console.log('[NumParser]', '✅ Среда:', IS_LAMPAC ? 'Lampac' : 'Обычная Lampa');
             
-            // Небольшая задержка для стабильности
-            setTimeout(function() {
-                // Инициализируем все компоненты
-                startPlugin();
-                loadAllTimecodes();
-            }, 50);
+            // Затем проверяем TimecodeUser
+            checkTimecodeUser(function(hasTimecodeUser) {
+                HAS_TIMECODE_USER = hasTimecodeUser;
+                console.log('[NumParser]', '✅ TimecodeUser:', HAS_TIMECODE_USER ? 'Доступен' : 'Не доступен');
+                
+                // ✅ Инициализируем плагин
+                setTimeout(function() {
+                    startPlugin();
+                }, 50);
+            });
         });
     }
 
