@@ -1122,34 +1122,19 @@
         });
     }
 
-    // Проверка TimecodeUser
-    function checkTimecodeUser(callback) {
-        // Проверка через /timecode/all_views
-        var xhr = new XMLHttpRequest();
-        xhr.open('GET', '/timecode/all_views', true);
-        
-        xhr.onload = function() {
-            callback(xhr.status === 200);
-        };
-        
-        xhr.onerror = function() {
-            callback(false);
-        };
-        
-        xhr.send();
-    }
-
-    // Проверка Lampac
-    function checkLampacEnvironment(callback) {
-        // Быстрая проверка
-        if (window.lampa_settings?.fixdcma === true) {
-            callback(true);
-            return;
+    // Проверка Lampac или Lampa и наличие TimecodeUser
+    function checkEnvironment(path, callback) {
+        if (path = '/version') {
+            // Быстрая проверка
+            if (window.lampa_settings?.fixdcma === true) {
+                callback(true);
+                return;
+            }
         }
         
         // Проверка через /version
         var xhr = new XMLHttpRequest();
-        xhr.open('GET', '/version', true);
+        xhr.open('GET', path, true);
         
         xhr.onload = function() {
             callback(xhr.status === 200);
@@ -1164,12 +1149,12 @@
 
     function initNUMPlugin() {
         // Сначала проверяем среду
-        checkLampacEnvironment(function(isLampac) {
+        checkEnvironment('/version', function(isLampac) {
             IS_LAMPAC = isLampac;
             console.log('[NumParser]', '✅ Среда:', IS_LAMPAC ? 'Lampac' : 'Обычная Lampa');
             
             // Затем проверяем TimecodeUser
-            checkTimecodeUser(function(hasTimecodeUser) {
+            checkEnvironment('/timecode/all_views', function(hasTimecodeUser) {
                 HAS_TIMECODE_USER = hasTimecodeUser;
                 console.log('[NumParser]', '✅ TimecodeUser:', HAS_TIMECODE_USER ? 'Доступен' : 'Не доступен');
                 
