@@ -3239,19 +3239,6 @@
         return cardData.original_title || cardData.original_name || cardData.name || cardData.title;
     }
 
-    function findCardByName(showName) {
-        var cards = document.querySelectorAll('.card');
-        for (var i = 0; i < cards.length; i++) {
-            var cardElement = cards[i];
-            var cardData = cardElement.card_data || {};
-            var cardName = getCardName(cardData);
-            if (cardName === showName) {
-                return cardElement;
-            }
-        }
-        return null;
-    }
-
     function findCardInMyShowsSection(showName) {
         var section = findMyShowsSection();
         if (!section) return null;
