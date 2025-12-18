@@ -14,7 +14,7 @@
     var MIN_PROGRESS = Lampa.Storage.get('numparser_min_progress', DEFAULT_MIN_PROGRESS);
     var newProgress = MIN_PROGRESS;
     Lampa.Storage.set('base_url_numparser', BASE_URL);
-    var isLampac = window.lampac_plugin || false;
+    var IS_LAMPAC = null;
 
 
     // ✅ НОВАЯ ЛОГИКА: Глобальное хранилище таймкодов  
@@ -544,7 +544,8 @@
             onError = onError || function () {};
 
             var category = params.url || CATEGORIES.movies_new;
-            var page = params.page || 1;            
+            var page = params.page || 1;
+            
             var url = BASE_URL + '/' + category + '?page=' + page + '&language=' + Lampa.Storage.get('tmdb_lang', 'ru');  
 
             self.get(url, params, function (json) {
@@ -873,7 +874,7 @@
 
     // === Поддержка профилей ===
     function getProfileKey(baseKey) {
-        if (isLampac) {
+        if (IS_LAMPAC) {
             var profileId = Lampa.Storage.get('lampac_profile_id', '');
         } else {
             var profileId = '';
@@ -1117,14 +1118,51 @@
         });
     }
 
+    // Проверка Lampac
+    function checkLampacEnvironment(callback) {
+        // Быстрая проверка
+        if (window.lampa_settings?.fixdcma === true) {
+            callback(true);
+            return;
+        }
+        
+        // Проверка через /version
+        var xhr = new XMLHttpRequest();
+        xhr.open('GET', '/version', true);
+        
+        xhr.onload = function() {
+            callback(xhr.status === 200);
+        };
+        
+        xhr.onerror = function() {
+            callback(false);
+        };
+        
+        xhr.send();
+    }
+
+    function initNUMPlugin() {
+        // Сначала проверяем среду
+        checkLampacEnvironment(function(isLampac) {
+            IS_LAMPAC = isLampac;
+            // Log.info('✅ Среда:', IS_LAMPAC ? 'Lampac' : 'Обычная Lampa');
+            console.log('[NumParser]', '✅ Среда:', IS_LAMPAC ? 'Lampac' : 'Обычная Lampa');
+            
+            // Небольшая задержка для стабильности
+            setTimeout(function() {
+                // Инициализируем все компоненты
+                startPlugin();
+                loadAllTimecodes();
+            }, 50);
+        });
+    }
+
     if (window.appready) {
-        startPlugin();
-        loadAllTimecodes();
+        initNUMPlugin();
     } else {
         Lampa.Listener.follow('app', function (event) {
             if (event.type === 'ready') {
-                startPlugin();
-                loadAllTimecodes();
+                initNUMPlugin();
             }
         });
     }
