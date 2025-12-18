@@ -947,7 +947,7 @@
                 },
                 field: {
                     name: 'Скрыть просмотренные',
-                    description: 'Скрывать просмотренные фильмы и сериалы (Требуется модуль TimecodeUser)'
+                    description: 'Скрывать просмотренные фильмы и сериалы'
                 },
 
                 onChange: function (value) {
