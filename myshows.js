@@ -2386,23 +2386,34 @@
         var direction = startNum < endNum ? 'up' : 'down';
         var current = startNum;
         var speed = 250;
+
+        // ✅ Просто сохраняем оригинальные классы
+        var originalClasses = container.className;
         
-        // ✅ Убираем изменение цветов
+        // Добавляем временный класс для анимации
+        container.className = originalClasses + ' digit-animating-active';
+        
         function updateDigit() {
             container.textContent = current + '/' + totalEpisodes;
             
-            // Легкая пульсация
-            container.style.transform = 'scale(1.05)';
+            // Добавляем inline-стили для текущего шага
+            // container.style.color = direction === 'up' ? '#4CAF50' : '#FF9800';
+            container.style.backgroundColor = direction === 'up' ? '#2E7D32' : '#EF6C00';
             
             setTimeout(function() {
-                container.style.transform = 'scale(1)';
-                
                 if (direction === 'up' && current < endNum) {
                     current++;
                     setTimeout(updateDigit, speed);
                 } else if (direction === 'down' && current > endNum) {
                     current--;
                     setTimeout(updateDigit, speed);
+                } else {
+                    // ✅ Завершение: убираем inline-стили и восстанавливаем классы
+                    setTimeout(function() {
+                        // container.style.color = '';
+                        container.style.backgroundColor = '';
+                        container.className = originalClasses;
+                    }, 200);
                 }
             }, 80);
         }
@@ -2816,6 +2827,10 @@
 
     function animateFullCardMarker(markerElement, newValue, markerType) {
         var oldValue = markerElement.textContent || '';
+    
+        Log.info('=== animateFullCardMarker START ===');
+        Log.info('Type:', markerType, 'Old:', oldValue, 'New:', newValue);
+        Log.info('Container exists:', !!markerElement);
         
         if (oldValue === newValue) {
             Log.info('Marker unchanged:', markerType, oldValue);
@@ -2862,6 +2877,7 @@
                 return;
             }
         }
+        
         // ✅ СЛЕДУЮЩАЯ СЕРИЯ
         else if (markerType === 'next') {
             animateNextEpisode(markerElement, oldValue, newValue);
@@ -2897,10 +2913,10 @@
             container.textContent = current;
             
             // Легкая анимация пульсации
-            container.style.transform = 'scale(1.05)';
+            // container.style.transform = 'scale(1.05)';
             
             setTimeout(function() {
-                container.style.transform = 'scale(1)';
+                // container.style.transform = 'scale(1)';
                 
                 // Переход к следующему числу
                 if (direction === 'up' && current < endNum) {
@@ -2915,7 +2931,6 @@
         
         updateCounter();
     }
-
 
     function animateNextEpisode(container, oldEpisode, newEpisode) {
         Log.info('>>> animateNextEpisode START:', {
@@ -3003,10 +3018,10 @@
             container.textContent = seasonStr + "/" + epStr;
             
             // Легкая анимация
-            container.style.transform = 'scale(1.05)';
+            // container.style.transform = 'scale(1.05)';
             
             setTimeout(function() {
-                container.style.transform = 'scale(1)';
+                // container.style.transform = 'scale(1)';
                 
                 // ✅ Логика обратного счета:
                 // 1. Если мы в старом сезоне и еще не дошли до E01
@@ -3070,10 +3085,10 @@
             container.textContent = seasonStr + "/" + epStr;
             
             // Легкая анимация
-            container.style.transform = 'scale(1.05)';
+            // container.style.transform = 'scale(1.05)';
             
             setTimeout(function() {
-                container.style.transform = 'scale(1)';
+                // container.style.transform = 'scale(1)';
                 
                 // ✅ Логика: если еще не в нужном сезоне, сначала меняем сезон
                 if (currentSeason < newSeason) {
@@ -3113,10 +3128,10 @@
             Log.info('Update step:', current, '->', fullText);
             
             container.textContent = fullText;
-            container.style.transform = 'scale(1.05)';
+            // container.style.transform = 'scale(1.05)';
             
             setTimeout(function() {
-                container.style.transform = 'scale(1)';
+                // container.style.transform = 'scale(1)';
                 
                 var shouldContinue = false;
                 if (direction === 'forward' && current < endEp) {
@@ -3406,7 +3421,7 @@
                     box-shadow: 0 2px 8px rgba(0,0,0,0.15);
                 }
                 50% { 
-                    transform: translateY(-5px) scale(1); 
+                    transform: scale(1); 
                     box-shadow: 0 5px 15px rgba(0,0,0,0.3);
                 }
                 100% { 
@@ -3472,27 +3487,6 @@
                     opacity: 1;
                 }
             } */
-
-            /* Специфичные цвета для анимаций */
-            .myshows-remaining.animating-up {
-                background-color: #EF6C00 !important;
-                color: #FF9800 !important;
-            }
-
-            .myshows-remaining.animating-down {
-                background-color: #2E7D32 !important;
-                color: #4CAF50 !important;
-            }
-
-            .myshows-next-episode.animating-season {
-                background-color: #0D47A1 !important;
-                color: #2196F3 !important;
-            }
-
-            .myshows-next-episode.animating-episode {
-                background-color: #0277BD !important;
-                color: #03A9F4 !important;
-            }
 
             .myshows-remaining {    
                 position: absolute;    
