@@ -1124,7 +1124,7 @@
 
     // Проверка Lampac или Lampa и наличие TimecodeUser
     function checkEnvironment(path, callback) {
-        if (path = '/version') {
+        if (path === '/version') {
             // Быстрая проверка
             if (window.lampa_settings?.fixdcma === true) {
                 callback(true);
