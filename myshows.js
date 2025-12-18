@@ -17,8 +17,7 @@
     var later_icon = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z" fill="currentColor"/></svg>';
     var remove_icon = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" fill="currentColor"/></svg>';
     var cancelled_icon = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm5 11H7v-2h10v2z" fill="currentColor"/></svg>';
-    var isLampac = Boolean(window.lampac_plugin);
-
+    var IS_LAMPAC = null;
 
     function createLogMethod(emoji, consoleMethod) {
         return function() {
@@ -62,7 +61,7 @@
                 Log.info('Android 🧩 Fixed URI via window.location.origin:', uri);
             }
 
-            if (!isLampac) {
+            if (!IS_LAMPAC) {
                 if (Lampa.Account.Permit.account && Lampa.Account.Permit.account.profile && Lampa.Account.Permit.account.profile.id) {
                     profileId = '_' + Lampa.Account.Permit.account.profile.id;
                 }
@@ -96,7 +95,7 @@
 
         var profileId = Lampa.Storage.get('lampac_profile_id', '');      
 
-        if (!isLampac) {
+        if (!IS_LAMPAC) {
             if (Lampa.Account.Permit.account && Lampa.Account.Permit.account.profile && Lampa.Account.Permit.account.profile.id) {
                 profileId = '_' + Lampa.Account.Permit.account.profile.id;
             }
@@ -310,7 +309,8 @@
   
     // Функции для работы с профиль-специфичными настройками  
     function getProfileKey(baseKey) {
-        if (isLampac) {
+        Log.info('IS_LAMPAC:', IS_LAMPAC, 'baseKey: ', baseKey);
+        if (IS_LAMPAC) {
             var profileId = Lampa.Storage.get('lampac_profile_id', '');
         } else {
             var profileId = '';
@@ -327,6 +327,7 @@
     }  
   
     function setProfileSetting(key, value) {  
+        Log.info('Setting profile setting:', getProfileKey(key), value);
         Lampa.Storage.set(getProfileKey(key), value);  
     }  
     
@@ -593,7 +594,7 @@
             Log.info('✅ Модуль TimecodeUser ' + (isEnabled ? 'установлен' : 'не установлен'));  
             
             // Сразу добавляем настройки если модуль включен  
-            if (isEnabled && isLampac && tokenValue) {  
+            if (isEnabled && IS_LAMPAC && tokenValue) {  
                 Lampa.SettingsApi.addParam({  
                     component: 'myshows',  
                     param: {  
@@ -657,26 +658,29 @@
         }
     }  
 
-    var originalProfileWaiter = window.__profile_extra_waiter;
-    var myshowsProfileSynced = false; // Флаг синхронизации
-    var currentProfileId = ''; // Текущий ID профиля
 
-    window.__profile_extra_waiter = function() {
-        var synced = myshowsProfileSynced;
-        
-        if (typeof originalProfileWaiter === 'function') {
-            synced = synced && originalProfileWaiter();
-        }
-        
-        return synced;
-    };
+    if (IS_LAMPAC) {
+        var originalProfileWaiter = window.__profile_extra_waiter;
+        var myshowsProfileSynced = false; // Флаг синхронизации
+        var currentProfileId = ''; // Текущий ID профиля
+    
+        window.__profile_extra_waiter = function() {
+            var synced = myshowsProfileSynced;
+            
+            if (typeof originalProfileWaiter === 'function') {
+                synced = synced && originalProfileWaiter();
+            }
+            
+            return synced;
+        };
+    }
 
     function handleProfileChange() {
         // Сбрасываем флаг синхронизации при смене профиля
         myshowsProfileSynced = false;
         
         // Получаем новый ID профиля
-        var newProfileId = isLampac 
+        var newProfileId = IS_LAMPAC 
             ? Lampa.Storage.get('lampac_profile_id', '')
             : (Lampa.Account.Permit.account && Lampa.Account.Permit.account.profile && Lampa.Account.Permit.account.profile.id 
             ? '_' + Lampa.Account.Permit.account.profile.id 
@@ -802,7 +806,7 @@
     }
 
     function initCurrentProfile() {
-        currentProfileId = isLampac 
+        currentProfileId = IS_LAMPAC 
             ? Lampa.Storage.get('lampac_profile_id', '')
             : (Lampa.Account.Permit.account && Lampa.Account.Permit.account.profile && Lampa.Account.Permit.account.profile.id 
             ? '_' + Lampa.Account.Permit.account.profile.id 
@@ -1201,7 +1205,7 @@
         var unicId = Lampa.Storage.get('lampac_unic_id') || Lampa.Storage.get('account_email') || Lampa.Storage.get('lampa_uid', '');    
         var profileId = Lampa.Storage.get('lampac_profile_id', '');    
 
-        if (!isLampac) {
+        if (!IS_LAMPAC) {
             if (Lampa.Account.Permit.account && Lampa.Account.Permit.account.profile && Lampa.Account.Permit.account.profile.id) {
                 profileId = '_' + Lampa.Account.Permit.account.profile.id;
             }
@@ -1849,14 +1853,14 @@
     function getUnwatchedShowsWithDetails(callback, show) {     
         Log.info('getUnwatchedShowsWithDetails called');      
         var useFastAPI = Lampa.Storage.get('numparser_myshows_fastapi', 'false');    
-        Log.info('Using FastAPI:', useFastAPI, 'isLampac:', isLampac);  
+        Log.info('Using FastAPI:', useFastAPI, 'isLampac:', IS_LAMPAC);  
         
         if (useFastAPI) {   
             fetchFromMyShowsAPI(function(freshResult) {  
                 Log.info('FastAPI result:', freshResult);      
                 callback(freshResult);      
             });      
-        } else if (isLampac) {  
+        } else if (IS_LAMPAC) {  
             // Используем кеширование только в Lampac  
             loadCacheFromServer('unwatched_serials', 'shows', function(cachedResult) {      
                 Log.info('Cache result:', cachedResult);      
@@ -5525,39 +5529,6 @@
     }
 
     //
-  
-    // Инициализация  
-    if (window.appready) {  
-        initCurrentProfile();  
-        initSettings();    
-        initMyShowsCaches();  
-        addMyShowsComponents();
-        addMyShowsMenuItems();
-        cleanupOldMappings();  
-        initTimelineListener();    
-        addProgressMarkerStyles();  
-        addMyShowsToTMDB();  
-        addMyShowsToCUB();  
-        addMyShowsButtonStyles();  
-        init();
-    } else {    
-        Lampa.Listener.follow('app', function (event) {    
-            if (event.type === 'ready') {   
-                initCurrentProfile(); 
-                initSettings();    
-                initMyShowsCaches();  
-                addMyShowsComponents();
-                addMyShowsMenuItems();
-                cleanupOldMappings();  
-                initTimelineListener();    
-                addProgressMarkerStyles();  
-                addMyShowsToTMDB();  
-                addMyShowsToCUB();  
-                addMyShowsButtonStyles();  
-                init();
-            }    
-        });    
-    }
 
     Lampa.Listener.follow('line', function(event) {  
         if (event.data && event.data.title && event.data.title.indexOf('MyShows') !== -1) {  
@@ -5720,5 +5691,65 @@
             var existingNext = cardView.querySelector('.myshows-next-episode');
             if (existingNext) existingNext.remove();
         }  
+    }
+
+    // Функция инициализации
+    function initMyShowsPlugin() {
+        // Сначала проверяем среду
+        checkLampacEnvironment(function(isLampac) {
+            IS_LAMPAC = isLampac;
+            Log.info('✅ Среда:', IS_LAMPAC ? 'Lampac' : 'Обычная Lampa');
+            
+            // Небольшая задержка для стабильности
+            setTimeout(function() {
+                // Инициализируем все компоненты
+                initCurrentProfile();  
+                initSettings();    
+                initMyShowsCaches();  
+                addMyShowsComponents();
+                addMyShowsMenuItems();
+                cleanupOldMappings();  
+                initTimelineListener();    
+                addProgressMarkerStyles();  
+                addMyShowsToTMDB();  
+                addMyShowsToCUB();  
+                addMyShowsButtonStyles();  
+                init();
+            }, 50);
+        });
+    }
+
+    // Проверка Lampac
+    function checkLampacEnvironment(callback) {
+        // Быстрая проверка
+        if (window.lampa_settings?.fixdcma === true) {
+            callback(true);
+            return;
+        }
+        
+        // Проверка через /version
+        var xhr = new XMLHttpRequest();
+        xhr.open('GET', '/version', true);
+        
+        xhr.onload = function() {
+            callback(xhr.status === 200);
+        };
+        
+        xhr.onerror = function() {
+            callback(false);
+        };
+        
+        xhr.send();
+    }
+
+    // Запуск
+    if (window.appready) {  
+        initMyShowsPlugin();
+    } else {    
+        Lampa.Listener.follow('app', function (event) {    
+            if (event.type === 'ready') {   
+                initMyShowsPlugin();
+            }    
+        });    
     }
 })();
