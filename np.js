@@ -311,22 +311,6 @@
         return season ? season.episode_count : 0;  
     }
 
-    function allEpisodesWatched(title, episodes) {
-        if (!episodes || !episodes.length) return false;
-
-        return episodes.every(function (episode) {
-            var hash = Lampa.Utils.hash([
-                episode.season_number,
-                episode.season_number > 10 ? ':' : '',
-                episode.episode_number,
-                title
-            ].join(''));
-
-            var view = Lampa.Timeline.view(hash);
-            return view.percent > MIN_PROGRESS;
-        });
-    }
-
     // Настройки видимости групп годов
     var currentYear = new Date().getFullYear();
 
@@ -875,6 +859,7 @@
 
     // === Поддержка профилей ===
     function getProfileKey(baseKey) {
+        console.log('Numparser', 'IS_LAMPAC:', IS_LAMPAC, 'baseKey: ', baseKey);
         if (IS_LAMPAC) {
             var profileId = Lampa.Storage.get('lampac_profile_id', '');
         } else {
@@ -902,7 +887,7 @@
 
     // Загружаем профильные настройки
     function loadNumparserProfileSettings() {
-        if (!hasProfileSetting('numparser_hide_watched')) {
+        if (!hasProfileSetting('numparser_hide_watched') && HAS_TIMECODE_USER) {
             setProfileSetting('numparser_hide_watched', "true");
         }
 
@@ -915,37 +900,20 @@
         }
 
         // Восстанавливаем значения в Lampa.Storage, чтобы UI знал актуальные данные
-        Lampa.Storage.set('numparser_hide_watched', getProfileSetting('numparser_hide_watched', "true"), "true");
+        if (HAS_TIMECODE_USER) {
+            Lampa.Storage.set('numparser_hide_watched', getProfileSetting('numparser_hide_watched', "true"), "true");
+        }
         Lampa.Storage.set('numparser_min_progress', getProfileSetting('numparser_min_progress', DEFAULT_MIN_PROGRESS), "true");
         Lampa.Storage.set('numparser_source_name', getProfileSetting('numparser_source_name', DEFAULT_SOURCE_NAME), "true");
     }
 
-    function startPlugin() {
-        loadNumparserProfileSettings();
+    function initSettings() {  
 
-        if (window.numparser_plugin) return;
-        window.numparser_plugin = true;
-
-        var originalCategoryFull = Lampa.Component.get('category_full');  
-        if (originalCategoryFull) {  
-            Lampa.Component.add('category_full', function(object) {  
-                var comp = originalCategoryFull(object);  
-                var originalBuild = comp.build;  
-                
-                comp.build = function(data) {  
-                    // Если результатов нет, но есть еще страницы - пробуем загрузить следующую  
-                    if (!data.results.length && object.source === SOURCE_NAME && data.total_pages > 1) {  
-                        object.page = 2;  
-                        Lampa.Api.list(object, this.build.bind(this), this.empty.bind(this));  
-                        return;  
-                    }  
-                    
-                    originalBuild.call(this, data);  
-                };  
-                
-                return comp;  
-            });  
-        }
+        try {  
+            if (Lampa.SettingsApi.removeComponent) {  
+                Lampa.SettingsApi.removeComponent('numparser_settings');  
+            }  
+        } catch (e) {}  
 
         newName = Lampa.Storage.get('numparser_settings', SOURCE_NAME);
         if (Lampa.Storage.field('start_page') === SOURCE_NAME) {
@@ -961,12 +929,11 @@
         var values = Lampa.Params.values.start_page;
         values[SOURCE_NAME] = SOURCE_NAME;
 
-        // Добавляем раздел настроек
-        Lampa.SettingsApi.addComponent({
-            component: 'numparser_settings',
-            name: SOURCE_NAME,
+        Lampa.SettingsApi.addComponent({  
+            component: 'numparser_settings',  
+            name: SOURCE_NAME,  
             icon: ICON
-        });
+        });  
 
         // Добавляем переключатель фильтрации
         console.log('Numparser', 'TimecodeUser!', HAS_TIMECODE_USER, 'LAMPAC:', IS_LAMPAC);
@@ -1077,7 +1044,34 @@
                     setProfileSetting(settingName, newVisible);
                 }
             });
-        });
+        });        
+    }
+
+    function startPlugin() {
+
+        if (window.numparser_plugin) return;
+        window.numparser_plugin = true;
+
+        var originalCategoryFull = Lampa.Component.get('category_full');  
+        if (originalCategoryFull) {  
+            Lampa.Component.add('category_full', function(object) {  
+                var comp = originalCategoryFull(object);  
+                var originalBuild = comp.build;  
+                
+                comp.build = function(data) {  
+                    // Если результатов нет, но есть еще страницы - пробуем загрузить следующую  
+                    if (!data.results.length && object.source === SOURCE_NAME && data.total_pages > 1) {  
+                        object.page = 2;  
+                        Lampa.Api.list(object, this.build.bind(this), this.empty.bind(this));  
+                        return;  
+                    }  
+                    
+                    originalBuild.call(this, data);  
+                };  
+                
+                return comp;  
+            });  
+        }
 
         var numparserApi = new NumparserApiService();
         Lampa.Api.sources.numparser = numparserApi;
@@ -1148,6 +1142,7 @@
     }
 
     function initNUMPlugin() {
+        startPlugin();
         // Сначала проверяем среду
         checkEnvironment('/version', function(isLampac) {
             IS_LAMPAC = isLampac;
@@ -1160,7 +1155,8 @@
                 
                 // ✅ Инициализируем плагин
                 setTimeout(function() {
-                    startPlugin();
+                    loadNumparserProfileSettings();
+                    initSettings();
                 }, 50);
             });
         });
