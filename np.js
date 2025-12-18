@@ -340,24 +340,10 @@
 
     // Настройки видимости категорий
     var CATEGORY_VISIBILITY = {
-        // myshows_unwatched: {
-        //     title: 'Непросмотренные (MyShows)',
-        //     visible: Lampa.Storage.get('numparser_category_myshows_unwatched', true)
-        // },
-        myshows_unwatched: {  
-            title: 'Непросмотренные (MyShows)',  
-            visible: function() {  
-                return Lampa.Storage.get('numparser_category_myshows_unwatched', true) &&   
-                    !Lampa.Storage.get('numparser_myshows_fastapi', false);  
-            }  
-        },  
-        unwatched_serials: {  
-            title: 'Непросмотренные (MyShows) FastAPI',  
-            visible: function() {  
-                return Lampa.Storage.get('numparser_category_myshows_unwatched', true) &&   
-                    Lampa.Storage.get('numparser_myshows_fastapi', false);  
-            }  
-        }, 
+        myshows_unwatched: {
+            title: 'Непросмотренные (MyShows)',
+            visible: Lampa.Storage.get('numparser_category_myshows_unwatched', true)
+        },
         legends: {
             title: 'Топ фильмы',
             visible: Lampa.Storage.get('numparser_category_legends', true)
@@ -446,7 +432,6 @@
         russian_tv: 'lampac_all_tv_shows_ru',
         legends: 'legends_id',
         anime: 'anime_id',
-        unwatched_serials: 'unwatched_serials',
     };
 
     // Динамически добавляем категории для годов
@@ -559,27 +544,8 @@
             onError = onError || function () {};
 
             var category = params.url || CATEGORIES.movies_new;
-            var page = params.page || 1;
-            
-            // Формирование URL
-            var url;
-            if (category === 'unwatched_serials') {  
-                var login = Lampa.Storage.get('myshows_login', '');  
-                var unicId = Lampa.Storage.get('lampac_unic_id', '');  
-                var profileId = Lampa.Storage.get('lampac_profile_id', '');  
-                
-                if (!login || !unicId) {  
-                    onComplete({results: [], page: page, total_pages: 1, total_results: 0});
-                    return;  
-                }  
-                
-                var hashedLogin = Lampa.Utils.hash(login);  
-                var pathHash = Lampa.Utils.hash(unicId + profileId);
-                url = BASE_URL + '/myshows/' + category + '/' + hashedLogin + '/' + pathHash +   
-                    '?page=' + page + '&language=' + Lampa.Storage.get('tmdb_lang', 'ru');  
-            } else {  
-                url = BASE_URL + '/' + category + '?page=' + page + '&language=' + Lampa.Storage.get('tmdb_lang', 'ru');  
-            }
+            var page = params.page || 1;            
+            var url = BASE_URL + '/' + category + '?page=' + page + '&language=' + Lampa.Storage.get('tmdb_lang', 'ru');  
 
             self.get(url, params, function (json) {
                 onComplete({
@@ -626,10 +592,6 @@
                     });
                 });
             }
-
-            if (CATEGORY_VISIBILITY.unwatched_serials.visible) partsData.push(function (callback) {
-                makeRequest(CATEGORIES.unwatched_serials, CATEGORY_VISIBILITY.unwatched_serials.title, callback);
-            });
 
             if (CATEGORY_VISIBILITY.legends.visible) partsData.push(function (callback) {
                 makeRequest(CATEGORIES.legends, CATEGORY_VISIBILITY.legends.title, callback);
@@ -735,25 +697,7 @@
 
             function makeRequest(category, title, callback) {
                 var page = 1;
-                var url;
-                
-                if (category === 'unwatched_serials') {  
-                    var login = Lampa.Storage.get('myshows_login', '');  
-                    var unicId = Lampa.Storage.get('lampac_unic_id', '');  
-                    var profileId = Lampa.Storage.get('lampac_profile_id', '');  
-                    
-                    if (!login || !unicId) {  
-                        callback({error: 'MyShows login or unic_id not found'});  
-                        return;  
-                    }  
-                    
-                    var hashedLogin = Lampa.Utils.hash(login);  
-                    var pathHash = Lampa.Utils.hash(unicId + profileId);
-                    url = BASE_URL + '/myshows/' + category + '/' + hashedLogin + '/' + pathHash +   
-                        '?page=' + page + '&language=' + Lampa.Storage.get('tmdb_lang', 'ru');  
-                } else {  
-                    url = BASE_URL + '/' + category + '?page=' + page + '&language=' + Lampa.Storage.get('tmdb_lang', 'ru');  
-                }
+                var url = BASE_URL + '/' + category + '?page=' + page + '&language=' + Lampa.Storage.get('tmdb_lang', 'ru');  
 
                 self.get(url, params, function (json) {
                     var filteredResults = json.results || [];
@@ -784,10 +728,6 @@
                         _original_total_pages: json.total_pages || 1,
                         _original_results: json.results || []
                     };
-
-                    // if (category === 'unwatched_serials' && window.MyShows && window.MyShows.createMyShowsCard) {  
-                    //     result.cardClass = window.MyShows.createMyShowsCard;  
-                    // }  
 
                     callback(result);
                 }, function (error) {
@@ -972,15 +912,10 @@
             setProfileSetting('numparser_source_name', DEFAULT_SOURCE_NAME);
         }
 
-        if (!hasProfileSetting('numparser_myshows_fastapi')) {
-            setProfileSetting('numparser_myshows_fastapi', "false");
-        }
-
         // Восстанавливаем значения в Lampa.Storage, чтобы UI знал актуальные данные
         Lampa.Storage.set('numparser_hide_watched', getProfileSetting('numparser_hide_watched', "true"), "true");
         Lampa.Storage.set('numparser_min_progress', getProfileSetting('numparser_min_progress', DEFAULT_MIN_PROGRESS), "true");
         Lampa.Storage.set('numparser_source_name', getProfileSetting('numparser_source_name', DEFAULT_SOURCE_NAME), "true");
-        Lampa.Storage.set('numparser_myshows_fastapi', getProfileSetting('numparser_myshows_fastapi', "false"), "true");
     }
 
     function startPlugin() {
@@ -1114,64 +1049,7 @@
             }
         });
 
-        Lampa.SettingsApi.addParam({    
-            component: 'numparser_settings',    
-            param: {    
-                name: 'numparser_myshows_fastapi',    
-                type: 'trigger',    
-                default: getProfileSetting('numparser_myshows_fastapi', "false"),   
-            },    
-            field: {    
-                name: 'Использовать FastAPI для MyShows',    
-                description: 'Загружать данные MyShows через FastAPI вместо локального кеша'    
-            },    
-            onChange: function (value) {      
-                var useFastAPI = value === true || value === "true";    
-                setProfileSetting('numparser_myshows_fastapi', useFastAPI); // ✅ сохраняем настройку в профиль
-
-                if (useFastAPI) {    
-                    if (window.MyShows && window.MyShows.getUnwatchedShowsWithDetails && window.MyShows.saveToFastAPI) {    
-                        Lampa.Loading.start();    
-                        
-                        window.MyShows.getUnwatchedShowsWithDetails(function(localData) {    
-                            console.log('[NUMParser] Получены локальные данные:', localData);  
-                            
-                            if (localData && localData.shows && localData.shows.length > 0) {    
-                                console.log('[NUMParser] Сохраняем', localData.shows.length, 'сериалов в FastAPI');  
-                                
-                                window.MyShows.saveToFastAPI(localData, 'unwatched_serials', function() {    
-                                    console.log('[NUMParser] Сохранение завершено, переключаемся на FastAPI');  
-                                    Lampa.Loading.stop();    
-                                    location.reload();    
-                                });     
-                            } else {    
-                                console.log('[NUMParser] Нет локальных данных для копирования');  
-                                Lampa.Loading.stop();    
-                                location.reload();    
-                            }    
-                        });    
-                    } else {    
-                        console.log('[NUMParser] MyShows плагин недоступен');  
-                        location.reload();    
-                    }    
-                } else {    
-                    location.reload();    
-                }    
-            } 
-        });
-
         Object.keys(CATEGORY_VISIBILITY).forEach(function (option) {
-            // Проверяем настройку FastAPI для категорий MyShows  
-            var myshows_fastapi = getProfileSetting('numparser_myshows_fastapi', "false");
-            
-            if (option === 'myshows_unwatched' && myshows_fastapi) {    
-                CATEGORY_VISIBILITY.myshows_unwatched.visible = false;
-                return;    
-            }    
-            if (option === 'unwatched_serials' && !myshows_fastapi) {  
-                CATEGORY_VISIBILITY.unwatched_serials.visible = false;
-                return;    
-            }   
             
             var settingName = 'numparser_settings_' + option + '_visible';
             var visible = getProfileSetting(settingName, "true");
@@ -1233,9 +1111,6 @@
 
                         var sourceName = settingsPanel.querySelector('input[data-name="numparser_source_name"]');
                         if (sourceName) sourceName.value = getProfileSetting('numparser_source_name', DEFAULT_SOURCE_NAME);
-
-                        var fastapi = settingsPanel.querySelector('select[data-name="numparser_myshows_fastapi"]');
-                        if (fastapi) fastapi.value = getProfileSetting('numparser_myshows_fastapi', "false");
                     }
                 }, 100);
             }
