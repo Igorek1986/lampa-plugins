@@ -50,14 +50,42 @@
         }  
         return url;  
     }  
+
+    function getProfileId() {
+        var lampaProfileId =
+            Lampa.Account.Permit.account &&
+            Lampa.Account.Permit.account.profile &&
+            Lampa.Account.Permit.account.profile.id
+                ? '_' + Lampa.Account.Permit.account.profile.id
+                : '';
+
+        if (IS_LAMPAC) {
+            var lampacProfileId = Lampa.Storage.get('lampac_profile_id', '');
+
+            if (lampacProfileId) {
+                // ✅ Нормализация: всегда "_id"
+                if (lampacProfileId[0] !== '_') {
+                    lampacProfileId = '_' + lampacProfileId;
+                }
+                return lampacProfileId;
+            }
+
+            // fallback на профиль Lampa
+            return lampaProfileId;
+        }
+
+        // Не LAMPAC → только профиль Lampa
+        return lampaProfileId;
+    }
     
     // Сохранение кеша с использованием профилей  
     function saveCacheToServer(cacheData, path, callback) {  
+        Log.info('Save', 'Cache: ', cacheData, 'Path:', path);
         
         try {  
             var data = JSON.stringify(cacheData, null, 2);  
 
-            var profileId = Lampa.Storage.get('lampac_profile_id', '');  
+            var profileId = getProfileId();
             var uri = accountUrl('/storage/set?path=myshows/' + path + '&pathfile=' + profileId);  
 
             // 🟢 Для Android — если uri относительный, добавляем window.location.origin
@@ -67,9 +95,6 @@
             }
 
             if (!IS_LAMPAC) {
-                if (Lampa.Account.Permit.account && Lampa.Account.Permit.account.profile && Lampa.Account.Permit.account.profile.id) {
-                    profileId = '_' + Lampa.Account.Permit.account.profile.id;
-                }
                 Lampa.Storage.set('myshows_' + path + profileId, cacheData)
             } else {
                 var network = new Lampa.Reguest();  
@@ -98,12 +123,10 @@
     // Загрузка кеша 
     function loadCacheFromServer(path, propertyName, callback) {  
 
-        var profileId = Lampa.Storage.get('lampac_profile_id', '');      
+        var profileId = getProfileId(); 
+        var lampa_profile = Lampa.Account.Permit.account && Lampa.Account.Permit.account.profile && Lampa.Account.Permit.account.profile.id;
 
         if (!IS_LAMPAC) {
-            if (Lampa.Account.Permit.account && Lampa.Account.Permit.account.profile && Lampa.Account.Permit.account.profile.id) {
-                profileId = '_' + Lampa.Account.Permit.account.profile.id;
-            }
             var result = Lampa.Storage.get('myshows_' + path + profileId);
             callback(result);
             return;
@@ -315,15 +338,11 @@
     // Функции для работы с профиль-специфичными настройками  
     function getProfileKey(baseKey) {
         Log.info('IS_LAMPAC:', IS_LAMPAC, 'baseKey: ', baseKey);
-        if (IS_LAMPAC) {
-            var profileId = Lampa.Storage.get('lampac_profile_id', '');
-        } else {
-            var profileId = '';
-            // Проверяем что аккаунт существует и имеет профиль
-            if (Lampa.Account.Permit.account && Lampa.Account.Permit.account.profile && Lampa.Account.Permit.account.profile.id) {
-                profileId = '_' + Lampa.Account.Permit.account.profile.id;
-            }
+        var profileId = getProfileId();
+        if (!profileId) {
+            return baseKey;
         }
+
         return baseKey + '_profile' + profileId;
     }
   
@@ -664,7 +683,7 @@
     }  
 
 
-    if (IS_LAMPAC) {
+    if (IS_LAMPAC && Lampa.Storage.get('lampac_profile_id')) {
         var originalProfileWaiter = window.__profile_extra_waiter;
         var myshowsProfileSynced = false; // Флаг синхронизации
         var currentProfileId = ''; // Текущий ID профиля
@@ -681,15 +700,13 @@
     }
 
     function handleProfileChange() {
+        Log.info('Checking for profile change...');
         // Сбрасываем флаг синхронизации при смене профиля
         myshowsProfileSynced = false;
+        Log.info('myshowsProfileSynced', myshowsProfileSynced);
         
-        // Получаем новый ID профиля
-        var newProfileId = IS_LAMPAC 
-            ? Lampa.Storage.get('lampac_profile_id', '')
-            : (Lampa.Account.Permit.account && Lampa.Account.Permit.account.profile && Lampa.Account.Permit.account.profile.id 
-            ? '_' + Lampa.Account.Permit.account.profile.id 
-            : '');
+        var newProfileId = getProfileId();
+        Log.info('Current Profile ID:', currentProfileId, 'New Profile ID:', newProfileId);
         
         // Если профиль не изменился, выходим
         if (currentProfileId === newProfileId) {
@@ -810,13 +827,8 @@
         }, 100);
     }
 
-    function initCurrentProfile() {
-        currentProfileId = IS_LAMPAC 
-            ? Lampa.Storage.get('lampac_profile_id', '')
-            : (Lampa.Account.Permit.account && Lampa.Account.Permit.account.profile && Lampa.Account.Permit.account.profile.id 
-            ? '_' + Lampa.Account.Permit.account.profile.id 
-            : '');
-        
+    function initCurrentProfile() {        
+        currentProfileId = getProfileId();
         // Устанавливаем флаг синхронизации в true при старте
         myshowsProfileSynced = true;
         
@@ -5441,12 +5453,20 @@
         // Инициализация
         updateMyShowsMenuItem();
         
-        // Слушаем изменения профиля для обновления меню
+        // Слушаем изменения профиля для обновления меню Lampac
         Lampa.Listener.follow('profile', function(e) {
             if (e.type === 'changed') {
                 Log.info('Profile changed, updating MyShows menu');
                 setTimeout(updateMyShowsMenuItem, 100);
             }
+        });
+
+        // Слушаем изменения профиля для обновления меню Lampa
+        Lampa.Listener.follow('state:changed', function(e) {  
+            if (e.target === 'favorite' && e.reason === 'profile') {   
+                Log.info('Profile changed, updating MyShows menu');
+                setTimeout(updateMyShowsMenuItem, 100);  
+            }  
         });
     }
 
