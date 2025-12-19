@@ -1210,8 +1210,6 @@
         });    
     }
 
-    var BASE_URL = Lampa.Storage.get('base_url_numparser');
-
     ////// Статус фильмов. (Смотрю, Буду смотреть, Не смотрел) //////
     function setMyShowsMovieStatus(movieData, status, callback) {          
         var title = movieData.original_title || movieData.title;  
@@ -5642,6 +5640,8 @@
             IS_LAMPAC = isLampac;
             Log.info('✅ Среда:', IS_LAMPAC ? 'Lampac' : 'Обычная Lampa');
             
+            addMyShowsToTMDB();  
+            addMyShowsToCUB();  
             // Небольшая задержка для стабильности
             setTimeout(function() {
                 // Инициализируем все компоненты
@@ -5653,8 +5653,6 @@
                 cleanupOldMappings();  
                 initTimelineListener();    
                 addProgressMarkerStyles();  
-                addMyShowsToTMDB();  
-                addMyShowsToCUB();  
                 addMyShowsButtonStyles();  
                 init();
             }, 50);
@@ -5663,11 +5661,6 @@
 
     // Проверка Lampac
     function checkLampacEnvironment(callback) {
-        // Быстрая проверка
-        if (window.lampa_settings?.fixdcma === true) {
-            callback(true);
-            return;
-        }
         
         // Проверка через /version
         var xhr = new XMLHttpRequest();
