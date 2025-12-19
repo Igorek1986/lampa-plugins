@@ -22,6 +22,30 @@
     var globalTimecodes = null;  
     var timecodesLoading = false;  
     var timecodesCallbacks = [];  
+
+
+    function createLogMethod(emoji, consoleMethod) {
+        var DEBUG = Lampa.Storage.get('numparser_debug_mode', false);
+        if (!DEBUG) {
+            return function() {};
+        }
+
+        return function() {
+            var args = Array.prototype.slice.call(arguments);
+            if (emoji) {
+                args.unshift(emoji);
+            }
+            args.unshift('Numparser');
+            consoleMethod.apply(console, args);
+        };
+    }
+
+    var Log = {
+        info: createLogMethod('ℹ️', console.log),
+        error: createLogMethod('❌', console.error),
+        warn: createLogMethod('⚠️', console.warn),
+        debug: createLogMethod('🐛', console.debug)
+    };
   
     // Функция загрузки всех таймкодов пользователя  
     function loadAllTimecodes(callback) {  
@@ -49,13 +73,13 @@
         }  
         
         timecodesLoading = true;   
-        console.log('[Numparser] Loading all timecodes from /timecode/all_views');  
+        Log.info('Loading all timecodes from /timecode/all_views');  
   
         var uid = Lampa.Storage.get('account_email') || Lampa.Storage.get('user_uid') || Lampa.Storage.get('lampac_unic_id', '');  
         var profileId = Lampa.Storage.get('lampac_profile_id', '');  
   
         if (!uid) {  
-            console.log('[Numparser] No user ID found, skipping timecode loading');  
+            Log.info('No user ID found, skipping timecode loading');  
             globalTimecodes = {};  
             timecodesLoading = false;  
               
@@ -74,7 +98,7 @@
   
         var network = new Lampa.Reguest();  
         network.silent(url, function(response) {  
-            console.log('[Numparser] Timecodes loaded:', Object.keys(response || {}).length, 'cards');  
+            Log.info('Timecodes loaded:', Object.keys(response || {}).length, 'cards');  
             globalTimecodes = response || {};  
             timecodesLoading = false;  
   
@@ -84,7 +108,7 @@
             });  
             timecodesCallbacks = [];  
         }, function(error) {  
-            console.error('[Numparser] Error loading timecodes:', error);  
+            Log.error('Error loading timecodes:', error);  
             globalTimecodes = {};  
             timecodesLoading = false;  
   
@@ -128,7 +152,7 @@
                                     return false;  
                                 }    
                             } catch (e) {    
-                                console.error('[Numparser] Error parsing timecode:', e);    
+                                Log.error('Error parsing timecode:', e);    
                             }    
                         }    
                     }    
@@ -161,7 +185,7 @@
                                         return true; // Эпизод просмотрен  
                                     }      
                                 } catch (e) {  
-                                    console.error('[Numparser] Error parsing timecode for hash:', episodeHash, e);  
+                                    Log.error('Error parsing timecode for hash:', episodeHash, e);  
                                 }      
                             }      
                             return false; // Эпизод не просмотрен  
@@ -187,14 +211,14 @@
         var page = currentPage;  
         var maxPages = 10;  
     
-        console.log('[Numparser] Loading more - current:', results.length, 'needed:', 20 - results.length,   
+        Log.info('Loading more - current:', results.length, 'needed:', 20 - results.length,   
                     'page:', page, 'totalPages:', totalPages, 'maxPages:', maxPages, 'category:', category);  
     
         function loadNextPage() {  
-            console.log('[Numparser] Loading page', page, 'current results:', results.length, 'totalPages:', totalPages);  
+            Log.info('Loading page', page, 'current results:', results.length, 'totalPages:', totalPages);  
             
             if (results.length >= 20 || page >= totalPages || page >= maxPages) {  
-                console.log('[Numparser] Stopping loading - reached limit. Results:', results.length,   
+                Log.info('Stopping loading - reached limit. Results:', results.length,   
                             'Page:', page, 'TotalPages:', totalPages, 'MaxPages:', maxPages);  
                 callback(results.slice(0, 20));  
                 return;  
@@ -209,31 +233,31 @@
                 source: source  
             };  
     
-            console.log('[Numparser] Requesting page', page, 'of category', category);  
+            Log.info('Requesting page', page, 'of category', category);  
             Lampa.Api.sources[source].list(params, function(response) {  
                 delete isLoadingMore[category + '_' + page];  
                 
                 if (response && response.results && Array.isArray(response.results)) {  
-                    console.log('[Numparser] Received page', page, 'with', response.results.length,   
+                    Log.info('Received page', page, 'with', response.results.length,   
                             'items. Response total_pages:', response.total_pages);  
                     
                     // ✅ ИСПРАВЛЕНО: Асинхронный вызов с callback  
                     basicFilterWatchedContent(response.results, function(filtered) {  
-                        console.log('[Numparser] After filtering new page:', filtered.length, 'items remain');  
+                        Log.info('After filtering new page:', filtered.length, 'items remain');  
                         
                         results = results.concat(filtered);  
-                        console.log('[Numparser] Total results after concatenation:', results.length);  
+                        Log.info('Total results after concatenation:', results.length);  
                         
                         if (results.length < 20 && page < totalPages && page < maxPages) {  
-                            console.log('[Numparser] Need more items. Current:', results.length, 'Loading next page...');  
+                            Log.info('Need more items. Current:', results.length, 'Loading next page...');  
                             loadNextPage();  
                         } else {  
-                            console.log('[Numparser] Loading complete. Final result:', results.length, 'items');  
+                            Log.info('Loading complete. Final result:', results.length, 'items');  
                             callback(results.slice(0, 20));  
                         }  
                     });  
                 } else {  
-                    console.log('[Numparser] No valid response received for page', page);  
+                    Log.info('No valid response received for page', page);  
                     callback(results.slice(0, 20));  
                 }  
             });  
@@ -430,7 +454,7 @@
         self.discovery = false;
 
         function normalizeData(json, category, page, source, callback) {  
-            console.log('[Numparser] Normalize data called for:', category, 'page:', page, 'initial results:', json.results ? json.results.length : 0);
+            Log.info('Normalize data called for:', category, 'page:', page, 'initial results:', json.results ? json.results.length : 0);
             var isInternal = isLoadingMore[category + '_' + page];
 
             var currentActivity = Lampa.Activity.active();  
@@ -477,7 +501,7 @@
                 total_results: json.total_results || json.total || 0  
             };  
 
-            console.log('[Numparser] Before filtering in normalizeData:', normalized.results.length, 'items');  
+            Log.info('Before filtering in normalizeData:', normalized.results.length, 'items');  
             
             if (Lampa.Storage.get('numparser_hide_watched')) {    
                 // ✅ ПРАВИЛЬНО - асинхронный вызов с callback  
@@ -859,7 +883,7 @@
 
     // === Поддержка профилей ===
     function getProfileKey(baseKey) {
-        console.log('Numparser', 'IS_LAMPAC:', IS_LAMPAC, 'baseKey: ', baseKey);
+        Log.info('IS_LAMPAC:', IS_LAMPAC, 'baseKey: ', baseKey);
         if (IS_LAMPAC) {
             var profileId = Lampa.Storage.get('lampac_profile_id', '');
         } else {
@@ -936,7 +960,7 @@
         });  
 
         // Добавляем переключатель фильтрации
-        console.log('Numparser', 'TimecodeUser!', HAS_TIMECODE_USER, 'LAMPAC:', IS_LAMPAC);
+        Log.info('TimecodeUser!', HAS_TIMECODE_USER, 'LAMPAC:', IS_LAMPAC);
         if (IS_LAMPAC && HAS_TIMECODE_USER) {
             Lampa.SettingsApi.addParam({
                 component: 'numparser_settings',
@@ -1118,7 +1142,7 @@
 
     // Проверка Lampac или Lampa и наличие TimecodeUser
     function checkEnvironment(path, callback) {
-        if (path === '/version') {
+        if (path = '/version') {
             // Быстрая проверка
             if (window.lampa_settings?.fixdcma === true) {
                 callback(true);
@@ -1146,12 +1170,12 @@
         // Сначала проверяем среду
         checkEnvironment('/version', function(isLampac) {
             IS_LAMPAC = isLampac;
-            console.log('[NumParser]', '✅ Среда:', IS_LAMPAC ? 'Lampac' : 'Обычная Lampa');
+            Log.info('✅ Среда:', IS_LAMPAC ? 'Lampac' : 'Обычная Lampa');
             
             // Затем проверяем TimecodeUser
             checkEnvironment('/timecode/all_views', function(hasTimecodeUser) {
                 HAS_TIMECODE_USER = hasTimecodeUser;
-                console.log('[NumParser]', '✅ TimecodeUser:', HAS_TIMECODE_USER ? 'Доступен' : 'Не доступен');
+                Log.info('✅ TimecodeUser:', HAS_TIMECODE_USER ? 'Доступен' : 'Не доступен');
                 
                 // ✅ Инициализируем плагин
                 setTimeout(function() {
