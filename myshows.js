@@ -1187,11 +1187,6 @@
                     
 
                     saveCacheToServer(cacheData, 'unwatched_serials', function(result) {});    
-    
-                    var useFastAPI = Lampa.Storage.get('numparser_myshows_fastapi', false);    
-                    if (useFastAPI) {     
-                        saveToFastAPI(cacheData, 'unwatched_serials');    
-                    }  
                 }    
                 callback(result);    
             });    
@@ -1199,57 +1194,6 @@
     }
 
     var BASE_URL = Lampa.Storage.get('base_url_numparser');
-
-    function saveToFastAPI(cacheData, path, callback) {    
-        var login = Lampa.Storage.get('myshows_login', '');    
-        var unicId = Lampa.Storage.get('lampac_unic_id') || Lampa.Storage.get('account_email') || Lampa.Storage.get('lampa_uid', '');    
-        var profileId = Lampa.Storage.get('lampac_profile_id', '');    
-
-        if (!IS_LAMPAC) {
-            if (Lampa.Account.Permit.account && Lampa.Account.Permit.account.profile && Lampa.Account.Permit.account.profile.id) {
-                profileId = '_' + Lampa.Account.Permit.account.profile.id;
-            }
-        }
-        
-        if (!login || !unicId) {    
-            Log.info('Не удается сохранить в FastAPI: отсутствует login или unic_id');    
-            if (callback) callback();  
-            return;    
-        }    
-        
-        // Сортировка данных
-        var sortOrder = getProfileSetting('myshows_sort_order', 'progress');
-        if (cacheData.shows && cacheData.shows.length > 0) {
-            sortShows(cacheData.shows, sortOrder);
-        }
-        
-        var hashedLogin = Lampa.Utils.hash(login);    
-        var pathHash = Lampa.Utils.hash(unicId + profileId);    
-        var url = BASE_URL + '/myshows/' + path + '/' + hashedLogin + '/' + pathHash;    
-        var jsonData = JSON.stringify(cacheData);    
-        
-        var network = new Lampa.Reguest();    
-        
-        // Правильный порядок: url, success, error, post_data, params  
-        network.silent(url,   
-            function(response) {    
-                Log.info('Данные успешно сохранены в FastAPI');    
-                if (callback) callback();    
-            },   
-            function(error) {    
-                Log.info('Ошибка сохранения в FastAPI:', error);    
-                if (callback) callback();    
-            },   
-            jsonData,    
-            {    
-                method: 'POST',    
-                headers: {    
-                    'Content-Type': 'application/json',    
-                    'X-Profile-ID': profileId    
-                }    
-            }  
-        );   
-    }
 
     ////// Статус фильмов. (Смотрю, Буду смотреть, Не смотрел) //////
     function setMyShowsMovieStatus(movieData, status, callback) {          
@@ -1852,15 +1796,8 @@
 
     function getUnwatchedShowsWithDetails(callback, show) {     
         Log.info('getUnwatchedShowsWithDetails called');      
-        var useFastAPI = Lampa.Storage.get('numparser_myshows_fastapi', 'false');    
-        Log.info('Using FastAPI:', useFastAPI, 'isLampac:', IS_LAMPAC);  
         
-        if (useFastAPI) {   
-            fetchFromMyShowsAPI(function(freshResult) {  
-                Log.info('FastAPI result:', freshResult);      
-                callback(freshResult);      
-            });      
-        } else if (IS_LAMPAC) {  
+        if (IS_LAMPAC) {  
             // Используем кеширование только в Lampac  
             loadCacheFromServer('unwatched_serials', 'shows', function(cachedResult) {      
                 Log.info('Cache result:', cachedResult);      
@@ -2217,7 +2154,6 @@
 
     window.MyShows = {
         getUnwatchedShowsWithDetails: getUnwatchedShowsWithDetails,
-        saveToFastAPI: saveToFastAPI,
 
     };
 
