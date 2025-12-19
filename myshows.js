@@ -20,6 +20,11 @@
     var IS_LAMPAC = null;
 
     function createLogMethod(emoji, consoleMethod) {
+        var DEBUG = Lampa.Storage.get('myshows_debug_mode', false);
+        if (!DEBUG) {
+            return function() {};
+        }
+
         return function() {
             var args = Array.prototype.slice.call(arguments);
             if (emoji) {
