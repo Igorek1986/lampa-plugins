@@ -939,20 +939,6 @@
             }  
         } catch (e) {}  
 
-        newName = Lampa.Storage.get('numparser_settings', SOURCE_NAME);
-        if (Lampa.Storage.field('start_page') === SOURCE_NAME) {
-            window.start_deep_link = {
-                component: 'category',
-                page: 1,
-                url: '',
-                source: SOURCE_NAME,
-                title: SOURCE_NAME
-            };
-        }
-
-        var values = Lampa.Params.values.start_page;
-        values[SOURCE_NAME] = SOURCE_NAME;
-
         Lampa.SettingsApi.addComponent({  
             component: 'numparser_settings',  
             name: SOURCE_NAME,  
@@ -1105,6 +1091,20 @@
             }
         });
 
+        newName = Lampa.Storage.get('numparser_settings', SOURCE_NAME);
+        if (Lampa.Storage.field('start_page') === SOURCE_NAME) {
+            window.start_deep_link = {
+                component: 'category',
+                page: 1,
+                url: '',
+                source: SOURCE_NAME,
+                title: SOURCE_NAME
+            };
+        }
+
+        var values = Lampa.Params.values.start_page;
+        values[SOURCE_NAME] = SOURCE_NAME;
+
         var menuItem = $('<li data-action="numparser" class="menu__item selector"><div class="menu__ico">' + ICON + '</div><div class="menu__text num_text">' + SOURCE_NAME + '</div></li>');
         $('.menu .menu__list').eq(0).append(menuItem);
 
@@ -1172,8 +1172,8 @@
                 
                 // ✅ Инициализируем плагин
                 setTimeout(function() {
-                    loadNumparserProfileSettings();
                     initSettings();
+                    loadNumparserProfileSettings();
                 }, 50);
             });
         });
