@@ -3648,6 +3648,25 @@
 
     ////// Статус сериалов и фильмов. (Смотрю, Буду смотреть, Не смотрел) //////
     function createMyShowsButtons(e, currentStatus, isMovie) {
+        if (!e || !e.object || !e.object.activity) return;
+
+        var container = e.object.activity
+            .render()
+            .find('.full-start-new__buttons');
+
+        if (!container.length) return;
+
+        if (container.data('myshows-initialized')) {
+            return;
+        }
+
+        container.data('myshows-initialized', true);
+
+        if (container.find('.myshows-btn').length) {
+            container.data('myshows-initialized', true);
+            return;
+        }
+
         // Конфигурация кнопок в зависимости от типа контента
         var buttonsConfig = isMovie ? [
             { title: 'Просмотрел', status: 'finished' },
@@ -5456,6 +5475,8 @@
             if (e.type === 'changed') {
                 Log.info('Profile changed, updating MyShows menu');
                 setTimeout(updateMyShowsMenuItem, 100);
+                setTimeout(addMyShowsButtonStyles, 100); 
+                setTimeout(addProgressMarkerStyles, 100);
             }
         });
 
