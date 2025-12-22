@@ -1120,10 +1120,6 @@
         // === Обновляем настройки при смене профиля ===
         Lampa.Listener.follow('profile', function(e) {
             if (e.type === 'changed') {
-                // Сбрасываем кэш
-                globalTimecodes = null;
-                timecodesLoading = false;
-                timecodesCallbacks = [];
 
                 loadNumparserProfileSettings();
 
