@@ -882,8 +882,8 @@
     }
 
     // === Поддержка профилей ===
-    function getProfileKey(baseKey) {
-        Log.info('IS_LAMPAC:', IS_LAMPAC, 'baseKey: ', baseKey);
+    function getProfileId() {
+
         if (IS_LAMPAC) {
             var profileId = Lampa.Storage.get('lampac_profile_id', '');
         } else {
@@ -893,6 +893,12 @@
                 profileId = '_' + Lampa.Account.Permit.account.profile.id;
             }
         }
+        return profileId;
+    }
+
+    function getProfileKey(baseKey) {
+        Log.info('IS_LAMPAC:', IS_LAMPAC, 'baseKey: ', baseKey);
+        var profileId = getProfileId();
         return baseKey + '_profile' + profileId;
     }
 
@@ -911,6 +917,7 @@
 
     // Загружаем профильные настройки
     function loadNumparserProfileSettings() {
+
         if (!hasProfileSetting('numparser_hide_watched') && HAS_TIMECODE_USER) {
             setProfileSetting('numparser_hide_watched', "true");
         }
@@ -1141,6 +1148,32 @@
         });
     }
 
+    var lastKnownProfileId = '';
+
+    Lampa.Listener.follow('profile', function(e) {
+        Log.info('Profile Change - Type:', e.type);
+        
+        if (e.type === 'changed') {
+            var newProfileId = getProfileId();
+            
+            // ✅ Проверяем, действительно ли профиль изменился
+            if (newProfileId !== lastKnownProfileId) {
+                Log.info('🔀 Смена профиля:', lastKnownProfileId, '->', newProfileId);
+                
+                // Сбрасываем кэш
+                globalTimecodes = null;
+                timecodesLoading = false;
+                timecodesCallbacks = [];
+                
+                // Обновляем последний известный профиль
+                lastKnownProfileId = newProfileId;
+                
+            } else {
+                Log.info('⚠️ Профиль не изменился');
+            }
+        }
+    });
+
     // Проверка Lampac или Lampa и наличие TimecodeUser
     function checkEnvironment(path, callback) {
         
@@ -1170,6 +1203,9 @@
             checkEnvironment('/timecode/all_views', function(hasTimecodeUser) {
                 HAS_TIMECODE_USER = hasTimecodeUser;
                 Log.info('✅ TimecodeUser:', HAS_TIMECODE_USER ? 'Доступен' : 'Не доступен');
+
+                lastKnownProfileId = getProfileId();
+                Log.info('Начальный профиль:', lastKnownProfileId);
                 
                 // ✅ Инициализируем плагин
                 setTimeout(function() {
