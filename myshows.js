@@ -124,7 +124,11 @@
     function loadCacheFromServer(path, propertyName, callback) {  
 
         var profileId = getProfileId(); 
-        var lampa_profile = Lampa.Account.Permit.account && Lampa.Account.Permit.account.profile && Lampa.Account.Permit.account.profile.id;
+
+        if (!getProfileSetting('myshows_token')) {
+            // не использовать кеш, не показывать маркеры
+            return;
+        }
 
         if (!IS_LAMPAC) {
             var result = Lampa.Storage.get('myshows_' + path + profileId);
