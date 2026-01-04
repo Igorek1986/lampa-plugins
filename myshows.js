@@ -5,7 +5,7 @@
     var DEFAULT_MIN_PROGRESS = 90;    
     var API_URL = 'https://api.myshows.me/v3/rpc/';
     var MAP_KEY = 'myshows_hash_map';  
-    var PROXY_URL = 'https://numparser.igorek1986.ru/myshows/auth';  
+    var MYSHOWS_AUTH_PROXY = 'https://numparser.igorek1986.ru/myshows/auth';  
     var DEFAULT_CACHE_DAYS = 30;
     var JSON_HEADERS = {  
         'Content-Type': 'application/json'  
@@ -210,52 +210,49 @@
     }
 
     // Функция авторизации через прокси  
-    function tryAuthFromSettings(successCallback) {        
-        var login = getProfileSetting('myshows_login', '');        
-        var password = getProfileSetting('myshows_password', '');        
-            
-        if (!login || !password) {        
-            if (!successCallback) Lampa.Noty.show('Enter login and password');      
-            if (successCallback) successCallback(null);    
-            return;        
-        }    
-            
-        var network = new Lampa.Reguest();    
-            
-        network.native(PROXY_URL, function(data) {    
-            if (data && data.token) {    
-                setProfileSetting('myshows_token', data.token);    
-                Lampa.Storage.set('myshows_token', data.token, true);    
-                    
-                if (successCallback) {    
-                    successCallback(data.token);    
-                } else {    
-                    Lampa.Noty.show('Auth success! Reboot after 3 seconds...');    
-                    setTimeout(function() {  
-                        window.location.reload(); 
-                    }, 3000);
-                }     
-            } else {    
-                if (successCallback) {    
-                    successCallback(null);    
-                } else {    
-                    Lampa.Noty.show('Auth failed: no token received');    
-                }    
-            }    
-        }, function(xhr) {    
-            if (successCallback) {    
-                successCallback(null);    
-            } else {    
-                Lampa.Noty.show('Auth error: ' + xhr.status);    
-            }    
-        }, JSON.stringify({    
-            login: login,    
-            password: password    
-        }), {    
-            headers: JSON_HEADERS,    
-            dataType: 'json'    
-        });    
-    }  
+    function tryAuthFromSettings(successCallback) {
+        var login = getProfileSetting('myshows_login', '');
+        var password = getProfileSetting('myshows_password', '');
+
+        if (!login || !password) {
+            var msg = 'Enter MyShows login and password';
+            if (successCallback) {
+                successCallback(null);
+            } else {
+                Lampa.Noty.show(msg);
+            }
+            return;
+        }
+
+        var network = new Lampa.Reguest();
+        network.native(MYSHOWS_AUTH_PROXY, function(data) {
+            if (data && data.token) {
+                var token = data.token;
+                setProfileSetting('myshows_token', token);
+                Lampa.Storage.set('myshows_token', token, true);
+                if (successCallback) {
+                    successCallback(token);
+                } else {
+                    Lampa.Noty.show('✅ Auth success! Reboot...');
+                    setTimeout(function() { window.location.reload(); }, 3000);
+                }
+            } else {
+                fail('No token received');
+            }
+        }, function(xhr) {
+            fail('Network error: ' + xhr.status);
+        }, JSON.stringify({ login: login, password: password }), {
+            headers: JSON_HEADERS,
+        });
+
+        function fail(msg) {
+            if (successCallback) {
+                successCallback(null);
+            } else {
+                Lampa.Noty.show('🔒 MyShows auth failed: ' + msg);
+            }
+        }
+    }
   
     // Функция для выполнения запросов с автоматическим обновлением токена    
     function makeAuthenticatedRequest(options, callback, errorCallback) {    
