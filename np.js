@@ -470,7 +470,7 @@
                         vote_average: item.vote_average || 0,  
                         backdrop_path: item.backdrop_path || item.backdrop || '',  
                         background_image: item.background_image,  
-                        source: Lampa.Storage.field('source').toLowerCase() || Lampa.Storage.get('numparser_source_name') || SOURCE_NAME, 
+                        source: Lampa.Storage.get('numparser_source_name') || SOURCE_NAME, 
                         type: (item.first_air_date || item.number_of_seasons) ? 'tv' : 'movie',  
                         original_title: item.original_title || item.original_name || '',  
                         title: item.title || item.name || '',  
