@@ -18,6 +18,7 @@
     var remove_icon = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" fill="currentColor"/></svg>';
     var cancelled_icon = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm5 11H7v-2h10v2z" fill="currentColor"/></svg>';
     var IS_LAMPAC = null;
+    var EPISODES_CACHE = {}; 
 
     function createLogMethod(emoji, consoleMethod) {
         var DEBUG = Lampa.Storage.get('myshows_debug_mode', false);
@@ -1515,7 +1516,7 @@
         for(var i=0; i<episodes.length; i++){  
             var ep = episodes[i];  
             // Формируем hash как в Lampa: season_number + episode_number + original_name  
-            var hashStr = '' + ep.seasonNumber + ep.episodeNumber + originalName;  
+            var hashStr = '' + ep.seasonNumber + (ep.seasonNumber > 10 ? ':' : '') + ep.episodeNumber + originalName; 
             var hash = Lampa.Utils.hash(hashStr);  
             map[hash] = {  
                 episodeId: ep.id,  
@@ -1567,12 +1568,15 @@
             
             getEpisodesByShowId(showId, token, function(episodes) {
                 var newMap = buildHashMap(episodes, originalName);
+
                 // Сохраняем mapping
                 for (var k in newMap) {
                     if (newMap.hasOwnProperty(k)) {
                         map[k] = newMap[k];
                     }
                 }
+                EPISODES_CACHE[originalName] = map;
+                Log.info('EPISODES_CACHE', EPISODES_CACHE[originalName]);
                 Lampa.Storage.set(MAP_KEY, map);
                 callback(map);
             });
@@ -1693,6 +1697,10 @@
         } else {  
             ensureHashMap(card, token, function(map) {    
                 var episodeId = map[hash] && map[hash].episodeId ? map[hash].episodeId : map[hash];  
+
+                if (episodeId) {
+                    Log.info('episodeId есть в Local Storage', episodeId);
+                }
                 
                 // Если hash не найден в mapping - принудительно обновляем  
                 if (!episodeId) {  
@@ -1712,10 +1720,41 @@
                         var newEpisodeId = newMap[hash] && newMap[hash].episodeId ? newMap[hash].episodeId : newMap[hash];  
                         if (newEpisodeId) {  
                             processEpisode(newEpisodeId, hash, percent, card, token, minProgress, addThreshold);  
-                        }  
+                        } else {
+                            Log.info('Нет newEpisodeId — ищем в EPISODES_CACHE');
+                            var originalName = card.original_name || card.original_title || card.title;
+                            var episodes_hash = EPISODES_CACHE[originalName];
+                            var episodeId = null;
+                            
+                            if (episodes_hash) {
+                                Log.info('episodes_hash', episodes_hash);
+                                for (var epHash in episodes_hash) {
+                                    // Проверяем, что свойство принадлежит самому объекту, а не прототипу
+                                    if (episodes_hash.hasOwnProperty(epHash)) {
+                                        Log.info('Сравниваем epHash:', epHash, 'с искомым hash:', hash);
+                                        
+                                        // Сравниваем хеши
+                                        if (epHash == hash) {
+                                            // Нашли совпадение!
+                                            var episodeData = episodes_hash[epHash];
+                                            episodeId = episodeData.id; // или episodeData.id, смотря что в объекте
+                                            Log.info('Найден episodeId:', episodeId);
+                                            break; // Выходим из цикла
+                                        }
+                                    }
+                                }
+                            }
+
+                            if (episodeId) {
+                                processEpisode(episodeId, hash, percent, card, token, minProgress, addThreshold);
+                            } else {
+                                Log.warn('❌ Не найден episodeId даже в EPISODES_CACHE для хеша:', hash);
+                            }
+                        }
                     });  
                     return;  
                 }  
+                 Log.info('CheckEpisode episodeId', episodeId);
                 
                 processEpisode(episodeId, hash, percent, card, token, minProgress, addThreshold);  
             });   
