@@ -1543,7 +1543,7 @@
         var tmdbId = identifiers.tmdbId;
         var alternativeTitles = identifiers.alternativeTitles;
         
-        if ((!imdbId && !kinopoiskId) || !originalName) {
+        if (!originalName) {
             callback({});
             return;
         }
