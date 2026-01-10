@@ -1310,31 +1310,41 @@
         Log.info('getShowCandidates called with:', {  
             dataLength: data.length,  
             title: title,  
-            year: year  
+            year: year
         });  
         
         var candidates = [];    
         
         for (var i = 0; i < data.length; ++i) {    
             try {    
-                var show = data[i];  
-                if (!show) {    
+                var item = data[i];
+                if (!item || !item.show) {  
                     continue;    
                 }    
                 
-                var yearMatch = show.year == year;    
-    
+                var show = item.show;
+                
+                // Нормализация для сравнения
+                var titleMatch = show.titleOriginal && 
+                    normalizeForComparison(show.titleOriginal.toLowerCase()) === 
+                    normalizeForComparison(title.toLowerCase());
+                    
+                var yearMatch = show.year == year;
+        
                 Log.info('Checking show:', {  
                     id: show.id,  
-                    titleOriginal: show.titleOriginal,  
+                    titleOriginal: show.titleOriginal,
+                    normalizedShowTitle: show.titleOriginal ? normalizeForComparison(show.titleOriginal.toLowerCase()) : 'null',
+                    normalizedInputTitle: normalizeForComparison(title.toLowerCase()),
+                    titleMatch: titleMatch,
                     year: show.year,  
                     yearMatch: yearMatch  
                 });  
-    
-                // Для точного совпадения года добавляем кандидата  
-                if (yearMatch) {    
+        
+                // Точное совпадение по названию и году
+                if (titleMatch && yearMatch) {    
                     candidates.push(show);    
-                    Log.info('Added year match candidate:', show.id);  
+                    Log.info('Added exact match candidate:', show.id);  
                 }    
             } catch (e) {    
                 Log.error('Error processing show:', e);  
