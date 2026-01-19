@@ -1181,6 +1181,8 @@
                     last_episode_to_myshows: last_episode_to_myshows  
                 });    
             }    
+
+            shows = shows.slice(0, 10);
             
             // Получаем данные TMDB и объединяем  
             getTMDBDetails(shows, function(result) {    
@@ -2040,79 +2042,79 @@
         return sortByAlphabet(a, b);
     }
 
-        function fetchTMDBShowDetails(currentShow, index, status) {
-            function cleanTitle(title) {
-                if (!title) return '';
-                // Убираем суффиксы в скобках: (JP), (RU), и т.д.
-                return title.replace(/\s*\([^)]*\)\s*$/, '').trim();
-            }
-            
-            var originalTitle = currentShow.originalTitle || currentShow.title;
-            var cleanedTitle = cleanTitle(currentShow.originalTitle) || cleanTitle(currentShow.title);
-            
-            var searchIndex = 0;
-            var searchAttempts = [];
-            
-            // Добавляем варианты в порядке приоритета
-            // 1. Оригинальное название (например, "One Piece (JP)")
-            if (originalTitle) {
-                searchAttempts.push(originalTitle);
-            }
-            
-            // 2. Очищенное название (например, "One Piece") - только если отличается
-            if (cleanedTitle && cleanedTitle !== originalTitle) {
-                searchAttempts.push(cleanedTitle);
-            }
-            
-            // Убираем дубликаты (на всякий случай)
-            searchAttempts = searchAttempts.filter(function(query, idx, self) {
-                return self.indexOf(query) === idx;
-            });
-            
-            Log.info('Поиск TMDB для:', currentShow.title, 
-                    'Варианты:', searchAttempts);
-            
-            function trySearch() {
-                if (searchIndex >= searchAttempts.length) {
-                    // Все варианты исчерпаны
-                    Log.warn('Не найдено в TMDB:', currentShow.title);
-                    status.append('tmdb_' + index, null);
-                    return;
-                }
-                
-                var searchQuery = searchAttempts[searchIndex];
-                searchIndex++;
-                
-                var searchUrl = 'search/tv' +
-                    '?api_key=' + Lampa.TMDB.key() +
-                    '&query=' + encodeURIComponent(searchQuery) +
-                    '&year=' + currentShow.year +
-                    '&language=' + Lampa.Storage.get('tmdb_lang', 'ru');
-                
-                Log.info('TMDB попытка', searchIndex + '/' + searchAttempts.length + 
-                        ':', currentShow.title, '->', searchQuery);
-                
-                var network = new Lampa.Reguest();
-                network.silent(Lampa.TMDB.api(searchUrl), function (searchResponse) {
-                    if (searchResponse && searchResponse.results && searchResponse.results.length > 0) {
-                        var foundShow = searchResponse.results[0];
-                        Log.info('Найдено:', foundShow.name, '(ID:', foundShow.id + ')');
-                        enrichTMDBShow(foundShow, currentShow, index, status);
-                    } else {
-                        Log.info('Не найдено, пробуем следующий вариант для:', currentShow.title);
-                        // Пробуем следующий вариант
-                        trySearch();
-                    }
-                }, function (error) {
-                    Log.error('Ошибка запроса TMDB для:', searchQuery, error);
-                    // При ошибке пробуем следующий вариант
-                    trySearch();
-                });
-            }
-            
-            // Начинаем поиск
-            trySearch();
+    function fetchTMDBShowDetails(currentShow, index, status) {
+        function cleanTitle(title) {
+            if (!title) return '';
+            // Убираем суффиксы в скобках: (JP), (RU), и т.д.
+            return title.replace(/\s*\([^)]*\)\s*$/, '').trim();
         }
+        
+        var originalTitle = currentShow.originalTitle || currentShow.title;
+        var cleanedTitle = cleanTitle(currentShow.originalTitle) || cleanTitle(currentShow.title);
+        
+        var searchIndex = 0;
+        var searchAttempts = [];
+        
+        // Добавляем варианты в порядке приоритета
+        // 1. Оригинальное название (например, "One Piece (JP)")
+        if (originalTitle) {
+            searchAttempts.push(originalTitle);
+        }
+        
+        // 2. Очищенное название (например, "One Piece") - только если отличается
+        if (cleanedTitle && cleanedTitle !== originalTitle) {
+            searchAttempts.push(cleanedTitle);
+        }
+        
+        // Убираем дубликаты (на всякий случай)
+        searchAttempts = searchAttempts.filter(function(query, idx, self) {
+            return self.indexOf(query) === idx;
+        });
+        
+        Log.info('Поиск TMDB для:', currentShow.title, 
+                'Варианты:', searchAttempts);
+        
+        function trySearch() {
+            if (searchIndex >= searchAttempts.length) {
+                // Все варианты исчерпаны
+                Log.warn('Не найдено в TMDB:', currentShow.title);
+                status.append('tmdb_' + index, null);
+                return;
+            }
+            
+            var searchQuery = searchAttempts[searchIndex];
+            searchIndex++;
+            
+            var searchUrl = 'search/tv' +
+                '?api_key=' + Lampa.TMDB.key() +
+                '&query=' + encodeURIComponent(searchQuery) +
+                '&year=' + currentShow.year +
+                '&language=' + Lampa.Storage.get('tmdb_lang', 'ru');
+            
+            Log.info('TMDB попытка', searchIndex + '/' + searchAttempts.length + 
+                    ':', currentShow.title, '->', searchQuery);
+            
+            var network = new Lampa.Reguest();
+            network.silent(Lampa.TMDB.api(searchUrl), function (searchResponse) {
+                if (searchResponse && searchResponse.results && searchResponse.results.length > 0) {
+                    var foundShow = searchResponse.results[0];
+                    Log.info('Найдено:', foundShow.name, '(ID:', foundShow.id + ')');
+                    enrichTMDBShow(foundShow, currentShow, index, status);
+                } else {
+                    Log.info('Не найдено, пробуем следующий вариант для:', currentShow.title);
+                    // Пробуем следующий вариант
+                    trySearch();
+                }
+            }, function (error) {
+                Log.error('Ошибка запроса TMDB для:', searchQuery, error);
+                // При ошибке пробуем следующий вариант
+                trySearch();
+            });
+        }
+        
+        // Начинаем поиск
+        trySearch();
+    }
 
     function enrichTMDBShow(foundShow, currentShow, index, status) {
         var fullUrl = 'tv/' + foundShow.id +
