@@ -2203,7 +2203,7 @@
                 for (var i = 0; i < episodes.length; i++) {
                     var ep = episodes[i];
                     
-                    if (ep.episodeNumber === 0) {
+                    if (ep.isSpecial || ep.episodeNumber === 0) {
                         specials++;
                         
                         var airDateSpecial = ep.airDateUTC ? new Date(ep.airDateUTC) : 
