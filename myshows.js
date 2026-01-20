@@ -5580,270 +5580,104 @@
         });
     }
 
-    // С кешем для Lampac
+    // // Без кеша
     function getTMDBDetailsSimple(items, callback) {
+        Log.info('getTMDBDetailsSimple: Started with', items.length, 'items to enrich');
+
+        var data = { results: [] };
+
         if (items.length === 0) {
-            Log.info('[TMDB Simple] Нет элементов для обработки');
-            return callback({ results: [] });
-        }
-
-        // В обычной Lampa — простая реализация БЕЗ кэша и partNext
-        if (!IS_LAMPAC) {
-            var data = { results: [] };
-            var status = new Lampa.Status(items.length);
-            status.onComplite = function() {
-                Log.info('[TMDB Simple] Все запросы завершены. Всего результатов:', data.results.length);
-                callback({ results: data.results });
-            };
-
-            for (var i = 0; i < items.length; i++) {
-                (function(currentItem, index) {
-                    function cleanTitle(title) {
-                        if (!title) return '';
-                        return title.replace(/\s*\([^)]*\)\s*$/, '').trim();
-                    }
-
-                    var originalTitle = currentItem.originalTitle || currentItem.title;
-                    var cleanedTitle = cleanTitle(originalTitle);
-                    var titles = [originalTitle];
-                    if (cleanedTitle !== originalTitle) titles.push(cleanedTitle);
-
-                    var attempts = [];
-                    titles.forEach(t => {
-                        if (currentItem.year > 1900 && currentItem.year < 2100) {
-                            attempts.push({ query: t, year: currentItem.year });
-                        }
-                        attempts.push({ query: t, year: null });
-                    });
-
-                    var attemptIndex = 0;
-                    var found = false;
-
-                    function tryAttempt() {
-                        if (found || attemptIndex >= attempts.length) {
-                            status.append('item_' + index, {});
-                            return;
-                        }
-
-                        var attempt = attempts[attemptIndex];
-                        var endpoint = currentItem.type === 'movie' ? 'search/movie' : 'search/tv';
-                        var searchUrl = endpoint +
-                            '?api_key=' + Lampa.TMDB.key() +
-                            '&query=' + encodeURIComponent(attempt.query) +
-                            (attempt.year ? '&year=' + attempt.year : '') +
-                            '&language=' + Lampa.Storage.get('tmdb_lang', 'ru');
-
-                        var network = new Lampa.Reguest();
-                        network.silent(Lampa.TMDB.api(searchUrl), function(response) {
-                            if (!found && response && response.results && response.results[0]) {
-                                found = true;
-                                var enriched = response.results[0];
-                                enriched.myshowsId = currentItem.myshowsId;
-                                enriched.watchStatus = currentItem.watchStatus;
-                                enriched.type = currentItem.type === 'movie' ? 'movie' : 'tv';
-                                data.results.push(enriched);
-                                Log.info('[TMDB Simple] Успешно найдено:', enriched.title || enriched.name);
-                            }
-                            if (!found) {
-                                attemptIndex++;
-                                tryAttempt();
-                            } else {
-                                status.append('item_' + index, {});
-                            }
-                        }, function(error) {
-                            Log.error('[TMDB Simple] Ошибка запроса:', error);
-                            attemptIndex++;
-                            tryAttempt();
-                        });
-                    }
-
-                    tryAttempt();
-                })(items[i], i);
-            }
+            Log.info('getTMDBDetailsSimple: No items to process, returning empty result');
+            callback({
+                page: 1,
+                results: [],
+                total_pages: 0,
+                total_results: 0
+            });
             return;
         }
 
-        // === LampaC: с кэшем и fallback ===
         function cleanTitle(title) {
             if (!title) return '';
             return title.replace(/\s*\([^)]*\)\s*$/, '').trim();
         }
 
-        loadCacheFromServer('tmdb_simple_cache', 'data', function(wrapper) {
-            var fullCache = (wrapper && wrapper.data) || {};
-            var showsCache = fullCache.shows || {};
-            var moviesCache = fullCache.movies || {};
+        var status = new Lampa.Status(items.length);
+        status.onComplite = function() {
+            Log.info('getTMDBDetailsSimple: All requests completed, have', data.results.length, 'enriched items');
+            callback({ results: data.results });
+        };
 
-            var cache = {};
-            for (var k in showsCache) if (showsCache.hasOwnProperty(k)) cache[k] = showsCache[k];
-            for (var k in moviesCache) if (moviesCache.hasOwnProperty(k)) cache[k] = moviesCache[k];
+        for (var i = 0; i < items.length; i++) {
+            (function(currentItem, index) {
+                var originalTitle = currentItem.originalTitle || currentItem.title;
+                var cleanedTitle = cleanTitle(originalTitle);
+                var titles = [originalTitle];
+                if (cleanedTitle !== originalTitle) titles.push(cleanedTitle);
 
-            var enrichedResults = [];
-            var newItems = [];
-
-            function normalizeType(type) {
-                return type === 'movie' ? 'movie' : 'tv';
-            }
-
-            for (var i = 0; i < items.length; i++) {
-                var item = items[i];
-                var normType = normalizeType(item.type);
-                var key = item.myshowsId + '_' + normType;
-
-                if (cache[key]) {
-                    enrichedResults.push(cache[key]);
-                    Log.info('[TMDB Simple] Беру из кэша: ' + (item.title || item.originalTitle) + ' (' + key + ')');
-                } else {
-                    var newItem = {};
-                    for (var p in item) if (item.hasOwnProperty(p)) newItem[p] = item[p];
-                    newItem.type = normType;
-                    newItems.push(newItem);
-                    Log.info('[TMDB Simple] Требуется запрос: ' + (item.title || item.originalTitle) + ' (' + key + ')');
-                }
-            }
-
-            if (newItems.length === 0) {
-                Log.info('[TMDB Simple] Все элементы найдены в кэше. Возврат без запросов.');
-                callback({ results: enrichedResults });
-                return;
-            }
-
-            var parts = [];
-            for (var j = 0; j < newItems.length; j++) {
-                (function(item) {
-                    parts.push(function(partCallback) {
-                        var originalTitle = item.originalTitle || item.title;
-                        var cleanedTitle = cleanTitle(item.originalTitle) || cleanTitle(item.title);
-
-                        var attempts = [];
-                        if (originalTitle) {
-                            if (item.year > 1900 && item.year < 2100) {
-                                attempts.push({ query: originalTitle, withYear: true });
-                            }
-                            attempts.push({ query: originalTitle, withYear: false });
-                        }
-                        if (cleanedTitle && cleanedTitle !== originalTitle) {
-                            if (item.year > 1900 && item.year < 2100) {
-                                attempts.push({ query: cleanedTitle, withYear: true });
-                            }
-                            attempts.push({ query: cleanedTitle, withYear: false });
-                        }
-
-                        var attemptIndex = 0;
-                        var found = false;
-
-                        function tryNext() {
-                            if (found || attemptIndex >= attempts.length) {
-                                Log.warn('[TMDB Simple] Не найдено: ' + (item.title || item.originalTitle) + ' (все попытки исчерпаны)');
-                                partCallback();
-                                return;
-                            }
-
-                            var attempt = attempts[attemptIndex];
-                            var query = attempt.query;
-                            var withYear = attempt.withYear;
-                            var endpoint = item.type === 'movie' ? 'search/movie' : 'search/tv';
-                            var yearPart = withYear && item.year > 1900 && item.year < 2100 ? '&year=' + item.year : '';
-                            var searchUrl = endpoint +
-                                '?api_key=' + Lampa.TMDB.key() +
-                                '&query=' + encodeURIComponent(query) +
-                                '&language=' + Lampa.Storage.get('tmdb_lang', 'ru') +
-                                yearPart;
-
-                            Log.info('[TMDB Simple] Запрос: "' + query + '"' + (yearPart ? ' с годом ' + item.year : ' без года'));
-
-                            var network = new Lampa.Reguest();
-                            network.silent(Lampa.TMDB.api(searchUrl), function(response) {
-                                if (!found && response && response.results && response.results[0]) {
-                                    found = true;
-                                    var result = response.results[0];
-                                    var enriched = {
-                                        adult: result.adult,
-                                        backdrop_path: result.backdrop_path,
-                                        genre_ids: result.genre_ids,
-                                        id: result.id,
-                                        original_language: result.original_language,
-                                        original_title: result.original_title,
-                                        original_name: result.original_name,
-                                        overview: result.overview,
-                                        popularity: result.popularity,
-                                        poster_path: result.poster_path,
-                                        release_date: result.release_date,
-                                        first_air_date: result.first_air_date,
-                                        title: result.title,
-                                        name: result.name,
-                                        video: result.video,
-                                        vote_average: result.vote_average,
-                                        vote_count: result.vote_count,
-                                        origin_country: result.origin_country,
-                                        myshowsId: item.myshowsId,
-                                        watchStatus: item.watchStatus,
-                                        type: item.type
-                                    };
-
-                                    var key = item.myshowsId + '_' + item.type;
-                                    cache[key] = enriched;
-                                    enrichedResults.push(enriched);
-
-                                    Log.info('[TMDB Simple] Успешно найдено: "' + (result.title || result.name) + '" для "' + query + '"' + (yearPart ? ' с годом' : ''));
-                                    partCallback();
-                                } else {
-                                    attemptIndex++;
-                                    tryNext();
-                                }
-                            }, function(error) {
-                                Log.error('[TMDB Simple] Ошибка сети при запросе: "' + query + '"' + (yearPart ? ' с годом' : ' без года'), error);
-                                attemptIndex++;
-                                tryNext();
-                            });
-                        }
-
-                        if (attempts.length > 0) {
-                            tryNext();
-                        } else {
-                            Log.warn('[TMDB Simple] Нет названия для поиска: ' + item.myshowsId);
-                            partCallback();
-                        }
-                    });
-                })(newItems[j]);
-            }
-
-            Log.info('[TMDB Simple] Запуск ' + parts.length + ' запросов через partNext (макс. 2 параллельно)');
-            Lampa.Api.partNext(parts, 2, function() {
-                // УСПЕХ: все части завершены
-                finalizeAndCallback();
-            }, function() {
-                // ОШИБКА: игнорируем, всё равно сохраняем то, что есть
-                Log.warn('[TMDB Simple] partNext завершился с ошибкой, но продолжаем работу');
-                finalizeAndCallback();
-            });
-
-            function finalizeAndCallback() {
-                Log.info('[TMDB Simple] Все запросы завершены. Сохранение кэша...');
-
-                var finalShows = {};
-                var finalMovies = {};
-
-                // Слияние старого кэша и новых данных
-                for (var k in showsCache) if (showsCache.hasOwnProperty(k)) finalShows[k] = showsCache[k];
-                for (var k in moviesCache) if (moviesCache.hasOwnProperty(k)) finalMovies[k] = moviesCache[k];
-
-                for (var i = 0; i < enrichedResults.length; i++) {
-                    var item = enrichedResults[i];
-                    var key = item.myshowsId + '_' + item.type;
-                    if (item.type === 'movie') {
-                        finalMovies[key] = item;
-                    } else {
-                        finalShows[key] = item;
+                var attempts = [];
+                titles.forEach(t => {
+                    if (currentItem.year > 1900 && currentItem.year < 2100) {
+                        attempts.push({ query: t, year: currentItem.year });
                     }
+                    attempts.push({ query: t, year: null }); // fallback без года
+                });
+
+                var attemptIndex = 0;
+                var found = false;
+
+                function tryAttempt() {
+                    if (found || attemptIndex >= attempts.length) {
+                        // Все попытки исчерпаны
+                        status.append('item_' + index, {});
+                        return;
+                    }
+
+                    var attempt = attempts[attemptIndex];
+                    var endpoint = currentItem.type === 'movie' ? 'search/movie' : 'search/tv';
+                    var searchUrl = endpoint +
+                        '?api_key=' + Lampa.TMDB.key() +
+                        '&query=' + encodeURIComponent(attempt.query) +
+                        (attempt.year ? '&year=' + attempt.year : '') +
+                        '&language=' + Lampa.Storage.get('tmdb_lang', 'ru');
+
+                    var network = new Lampa.Reguest();
+                    network.silent(Lampa.TMDB.api(searchUrl), function(response) {
+                        if (!found && response && response.results && response.results.length > 0) {
+                            found = true;
+                            var enriched = response.results[0];
+                            enriched.myshowsId = currentItem.myshowsId;
+                            enriched.watchStatus = currentItem.watchStatus;
+                            enriched.type = currentItem.type === 'movie' ? 'movie' : 'tv';
+
+                            if (enriched.type === 'tv') {
+                                enriched.last_episode_date = enriched.first_air_date;
+                            }
+
+                            data.results.push(enriched);
+                            Log.info('getTMDBDetailsSimple: Found', enriched.title || enriched.name, 'for MyShows ID:', currentItem.myshowsId);
+                        }
+
+                        if (!found) {
+                            attemptIndex++;
+                            tryAttempt();
+                        } else {
+                            status.append('item_' + index, {});
+                        }
+                    }, function(error) {
+                        Log.info('getTMDBDetailsSimple: Search error for', currentItem.title, ':', error);
+                        attemptIndex++;
+                        tryAttempt(); // продолжаем даже при ошибке сети
+                    });
                 }
 
-                saveCacheToServer({ data: { shows: finalShows, movies: finalMovies } }, 'tmdb_simple_cache', function() {
-                    Log.info('[TMDB Simple] Кэш сохранён. Всего результатов: ' + enrichedResults.length);
-                    callback({ results: enrichedResults });
-                });
-            }
-        });
+                if (attempts.length > 0) {
+                    tryAttempt();
+                } else {
+                    status.append('item_' + index, {});
+                }
+            })(items[i], i);
+        }
     }
 
     function addMyShowsMenuItems() {  
