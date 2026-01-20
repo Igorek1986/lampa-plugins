@@ -1115,22 +1115,22 @@
         })   
     }
 
-    // Получить непросмотренные серии
+     // Получить непросмотренные серии
     function fetchFromMyShowsAPI(callback) {    
-        makeMyShowsJSONRPCRequest('lists.Episodes', { list: 'unwatched'     
-        }, function(success, response) {    
+        makeMyShowsJSONRPCRequest('lists.EpisodesUnwatched', {}, function(success, response) {    
             if (!response || !response.result) {    
                 callback({ error: response ? response.error : 'Empty response' });    
                 return;    
             }    
-    
+
             var showsData = {};    
             var shows = [];    
             var myshowsIndex = {};  
             
+            // Обрабатываем новую структуру с группировкой по шоу
             for (var i = 0; i < response.result.length; i++) {    
                 var item = response.result[i];    
-                if (item.show) {    
+                if (item.show && item.episodes && item.episodes.length > 0) {    
                     var showId = item.show.id;    
                     
                     if (!showsData[showId]) {    
@@ -1141,8 +1141,18 @@
                         };    
                     }    
                     
-                    showsData[showId].unwatchedCount++;    
-                    showsData[showId].episodes.push(item.episode);    
+                    // Добавляем все эпизоды из массива episodes
+                    for (var j = 0; j < item.episodes.length; j++) {
+                        var episode = item.episodes[j];
+                        showsData[showId].episodes.push(episode);
+                    }
+                    
+                    showsData[showId].unwatchedCount = showsData[showId].episodes.length;
+                    
+                    // Сортируем эпизоды по дате выхода (новые сначала)
+                    showsData[showId].episodes.sort(function(a, b) {
+                        return new Date(b.airDateUTC || b.airDate) - new Date(a.airDateUTC || a.airDate);
+                    });
                 }    
             }    
             
@@ -1182,7 +1192,8 @@
                 });    
             }    
 
-            shows = shows.slice(0, 10);
+            // shows = shows.slice(0, 10);
+            Log.info('shows', shows);
             
             // Получаем данные TMDB и объединяем  
             getTMDBDetails(shows, function(result) {    
@@ -1196,9 +1207,7 @@
                         if (myshowsIndex[key]) {  
                             tmdbShow.myshowsId = myshowsIndex[key].myshowsId;  
                             tmdbShow.unwatchedCount = myshowsIndex[key].unwatchedCount;  
-                            // tmdbShow.unwatchedEpisodes = myshowsIndex[key].unwatchedEpisodes;  
                             tmdbShow.last_episode_to_myshows = myshowsIndex[key].last_episode_to_myshows;  
-
                         }  
                     }  
                     
@@ -1982,11 +1991,23 @@
         }
 
         var status = new Lampa.Status(shows.length);
+        
+        // Логируем общее количество шоу
+        Log.info('[DEBUG] Всего шоу из MyShows:', shows.length);
+        shows.forEach(function(show, idx) {
+            Log.info(`[DEBUG] Шоу ${idx + 1}: "${show.title}" (ID: ${show.myshowsId})`);
+        });
 
         status.onComplite = function (data) {
             var matchedShows = Object.keys(data)
                 .map(function (key) { return data[key]; })
                 .filter(Boolean);
+
+            // Логируем сколько шоу было обработано
+            Log.info('[DEBUG] Успешно обработано шоу:', matchedShows.length);
+            matchedShows.forEach(function(show, idx) {
+                Log.info(`[DEBUG] Обработано ${idx + 1}: "${show.name}" (ID: ${show.id})`);
+            });
 
             var sortOrder = getProfileSetting('myshows_sort_order', 'progress');
 
@@ -1995,8 +2016,18 @@
             callback({ shows: matchedShows });
         };
 
-        shows.forEach(function (show, index) {
-            fetchTMDBShowDetails(show, index, status);
+        loadCacheFromServer('unwatched_serials', 'shows', function(cache) {
+            var cachedShows = cache && cache.shows ? cache.shows : [];
+            
+            // Логируем кэш
+            Log.info('[DEBUG] Шоу в кэше:', cachedShows.length);
+            cachedShows.forEach(function(show, idx) {
+                Log.info(`[DEBUG] Кэш ${idx + 1}: "${show.name}" (ID: ${show.id})`);
+            });
+
+            shows.forEach(function(currentShow, index) {
+                fetchTMDBShowDetails(currentShow, index, status, cachedShows);
+            });
         });
     }
 
@@ -2042,81 +2073,192 @@
         return sortByAlphabet(a, b);
     }
 
-    function fetchTMDBShowDetails(currentShow, index, status) {
+    function fetchTMDBShowDetails(currentShow, index, status, cachedShows) {
         function cleanTitle(title) {
             if (!title) return '';
-            // Убираем суффиксы в скобках: (JP), (RU), и т.д.
             return title.replace(/\s*\([^)]*\)\s*$/, '').trim();
         }
+
+        var originalName = currentShow.originalTitle || currentShow.title || '';
+        var cleanedName = cleanTitle(originalName);
         
+        Log.info(`[DEBUG] Ищем шоу "${originalName}" (ID: ${currentShow.myshowsId})`);
+
+        var cachedShow = cachedShows.find(function(s) {
+            var cachedName = cleanTitle(s.original_title || s.original_name || s.name || '').toLowerCase();
+            var currentName = cleanedName.toLowerCase();
+            var isMatch = cachedName === currentName;
+            
+            if (isMatch) {
+                Log.info(`[DEBUG] Найдено в кэше: "${s.name}" для "${originalName}"`);
+            }
+            
+            return isMatch;
+        });
+        
+        if (cachedShow && cachedShow.id) {
+            Log.info('TMDB пропущен (кеш):', cachedShow.name);
+            return enrichTMDBShow(
+                {id: cachedShow.id, name: cachedShow.name}, 
+                currentShow, 
+                index, 
+                status,
+                cachedShows
+            );
+        } else {
+            Log.info(`[DEBUG] Не найдено в кэше: "${originalName}"`);
+        }
+
+        // если нет в кеше — обычный поиск
+        realTMDBSearch(currentShow, index, status);
+    }
+
+    var tmdbSearchQueue = [];
+    var isProcessingTMDBQueue = false;
+
+    function processTMDBQueue() {
+        if (isProcessingTMDBQueue || tmdbSearchQueue.length === 0) {
+            return;
+        }
+        
+        isProcessingTMDBQueue = true;
+        var task = tmdbSearchQueue.shift();
+        
+        // Выполняем поиск для текущей задачи
+        performSearch(task);
+    }
+
+    function performSearch(task) {
+        var searchUrl = 'search/tv' +
+            '?api_key=' + Lampa.TMDB.key() +
+            '&query=' + encodeURIComponent(task.query) +
+            '&language=' + Lampa.Storage.get('tmdb_lang', 'ru');
+        
+        if (task.withYear && task.currentShow.year && 
+            task.currentShow.year > 1900 && task.currentShow.year < 2100) {
+            searchUrl += '&year=' + task.currentShow.year;
+        }
+        
+        Log.info(`[DEBUG] TMDB запрос (очередь: ${tmdbSearchQueue.length}): "${task.query}"`);
+        
+        var network = new Lampa.Reguest();
+        network.silent(Lampa.TMDB.api(searchUrl), function (searchResponse) {
+            if (searchResponse && searchResponse.results && searchResponse.results.length) {
+                enrichTMDBShow(searchResponse.results[0], task.currentShow, task.index, task.status);
+            } else {
+                // Если не нашли
+                if (task.withYear) {
+                    // Пробуем без года - добавляем в очередь
+                    tmdbSearchQueue.unshift({
+                        currentShow: task.currentShow,
+                        index: task.index,
+                        status: task.status,
+                        query: task.query,
+                        withYear: false,
+                        attemptIndex: task.attemptIndex,
+                        searchAttempts: task.searchAttempts
+                    });
+                } else if (task.attemptIndex < task.searchAttempts.length - 1) {
+                    // Пробуем следующий вариант названия
+                    tmdbSearchQueue.unshift({
+                        currentShow: task.currentShow,
+                        index: task.index,
+                        status: task.status,
+                        query: task.searchAttempts[task.attemptIndex + 1],
+                        withYear: true,
+                        attemptIndex: task.attemptIndex + 1,
+                        searchAttempts: task.searchAttempts
+                    });
+                } else {
+                    // Все варианты исчерпаны
+                    task.status.append('tmdb_' + task.index, null);
+                }
+            }
+            
+            // Задержка перед следующим запросом
+            setTimeout(function() {
+                isProcessingTMDBQueue = false;
+                processTMDBQueue();
+            }, 50);
+        }, function(error) {
+            Log.error(`[DEBUG] Ошибка запроса TMDB для "${task.query}":`, error);
+            
+            // При ошибке
+            setTimeout(function() {
+                isProcessingTMDBQueue = false;
+                processTMDBQueue();
+            }, 50);
+        });
+    }
+
+    function realTMDBSearch(currentShow, index, status) {
+        function cleanTitle(title) {
+            if (!title) return '';
+            return title.replace(/\s*\([^)]*\)\s*$/, '').trim();
+        }
+
         var originalTitle = currentShow.originalTitle || currentShow.title;
         var cleanedTitle = cleanTitle(currentShow.originalTitle) || cleanTitle(currentShow.title);
         
-        var searchIndex = 0;
         var searchAttempts = [];
+        if (originalTitle) searchAttempts.push(originalTitle);
+        if (cleanedTitle && cleanedTitle !== originalTitle) searchAttempts.push(cleanedTitle);
         
-        // Добавляем варианты в порядке приоритета
-        // 1. Оригинальное название (например, "One Piece (JP)")
-        if (originalTitle) {
-            searchAttempts.push(originalTitle);
-        }
-        
-        // 2. Очищенное название (например, "One Piece") - только если отличается
-        if (cleanedTitle && cleanedTitle !== originalTitle) {
-            searchAttempts.push(cleanedTitle);
-        }
-        
-        // Убираем дубликаты (на всякий случай)
-        searchAttempts = searchAttempts.filter(function(query, idx, self) {
-            return self.indexOf(query) === idx;
+        searchAttempts = searchAttempts.filter(function(q, i, a) {
+            return a.indexOf(q) === i;
         });
-        
-        Log.info('Поиск TMDB для:', currentShow.title, 
-                'Варианты:', searchAttempts);
-        
-        function trySearch() {
-            if (searchIndex >= searchAttempts.length) {
-                // Все варианты исчерпаны
-                Log.warn('Не найдено в TMDB:', currentShow.title);
-                status.append('tmdb_' + index, null);
-                return;
-            }
-            
-            var searchQuery = searchAttempts[searchIndex];
-            searchIndex++;
-            
-            var searchUrl = 'search/tv' +
-                '?api_key=' + Lampa.TMDB.key() +
-                '&query=' + encodeURIComponent(searchQuery) +
-                '&year=' + currentShow.year +
-                '&language=' + Lampa.Storage.get('tmdb_lang', 'ru');
-            
-            Log.info('TMDB попытка', searchIndex + '/' + searchAttempts.length + 
-                    ':', currentShow.title, '->', searchQuery);
-            
-            var network = new Lampa.Reguest();
-            network.silent(Lampa.TMDB.api(searchUrl), function (searchResponse) {
-                if (searchResponse && searchResponse.results && searchResponse.results.length > 0) {
-                    var foundShow = searchResponse.results[0];
-                    Log.info('Найдено:', foundShow.name, '(ID:', foundShow.id + ')');
-                    enrichTMDBShow(foundShow, currentShow, index, status);
-                } else {
-                    Log.info('Не найдено, пробуем следующий вариант для:', currentShow.title);
-                    // Пробуем следующий вариант
-                    trySearch();
-                }
-            }, function (error) {
-                Log.error('Ошибка запроса TMDB для:', searchQuery, error);
-                // При ошибке пробуем следующий вариант
-                trySearch();
+
+        // Добавляем задачу в очередь
+        if (searchAttempts.length > 0) {
+            tmdbSearchQueue.push({
+                currentShow: currentShow,
+                index: index,
+                status: status,
+                query: searchAttempts[0],
+                withYear: true,
+                attemptIndex: 0,
+                searchAttempts: searchAttempts
             });
+            
+            processTMDBQueue();
+        } else {
+            status.append('tmdb_' + index, null);
         }
-        
-        // Начинаем поиск
-        trySearch();
     }
 
-    function enrichTMDBShow(foundShow, currentShow, index, status) {
+    function enrichTMDBShow(foundShow, currentShow, index, status, cachedShows) {
+        var cachedShow = cachedShows
+            ? cachedShows.find(function(s) {
+                if (s.myshowsId && currentShow.myshowsId) return s.myshowsId === currentShow.myshowsId;
+                var name1 = (s.original_title || s.original_name || s.name || '').toLowerCase();
+                var name2 = (currentShow.originalTitle || currentShow.title || '').toLowerCase();
+                return name1 === name2;
+            })
+            : null;
+
+        Log.info('TMDB cachedShow', cachedShow);
+
+        if (cachedShow && cachedShow.seasons) {
+            Log.info('TMDB из кеша:', cachedShow.name);
+            getMyShowsEpisodesCount(foundShow, currentShow, cachedShow, function(myShowsData) {
+                if (myShowsData) {
+                    appendEnriched(
+                        cachedShow,
+                        foundShow,
+                        currentShow,
+                        myShowsData.totalEpisodes,
+                        myShowsData.releasedEpisodes,
+                        index,
+                        status
+                    );
+                }
+            });
+            return; // 🔹 больше не идем к TMDB
+        }
+
+        // Если нет в кеше — обычный запрос к TMDB
+        Log.info('TMDB запрос:', foundShow.name);
+
         var fullUrl = 'tv/' + foundShow.id +
             '?api_key=' + Lampa.TMDB.key() +
             '&language=' + Lampa.Storage.get('tmdb_lang', 'ru');
@@ -2127,24 +2269,23 @@
                 return status.append('tmdb_' + index, foundShow);
             }
 
-            // 🔥 Параллельно получаем данные от MyShows
             getMyShowsEpisodesCount(foundShow, currentShow, fullResponse, function(myShowsData) {
                 if (myShowsData) {
-                    // Используем данные MyShows
-                    Log.info('Используем данные MyShows для', foundShow.name, {
-                        total: myShowsData.totalEpisodes,
-                        released: myShowsData.releasedEpisodes
-                    });
-                    
-                    // Сразу вызываем appendEnriched с данными MyShows
-                    appendEnriched(fullResponse, foundShow, currentShow, 
-                                myShowsData.totalEpisodes, 
-                                myShowsData.releasedEpisodes, 
-                                index, status);
+                    appendEnriched(
+                        fullResponse,
+                        foundShow,
+                        currentShow,
+                        myShowsData.totalEpisodes,
+                        myShowsData.releasedEpisodes,
+                        index,
+                        status
+                    );
                 }
             });
         });
     }
+
+
 
     function getMyShowsEpisodesCount(foundShow, currentShow, fullResponse, callback) {
         // Пробуем использовать myshowsId из currentShow
