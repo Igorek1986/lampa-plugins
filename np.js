@@ -96,111 +96,95 @@
             url += '&profile_id=' + encodeURIComponent(profileId);  
         }  
   
-        var network = new Lampa.Reguest();  
-        network.silent(url, function(response) {  
-            Log.info('Timecodes loaded:', Object.keys(response || {}).length, 'cards');  
-            globalTimecodes = response || {};  
-            timecodesLoading = false;  
-  
-            // Вызываем все ожидающие callbacks  
-            timecodesCallbacks.forEach(function(cb) {  
-                cb(globalTimecodes);  
-            });  
-            timecodesCallbacks = [];  
-        }, function(error) {  
-            Log.error('Error loading timecodes:', error);  
-            globalTimecodes = {};  
-            timecodesLoading = false;  
-  
-            // Вызываем все ожидающие callbacks с пустым объектом  
-            timecodesCallbacks.forEach(function(cb) {  
-                cb(globalTimecodes);  
-            });  
-            timecodesCallbacks = [];  
-        });  
-    }  
+        var network = new Lampa.Reguest();
+        network.silent(url, function(response) {
+            // Успех — значит, эндпоинт доступен
+            var hasData = response && Object.keys(response).length > 0;
+            globalTimecodes = response || {};
+            timecodesLoading = false;
+            
+            // Передаём и данные, и флаг доступности
+            if (callback) callback(globalTimecodes, true, hasData);
+            
+            timecodesCallbacks.forEach(function(cb) { cb(globalTimecodes); });
+            timecodesCallbacks = [];
+        }, function(error) {
+            // Ошибка — эндпоинт недоступен
+            Log.error('Timecode endpoint not available:', error);
+            globalTimecodes = {};
+            timecodesLoading = false;
+            
+            if (callback) callback(globalTimecodes, false, false);
+            
+            timecodesCallbacks.forEach(function(cb) { cb(globalTimecodes); });
+            timecodesCallbacks = [];
+        });
+    }
   
     // ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ ФИЛЬТРАЦИИ  
-    function basicFilterWatchedContent(results, callback) {      
-        if (!Lampa.Storage.get('numparser_hide_watched')) {      
-            callback(results);      
-            return;      
-        }      
-        
-        // ✅ Загружаем таймкоды, если их еще нет  
-        loadAllTimecodes(function() {  
-            var filtered = results.filter(function (item) {      
-                if (!item) return false;      
-            
-                var mediaType = (item.first_air_date || item.number_of_seasons) ? 'tv' : 'movie';      
-                    
-                // Проверяем статус "выброшено" через Favorite      
-                var favoriteItem = Lampa.Favorite.check(item);      
-                var thrown = !!favoriteItem && favoriteItem.thrown;      
-                if (thrown) return false;      
-            
-                if (mediaType === 'movie') {      
-                    var cardId = item.id + '_movie';    
-                        
-                    if (globalTimecodes && globalTimecodes[cardId]) {    
-                        var timecodes = globalTimecodes[cardId];    
-                            
-                        for (var key in timecodes) {    
-                            try {    
-                                var data = JSON.parse(timecodes[key]);    
-                                if (data.percent >= MIN_PROGRESS) {    
-                                    return false;  
-                                }    
-                            } catch (e) {    
-                                Log.error('Error parsing timecode:', e);    
-                            }    
-                        }    
-                    }    
-                }      
-        
-                if (mediaType === 'tv') {        
-                    var cardId = item.id + '_tv';      
-                    var releasedEpisodes = getReleasedEpisodesFromTMDB(item);      
-                        
-                    if (!releasedEpisodes || !releasedEpisodes.length) {      
-                        return true;      
-                    }      
-                
-                    if (globalTimecodes && globalTimecodes[cardId]) {      
-                        var timecodes = globalTimecodes[cardId];      
-                        var originalTitle = item.original_name || item.original_title || item.name || item.title;  
-                            
-                        var allWatched = releasedEpisodes.every(function(episode) {      
-                            // ✅ Формируем хеш как в Lampa: season + episode + original_title  
-                            var hashString = episode.season_number.toString() +   
-                                        episode.episode_number.toString() +   
-                                        originalTitle;  
-                            var episodeHash = Lampa.Utils.hash(hashString);  
-                                
-                            // ✅ Проверяем наличие хеша в таймкодах  
-                            if (timecodes[episodeHash]) {  
-                                try {      
-                                    var data = JSON.parse(timecodes[episodeHash]);      
-                                    if (data.percent >= MIN_PROGRESS) {      
-                                        return true; // Эпизод просмотрен  
-                                    }      
-                                } catch (e) {  
-                                    Log.error('Error parsing timecode for hash:', episodeHash, e);  
-                                }      
-                            }      
-                            return false; // Эпизод не просмотрен  
-                        });      
-                            
-                        return !allWatched; // Скрыть, если все эпизоды просмотрены  
-                    }      
-                }   
-            
-                return true;      
-            });  
-            
-            // ✅ Возвращаем отфильтрованные результаты через callback  
-            callback(filtered);  
-        });  
+    function basicFilterWatchedContent(results, callback) {
+        if (!Lampa.Storage.get('numparser_hide_watched')) {
+            callback(results);
+            return;
+        }
+
+        var filtered = results.filter(function (item) {
+            if (!item) return false;
+
+            var mediaType = (item.first_air_date || item.number_of_seasons) ? 'tv' : 'movie';
+            var favoriteItem = Lampa.Favorite.check(item);
+            var thrown = !!favoriteItem && favoriteItem.thrown;
+            if (thrown) return false;
+
+            if (mediaType === 'movie') {
+                var cardId = item.id + '_movie';
+                if (globalTimecodes && globalTimecodes[cardId]) {
+                    for (var key in globalTimecodes[cardId]) {
+                        try {
+                            var data = JSON.parse(globalTimecodes[cardId][key]);
+                            if (data.percent >= MIN_PROGRESS) {
+                                return false;
+                            }
+                        } catch (e) {
+                            Log.error('Error parsing timecode:', e);
+                        }
+                    }
+                }
+            }
+
+            if (mediaType === 'tv') {
+                var cardId = item.id + '_tv';
+                var releasedEpisodes = getReleasedEpisodesFromTMDB(item);
+                if (!releasedEpisodes || !releasedEpisodes.length) {
+                    return true;
+                }
+                if (globalTimecodes && globalTimecodes[cardId]) {
+                    var originalTitle = item.original_name || item.original_title || item.name || item.title;
+                    var allWatched = releasedEpisodes.every(function(episode) {
+                        var hashString = episode.season_number.toString() +
+                                        episode.episode_number.toString() +
+                                        originalTitle;
+                        var episodeHash = Lampa.Utils.hash(hashString);
+                        if (globalTimecodes[cardId][episodeHash]) {
+                            try {
+                                var data = JSON.parse(globalTimecodes[cardId][episodeHash]);
+                                if (data.percent >= MIN_PROGRESS) {
+                                    return true;
+                                }
+                            } catch (e) {
+                                Log.error('Error parsing timecode for hash:', episodeHash, e);
+                            }
+                        }
+                        return false;
+                    });
+                    return !allWatched;
+                }
+            }
+
+            return true;
+        });
+
+        callback(filtered);
     }
   
     var isLoadingMore = {};
@@ -335,117 +319,35 @@
         return season ? season.episode_count : 0;  
     }
 
-    // Настройки видимости групп годов
-    var currentYear = new Date().getFullYear();
+    function getAllCategories() {
+        var currentYear = new Date().getFullYear();
+        var list = [
+            { key: 'myshows_unwatched', title: 'Непросмотренные (MyShows)' },
+            { key: 'legends_id',         title: 'Топ фильмы' },
+            { key: 'continues_movie', title: "Продолжить просмотр (Фильмы)"},
+            { key: 'continues_tv', title: "Продолжить просмотр (Сериалы)"},
+            { key: 'continues_anime', title: "Продолжить просмотр (Аниме)"},
+            { key: 'episodes',           title: 'Ближайшие выходы эпизодов' },
+            { key: 'recent',             title: "Недавние выходы эпизодов"},
+            { key: 'lampac_movies_4k_new',      title: 'В высоком качестве (новые)' },
+            { key: 'lampac_movies_new',         title: 'Новые фильмы' },
+            { key: 'lampac_movies_ru_new',      title: 'Новые русские фильмы' },
+            { key: 'lampac_all_tv_shows',       title: 'Сериалы' },
+            { key: 'lampac_all_tv_shows_ru',    title: 'Русские сериалы' },
+            { key: 'anime_id',           title: 'Аниме' },
+            { key: 'lampac_movies_4k',          title: 'В высоком качестве' },
+            { key: 'lampac_movies',             title: 'Фильмы' },
+            { key: 'lampac_movies_ru',          title: 'Русские фильмы' },
+            { key: 'lampac_all_cartoon_movies', title: 'Мультфильмы' },
+            { key: 'lampac_all_cartoon_series', title: 'Мультсериалы' }
+        ];
 
-    function isYearVisible(year) {
-        if (year >= 1980 && year <= 1989) return CATEGORY_VISIBILITY.year_1980_1989.visible;
-        if (year >= 1990 && year <= 1999) return CATEGORY_VISIBILITY.year_1990_1999.visible;
-        if (year >= 2000 && year <= 2009) return CATEGORY_VISIBILITY.year_2000_2009.visible;
-        if (year >= 2010 && year <= 2019) return CATEGORY_VISIBILITY.year_2010_2019.visible;
-        if (year >= 2020 && year <= currentYear) return CATEGORY_VISIBILITY.year_2020_current.visible;
-        return false;
-    }
-
-    // Настройки видимости категорий
-    var CATEGORY_VISIBILITY = {
-        myshows_unwatched: {
-            title: 'Непросмотренные (MyShows)',
-            visible: Lampa.Storage.get('numparser_category_myshows_unwatched', true)
-        },
-        legends: {
-            title: 'Топ фильмы',
-            visible: Lampa.Storage.get('numparser_category_legends', true)
-        },
-        episodes: {
-            title: 'Ближайшие выходы эпизодов',
-            visible: true
-        },
-        k4_new: {
-            title: 'В высоком качестве (новые)',
-            visible: Lampa.Storage.get('numparser_category_k4_new', true)
-        },
-        movies_new: {
-            title: 'Новые фильмы',
-            visible: Lampa.Storage.get('numparser_category_movies_new', true)
-        },
-        russian_new_movies: {
-            title: 'Новые русские фильмы',
-            visible: Lampa.Storage.get('numparser_category_russian_new_movies', true)
-        },
-        all_tv: {
-            title: 'Сериалы',
-            visible: Lampa.Storage.get('numparser_category_all_tv', true)
-        },
-        russian_tv: {
-            title: 'Русские сериалы',
-            visible: Lampa.Storage.get('numparser_category_russian_tv', true)
-        },
-        anime: {
-            title: 'Аниме',
-            visible: Lampa.Storage.get('numparser_category_anime', true)
-        },
-        k4: {
-            title: 'В высоком качестве',
-            visible: Lampa.Storage.get('numparser_category_k4', true)
-        },
-        movies: {
-            title: 'Фильмы',
-            visible: Lampa.Storage.get('numparser_category_movies', true)
-        },
-        russian_movies: {
-            title: 'Русские фильмы',
-            visible: Lampa.Storage.get('numparser_category_russian_movies', true)
-        },
-        cartoons: {
-            title: 'Мультфильмы',
-            visible: Lampa.Storage.get('numparser_category_cartoons', true)
-        },
-        cartoons_tv: {
-            title: 'Мультсериалы',
-            visible: Lampa.Storage.get('numparser_category_cartoons_tv', true)
-        },
-        // Группы годов
-        year_1980_1989: {
-            title: 'Фильмы 1980-1989',
-            visible: Lampa.Storage.get('numparser_year_1980_1989', false)
-        },
-        year_1990_1999: {
-            title: 'Фильмы 1990-1999',
-            visible: Lampa.Storage.get('numparser_year_1990_1999', false)
-        },
-        year_2000_2009: {
-            title: 'Фильмы 2000-2009',
-            visible: Lampa.Storage.get('numparser_year_2000_2009', false)
-        },
-        year_2010_2019: {
-            title: 'Фильмы 2010-2019',
-            visible: Lampa.Storage.get('numparser_year_2010_2019', true)
-        },
-        year_2020_current: {
-            title: 'Фильмы 2020-' + currentYear,
-            visible: Lampa.Storage.get('numparser_year_2020_current', true)
+        // Добавляем годы в ОБРАТНОМ порядке: от нового к старому
+        for (var y = currentYear; y >= 1980; y--) {
+            list.push({ key: 'year_' + y, title: 'Фильмы ' + y + ' года' });
         }
-    };
 
-    var CATEGORIES = {
-        k4: 'lampac_movies_4k',
-        k4_new: 'lampac_movies_4k_new',
-        movies_new: "lampac_movies_new",
-        movies: 'lampac_movies',
-        russian_new_movies: 'lampac_movies_ru_new',
-        russian_movies: 'lampac_movies_ru',
-        cartoons: 'lampac_all_cartoon_movies',
-        cartoons_tv: 'lampac_all_cartoon_series',
-        all_tv: 'lampac_all_tv_shows',
-        russian_tv: 'lampac_all_tv_shows_ru',
-        legends: 'legends_id',
-        anime: 'anime_id',
-    };
-
-    // Динамически добавляем категории для годов
-    for (var year = 1980; year <= currentYear; year++) {
-        CATEGORIES['movies_id_' + year] = 'movies_id_' + year;
+        return list;
     }
 
     function NumparserApiService() {
@@ -462,9 +364,24 @@
             
             var normalized = {  
                 results: (json.results || []).map(function (item) {  
+
+                    var poster_path = item.poster_path || item.poster || '';
+                    // Если это полный URL — извлекаем только путь после домена
+                    if (poster_path && poster_path.indexOf('http') === 0) {
+                        // Пример: "http://image.tmdb.org/t/p/w342/uhQBzTD8cDmk5pXrstnJwqVHNUE.jpg"
+                        // Нам нужно: "=/uhQBzTD8cDmk5pXrstnJwqVHNUE.jpg"
+                        var match = poster_path.match(/\/t\/p\/[^\/]+\/(.+)$/);
+                        if (match) {
+                            poster_path = '/' + match[1];
+                        } else {
+                            poster_path = ''; 
+                        }
+                    }
+
+
                     var dataItem = {  
                         id: item.id,  
-                        poster_path: item.poster_path || item.poster || '',  
+                        poster_path: poster_path,
                         img: item.img,  
                         overview: item.overview || item.description || '',  
                         vote_average: item.vote_average || 0,  
@@ -480,7 +397,12 @@
                         status: item.status || '',  
                     };  
 
-                    if (item.release_quality) dataItem.release_quality = item.release_quality;  
+                    if (item.release_quality) {
+                        var mode = Lampa.Storage.get('numparser_quality_mode', 'simple');
+                        dataItem.release_quality = mode === 'simple' 
+                            ? getQuality(item.release_quality) 
+                            : item.release_quality;
+                    }
                     if (item.release_date) dataItem.release_date = item.release_date;  
                     if (item.last_air_date) dataItem.last_air_date = item.last_air_date;  
                     if (item.last_episode_to_air) dataItem.last_episode_to_air = item.last_episode_to_air;  
@@ -552,7 +474,7 @@
             onComplete = onComplete || function () {};
             onError = onError || function () {};
 
-            var category = params.url || CATEGORIES.movies_new;
+            var category = params.url // || CATEGORIES.movies_new;
             var page = params.page || 1;
             
             var url = BASE_URL + '/' + category + '?page=' + page + '&language=' + Lampa.Storage.get('tmdb_lang', 'ru');  
@@ -575,95 +497,158 @@
 
         self.category = function (params, onSuccess, onError) {
             params = params || {};
-
             var partsData = [];
 
-            var hasMyShowsCredentials = Lampa.Storage.get('myshows_login', '') && Lampa.Storage.get('myshows_password', ''); 
-            // Основные категории с проверкой видимости
-            if (CATEGORY_VISIBILITY.myshows_unwatched.visible && hasMyShowsCredentials) {
-                partsData.push(function (callback) {
-                    if (!window.MyShows || !window.MyShows.getUnwatchedShowsWithDetails) {
-                        callback({skip: true});
-                        return;
+            var allCategories = getAllCategories();
+            var menuOrder = Lampa.Storage.get('numparser_menu_sort', []);
+
+            // Инициализация при первом запуске
+            if (!Array.isArray(menuOrder) || menuOrder.length === 0) {
+                menuOrder = [];
+                for (var i = 0; i < allCategories.length; i++) {
+                    menuOrder.push(allCategories[i].key);
+                }
+                Lampa.Storage.set('numparser_menu_sort', menuOrder);
+            }
+
+            var menuHide = Lampa.Storage.get('numparser_menu_hide', []);
+
+            // Формируем actualOrder: сначала то, что в menuOrder и существует, потом новые
+            var actualOrder = [];
+
+            // Шаг 1: добавляем существующие из menuOrder
+            for (var i = 0; i < menuOrder.length; i++) {
+                var key = menuOrder[i];
+                var found = false;
+                for (var j = 0; j < allCategories.length; j++) {
+                    if (allCategories[j].key === key) {
+                        found = true;
+                        break;
                     }
-                    
-                    window.MyShows.getUnwatchedShowsWithDetails(function(response) {
-                        if (response.error || !response.shows || response.shows.length === 0) {
-                            callback({skip: true});
-                            return;
-                        }
-                        
-                        callback({
-                            title: CATEGORY_VISIBILITY.myshows_unwatched.title,
-                            results: response.shows,
-                            // cardClass: window.MyShows.createMyShowsCard,
-                            nomore: true
-                        });
-                    });
-                });
-            }
-
-            if (CATEGORY_VISIBILITY.legends.visible) partsData.push(function (callback) {
-                makeRequest(CATEGORIES.legends, CATEGORY_VISIBILITY.legends.title, callback);
-            });
-            if (CATEGORY_VISIBILITY.episodes.visible) {  
-                            var addEpisodes = Lampa.Manifest.app_digital >= 300
-                                ? addEpisodesV3
-                                : addEpisodesV2;
-
-                            addEpisodes(partsData);
-            }
-            if (CATEGORY_VISIBILITY.k4_new.visible) partsData.push(function (callback) {
-                makeRequest(CATEGORIES.k4_new, CATEGORY_VISIBILITY.k4_new.title, callback);
-            });
-            if (CATEGORY_VISIBILITY.movies_new.visible) partsData.push(function (callback) {
-                makeRequest(CATEGORIES.movies_new, CATEGORY_VISIBILITY.movies_new.title, callback);
-            });
-            if (CATEGORY_VISIBILITY.russian_new_movies.visible) partsData.push(function (callback) {
-                makeRequest(CATEGORIES.russian_new_movies, CATEGORY_VISIBILITY.russian_new_movies.title, callback);
-            });
-            if (CATEGORY_VISIBILITY.all_tv.visible) partsData.push(function (callback) {
-                makeRequest(CATEGORIES.all_tv, CATEGORY_VISIBILITY.all_tv.title, callback);
-            });
-            if (CATEGORY_VISIBILITY.russian_tv.visible) partsData.push(function (callback) {
-                makeRequest(CATEGORIES.russian_tv, CATEGORY_VISIBILITY.russian_tv.title, callback);
-            });
-            if (CATEGORY_VISIBILITY.cartoons.visible) partsData.push(function (callback) {
-                makeRequest(CATEGORIES.cartoons, CATEGORY_VISIBILITY.cartoons.title, callback);
-            });
-            if (CATEGORY_VISIBILITY.k4.visible) partsData.push(function (callback) {
-                makeRequest(CATEGORIES.k4, CATEGORY_VISIBILITY.k4.title, callback);
-            });
-            if (CATEGORY_VISIBILITY.movies.visible) partsData.push(function (callback) {
-                makeRequest(CATEGORIES.movies, CATEGORY_VISIBILITY.movies.title, callback);
-            });
-            if (CATEGORY_VISIBILITY.russian_movies.visible) partsData.push(function (callback) {
-                makeRequest(CATEGORIES.russian_movies, CATEGORY_VISIBILITY.russian_movies.title, callback);
-            });
-            if (CATEGORY_VISIBILITY.cartoons_tv.visible) partsData.push(function (callback) {
-                makeRequest(CATEGORIES.cartoons_tv, CATEGORY_VISIBILITY.cartoons_tv.title, callback);
-            });
-            if (CATEGORY_VISIBILITY.anime.visible) partsData.push(function (callback) {
-                makeRequest(CATEGORIES.anime, CATEGORY_VISIBILITY.anime.title, callback);
-            });
-
-            // Добавляем категории по годам в обратном порядке (от новых к старым)
-            for (var year = 2025; year >= 1980; year--) {
-                if (isYearVisible(year)) {
-                    (function (y) {
-                        partsData.push(function (callback) {
-                            makeRequest(CATEGORIES['movies_id_' + y], 'Фильмы ' + y + ' года', callback);
-                        });
-                    })(year);
+                }
+                if (found) {
+                    actualOrder.push(key);
                 }
             }
 
-            function addEpisodesV2(partsData) {
+            // Шаг 2: добавляем новые категории, которых нет в actualOrder
+            for (var j = 0; j < allCategories.length; j++) {
+                var cat = allCategories[j];
+                var exists = false;
+                for (var i = 0; i < actualOrder.length; i++) {
+                    if (actualOrder[i] === cat.key) {
+                        exists = true;
+                        break;
+                    }
+                }
+                if (!exists) {
+                    actualOrder.push(cat.key);
+                }
+            }
+
+            // Теперь перебираем actualOrder
+            for (var idx = 0; idx < actualOrder.length; idx++) {
+                var key = actualOrder[idx];
+
+                // Проверка скрытия через indexOf вместо includes
+                var isHidden = false;
+                for (var h = 0; h < menuHide.length; h++) {
+                    if (menuHide[h] === key) {
+                        isHidden = true;
+                        break;
+                    }
+                }
+                if (isHidden) continue;
+
+                // Поиск категории по ключу (вместо find)
+                var cat = null;
+                for (var j = 0; j < allCategories.length; j++) {
+                    if (allCategories[j].key === key) {
+                        cat = allCategories[j];
+                        break;
+                    }
+                }
+                if (!cat) continue;
+
+                // MyShows — особый случай
+                if (key === 'myshows_unwatched') {
+                    var hasCreds = Lampa.Storage.get('myshows_login') && Lampa.Storage.get('myshows_password');
+                    if (!hasCreds) continue;
+                    if (!window.MyShows || !window.MyShows.getUnwatchedShowsWithDetails) continue;
+
+                    // 🔥 Захватываем title СЕЙЧАС
+                    var currentTitle = cat.title;
+
+                    partsData.push(function (callback) {
+                        window.MyShows.getUnwatchedShowsWithDetails(function(response) {
+                            if (response.error || !response.shows || response.shows.length === 0) {
+                                callback({skip: true});
+                                return;
+                            }
+                            callback({
+                                title: currentTitle, // ← Используем захваченное значение
+                                results: response.shows,
+                                nomore: true
+                            });
+                        });
+                    });
+                    continue;
+                }
+
+                // Эпизоды
+                if (key === 'episodes') {
+                    var addEpisodes = Lampa.Manifest.app_digital >= 300 ? addEpisodesV3 : addEpisodesV2;
+                    addEpisodes(partsData, cat.title, Lampa.TimeTable.lately);
+                    continue;
+                }
+
+                if (key === 'recent') {
+                    if (Lampa.Manifest.app_digital >= 300) {
+                        addEpisodesV3(partsData, cat.title, Lampa.TimeTable.recently);
+                    }
+                    continue;
+                }
+
+                if (key === 'continues_movie') {
+                    if (Lampa.Manifest.app_digital >= 300) {
+                        addContinues(partsData, cat.title, Lampa.Favorite.continues, 'movie');
+                    }
+                    continue;
+                }
+
+                if (key === 'continues_tv') {
+                    if (Lampa.Manifest.app_digital >= 300) {
+                        addContinues(partsData, cat.title, Lampa.Favorite.continues, 'tv');
+                    }
+                    continue;
+                }
+
+                if (key === 'continues_anime') {
+                    if (Lampa.Manifest.app_digital >= 300) {
+                        addContinues(partsData, cat.title, Lampa.Favorite.continues, 'anime');
+                    }
+                    continue;
+                }
+
+                // Все остальные — включая годы
+                var urlPart = key.startsWith('year_')
+                    ? 'movies_id_' + key.replace('year_', '')
+                    : key;
+                // Создаём замыкание, чтобы сохранить title
+                (function (url, title) {
+                    partsData.push(function (callback) {
+                        makeRequest(url, title, callback);
+                    });
+                })(urlPart, cat.title);
+            }
+
+
+            function addEpisodesV2(partsData, title) {
                 partsData.push(function (callback) {
                     callback({
                         source: 'tmdb',
                         results: Lampa.TimeTable.lately().slice(0, 20),
-                        title: CATEGORY_VISIBILITY.episodes.title,
+                        title: title,
                         nomore: true,
                         cardClass: function (elem, params) {
                             return new Episode(elem, params);
@@ -672,9 +657,9 @@
                 });
             }
 
-            function addEpisodesV3(partsData) {
+            function addEpisodesV3(partsData, title, getFunc) {
                 partsData.push(function (callback) {  
-                    var results = Lampa.TimeTable.lately().slice(0, 20);  
+                    var results = getFunc().slice(0, 20);  
                     
                     results.forEach(function(item) {  
                         item.params = {  
@@ -699,7 +684,37 @@
                     callback({  
                         source: 'tmdb',  
                         results: results,  
-                        title: CATEGORY_VISIBILITY.episodes.title,  
+                        title: title,  
+                        nomore: true  
+                    });  
+                });
+            }
+
+            function addContinues(partsData, title, getFunc, type) {
+                partsData.push(function (callback) {  
+                    var results = getFunc(type).slice(0, 20);  
+                    
+                    results.forEach(function(item) {  
+                        Log.info('addContinues', item);
+                        item.params = {  
+                            createInstance: function(data) {  
+                                return Lampa.Maker.make('Card', data, function(module) {  
+                                    return module.only('Card', 'Callback');  
+                                });  
+                            },  
+                            emit: {  
+                                onlyEnter: function() {  
+                                    Lampa.Router.call('full', item);  
+                                },  
+                            }  
+                        };  
+                        
+                    });  
+                    
+                    callback({  
+                        source: 'tmdb',  
+                        results: results,  
+                        title: title,  
                         nomore: true  
                     });  
                 });
@@ -938,6 +953,118 @@
         Lampa.Storage.set('numparser_source_name', getProfileSetting('numparser_source_name', DEFAULT_SOURCE_NAME), "true");
     }
 
+    function openNumparserMenuEditor() {
+        var allCategories = getAllCategories();
+        var savedOrder = Lampa.Storage.get('numparser_menu_sort');
+
+        // Если настройка ещё не создана — инициализируем её
+        if (!Array.isArray(savedOrder) || savedOrder.length === 0) {
+            savedOrder = allCategories.map(c => c.key);
+            Lampa.Storage.set('numparser_menu_sort', savedOrder);
+        }
+
+        var savedHide = Lampa.Storage.get('numparser_menu_hide', []);
+
+        var ordered = [];
+
+        // Восстанавливаем порядок из savedOrder
+        for (var i = 0; i < savedOrder.length; i++) {
+            var key = savedOrder[i];
+            var cat = null;
+            for (var j = 0; j < allCategories.length; j++) {
+                if (allCategories[j].key === key) {
+                    cat = allCategories[j];
+                    break;
+                }
+            }
+            if (cat) ordered.push(cat);
+        }
+
+        // Добавляем новые категории
+        for (var j = 0; j < allCategories.length; j++) {
+            var cat = allCategories[j];
+            var exists = false;
+            for (var i = 0; i < ordered.length; i++) {
+                if (ordered[i].key === cat.key) {
+                    exists = true;
+                    break;
+                }
+            }
+            if (!exists) {
+                ordered.push(cat);
+            }
+        }
+
+        // Создаём DOM
+        var list = $('<div class="menu-edit-list"></div>');
+
+        ordered.forEach(function (cat) {
+            var isVisible = savedHide.indexOf(cat.key) === -1;
+            var item = $(`
+                <div class="menu-edit-list__item">
+                    <div class="menu-edit-list__icon">${ICON}</div>
+                    <div class="menu-edit-list__title">${cat.title}</div>
+                    <div class="menu-edit-list__move move-up selector">
+                        <svg width="22" height="14" viewBox="0 0 22 14" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <path d="M2 12L11 3L20 12" stroke="currentColor" stroke-width="4" stroke-linecap="round"/>
+                        </svg>
+                    </div>
+                    <div class="menu-edit-list__move move-down selector">
+                        <svg width="22" height="14" viewBox="0 0 22 14" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <path d="M2 2L11 11L20 2" stroke="currentColor" stroke-width="4" stroke-linecap="round"/>
+                        </svg>
+                    </div>
+                    <div class="menu-edit-list__toggle toggle selector">
+                        <svg width="26" height="26" viewBox="0 0 26 26" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <rect x="1.89111" y="1.78369" width="21.793" height="21.793" rx="3.5" stroke="currentColor" stroke-width="3"/>
+                            <path d="M7.44873 12.9658L10.8179 16.3349L18.1269 9.02588" stroke="currentColor" stroke-width="3" class="dot" opacity="${isVisible ? 1 : 0}" stroke-linecap="round"/>
+                        </svg>
+                    </div>
+                </div>
+            `).data('key', cat.key);
+
+            item.find('.move-up').on('hover:enter', function () {
+                var prev = item.prev();
+                if (prev.length) item.insertBefore(prev);
+            });
+
+            item.find('.move-down').on('hover:enter', function () {
+                var next = item.next();
+                if (next.length) item.insertAfter(next);
+            });
+
+            item.find('.toggle').on('hover:enter', function () {
+                var dot = item.find('.dot');
+                var wasVisible = dot.attr('opacity') === '1';
+                dot.attr('opacity', wasVisible ? '0' : '1');
+            });
+
+            list.append(item);
+        });
+
+        Lampa.Modal.open({
+            title: 'Порядок категорий',
+            html: list,
+            size: 'small',
+            onBack: function () {
+                var newOrder = [];
+                var newHide = [];
+
+                list.find('.menu-edit-list__item').each(function () {
+                    var key = $(this).data('key');
+                    var isVisible = $(this).find('.dot').attr('opacity') === '1';
+                    newOrder.push(key);
+                    if (!isVisible) newHide.push(key);
+                });
+
+                Lampa.Storage.set('numparser_menu_sort', newOrder);
+                Lampa.Storage.set('numparser_menu_hide', newHide);
+                Lampa.Modal.close();
+                Lampa.Controller.toggle('settings_component'); 
+            }
+        });
+    }
+
     function initSettings() {  
 
         try {  
@@ -951,6 +1078,22 @@
             name: SOURCE_NAME,  
             icon: ICON
         });  
+
+        Lampa.SettingsApi.addParam({
+            component: 'numparser_settings',
+            param: {
+                name: 'numparser_edit_menu_order',
+                type: 'button',
+                title: 'Изменить порядок категорий'
+            },
+            field: {
+                name: 'Порядок категорий',
+                description: 'Перетаскивайте категории, чтобы изменить их порядок и видимость'
+            },
+            onChange: function () {
+                openNumparserMenuEditor();
+            }
+        });
 
         // Добавляем переключатель фильтрации
         Log.info('TimecodeUser!', HAS_TIMECODE_USER, 'LAMPAC:', IS_LAMPAC);
@@ -1036,32 +1179,48 @@
                 $('.num_text').text(value);
                 Lampa.Settings.update();
             }
+        });      
+        
+        Lampa.SettingsApi.addParam({
+            component: 'numparser_settings',
+            param: {
+                name: 'numparser_quality_mode',
+                type: 'select',
+                values: {
+                    'full': 'Полное (WEBDL 1080p, BDRip и т.д.)',
+                    'simple': 'Упрощённое (SD, 720p, 1080p, 4K)'
+                },
+                default: 'simple'
+            },
+            field: {
+                name: 'Формат качества',
+                description: 'Как отображать качество видео'
+            },
+            onChange: function (value) {
+                Lampa.Storage.set('numparser_quality_mode', value);
+            }
         });
+    }
 
-        Object.keys(CATEGORY_VISIBILITY).forEach(function (option) {
-            
-            var settingName = 'numparser_settings_' + option + '_visible';
-            var visible = getProfileSetting(settingName, "true");
+    function getQuality(qualityStr) {
+        if (!qualityStr || typeof qualityStr !== 'string') {
+            return qualityStr;
+        }
 
-            CATEGORY_VISIBILITY[option].visible = visible;
+        // Приводим к нижнему регистру для надёжности
+        var q = qualityStr.toLowerCase();
 
-            Lampa.SettingsApi.addParam({
-                component: "numparser_settings",
-                param: {
-                    name: settingName,
-                    type: "trigger",
-                    default: visible
-                },
-                field: {
-                    name: CATEGORY_VISIBILITY[option].title,
-                },
-                onChange: function (value) {
-                    var newVisible = value === true || value === "true";
-                    CATEGORY_VISIBILITY[option].visible = newVisible;
-                    setProfileSetting(settingName, newVisible);
-                }
-            });
-        });        
+        if (q.indexOf('2160p') !== -1 || q.indexOf('4k') !== -1) {
+            return '4K';
+        } else if (q.indexOf('1080p') !== -1) {
+            return '1080p';
+        } else if (q.indexOf('720p') !== -1) {
+            return '720p';
+        } else if (q === 'sd' || q.indexOf('sd') !== -1) {
+            return 'SD';
+        }
+
+        return qualityStr;
     }
 
     function startPlugin() {
@@ -1162,6 +1321,9 @@
                 
                 // Сбрасываем кэш
                 globalTimecodes = null;
+                if (IS_LAMPAC) {
+                    loadAllTimecodes(); 
+                }
                 timecodesLoading = false;
                 timecodesCallbacks = [];
                 
@@ -1194,25 +1356,34 @@
 
     function initNUMPlugin() {
         startPlugin();
-        // Сначала проверяем среду
+
         checkEnvironment('/version', function(isLampac) {
             IS_LAMPAC = isLampac;
             Log.info('✅ Среда:', IS_LAMPAC ? 'Lampac' : 'Обычная Lampa');
-            
-            // Затем проверяем TimecodeUser
-            checkEnvironment('/timecode/all_views', function(hasTimecodeUser) {
-                HAS_TIMECODE_USER = hasTimecodeUser;
-                Log.info('✅ TimecodeUser:', HAS_TIMECODE_USER ? 'Доступен' : 'Не доступен');
 
-                lastKnownProfileId = getProfileId();
-                Log.info('Начальный профиль:', lastKnownProfileId);
-                
-                // ✅ Инициализируем плагин
+            // ✅ Загружаем таймкоды ОДИН РАЗ при старте
+            if (IS_LAMPAC) {
+                loadAllTimecodes(function(timecodes, isAvailable, hasData) {
+                    if (isAvailable) {
+                        HAS_TIMECODE_USER = true;
+                        Log.info('✅ TimecodeUser:', HAS_TIMECODE_USER ? 'Доступен' : 'Не доступен', isAvailable);
+                    }
+
+                    lastKnownProfileId = getProfileId();
+                    Log.info('Начальный профиль:', lastKnownProfileId);
+
+                    setTimeout(function() {
+                        initSettings();
+                        loadNumparserProfileSettings();
+                    }, 50);
+                });
+            } else {
+                HAS_TIMECODE_USER = false;
                 setTimeout(function() {
                     initSettings();
                     loadNumparserProfileSettings();
                 }, 50);
-            });
+            }
         });
     }
 
