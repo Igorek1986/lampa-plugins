@@ -1035,12 +1035,18 @@
 
             item.find('.move-up').on('hover:enter', function () {
                 var prev = item.prev();
-                if (prev.length) item.insertBefore(prev);
+                if (prev.length) {
+                    item.insertBefore(prev);
+                    Lampa.Controller.toggle('modal'); 
+                };
             });
 
             item.find('.move-down').on('hover:enter', function () {
                 var next = item.next();
-                if (next.length) item.insertAfter(next);
+                if (next.length) {
+                    item.insertAfter(next);
+                    Lampa.Controller.toggle('modal'); 
+                };
             });
 
             item.find('.toggle').on('hover:enter', function () {
