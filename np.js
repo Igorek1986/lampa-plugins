@@ -500,7 +500,7 @@
             var partsData = [];
 
             var allCategories = getAllCategories();
-            var menuOrder = Lampa.Storage.get('numparser_menu_sort', []);
+            var menuOrder = getProfileSetting('numparser_menu_sort', []);
 
             // Инициализация при первом запуске
             if (!Array.isArray(menuOrder) || menuOrder.length === 0) {
@@ -508,10 +508,10 @@
                 for (var i = 0; i < allCategories.length; i++) {
                     menuOrder.push(allCategories[i].key);
                 }
-                Lampa.Storage.set('numparser_menu_sort', menuOrder);
+                setProfileSetting('numparser_menu_sort', menuOrder);
             }
 
-            var menuHide = Lampa.Storage.get('numparser_menu_hide', []);
+            var menuHide = getProfileSetting('numparser_menu_hide', []);
 
             // Формируем actualOrder: сначала то, что в menuOrder и существует, потом новые
             var actualOrder = [];
@@ -945,25 +945,35 @@
             setProfileSetting('numparser_source_name', DEFAULT_SOURCE_NAME);
         }
 
+        if (!hasProfileSetting('numparser_menu_sort')) {
+            setProfileSetting('numparser_menu_sort', []);
+        }
+
+        if (!hasProfileSetting('numparser_menu_hide')) {
+            setProfileSetting('numparser_menu_hide', []);
+        }
+
         // Восстанавливаем значения в Lampa.Storage, чтобы UI знал актуальные данные
         if (HAS_TIMECODE_USER) {
             Lampa.Storage.set('numparser_hide_watched', getProfileSetting('numparser_hide_watched', "true"), "true");
         }
         Lampa.Storage.set('numparser_min_progress', getProfileSetting('numparser_min_progress', DEFAULT_MIN_PROGRESS), "true");
         Lampa.Storage.set('numparser_source_name', getProfileSetting('numparser_source_name', DEFAULT_SOURCE_NAME), "true");
+        Lampa.Storage.set('numparser_menu_sort', getProfileSetting('numparser_menu_sort', []));
+        Lampa.Storage.set('numparser_menu_hide', getProfileSetting('numparser_menu_hide', []));
     }
 
     function openNumparserMenuEditor() {
         var allCategories = getAllCategories();
-        var savedOrder = Lampa.Storage.get('numparser_menu_sort');
+        var savedOrder = getProfileSetting('numparser_menu_sort');
 
         // Если настройка ещё не создана — инициализируем её
         if (!Array.isArray(savedOrder) || savedOrder.length === 0) {
             savedOrder = allCategories.map(c => c.key);
-            Lampa.Storage.set('numparser_menu_sort', savedOrder);
+            setProfileSetting('numparser_menu_sort', savedOrder);
         }
 
-        var savedHide = Lampa.Storage.get('numparser_menu_hide', []);
+        var savedHide = getProfileSetting('numparser_menu_hide', []);
 
         var ordered = [];
 
@@ -1057,8 +1067,8 @@
                     if (!isVisible) newHide.push(key);
                 });
 
-                Lampa.Storage.set('numparser_menu_sort', newOrder);
-                Lampa.Storage.set('numparser_menu_hide', newHide);
+                setProfileSetting('numparser_menu_sort', newOrder);
+                setProfileSetting('numparser_menu_hide', newHide);
                 Lampa.Modal.close();
                 Lampa.Controller.toggle('settings_component'); 
             }
