@@ -5,7 +5,12 @@
     var DEFAULT_MIN_PROGRESS = 90;    
     var API_URL = 'https://api.myshows.me/v3/rpc/';
     var MAP_KEY = 'myshows_hash_map';  
-    var MYSHOWS_AUTH_PROXY = 'https://numparser.igorek1986.ru/myshows/auth';  
+    // var MYSHOWS_AUTH_PROXY = 'https://numparser.igorek1986.ru/myshows/auth';  
+    var MYSHOWS_AUTH_PROXY = (function() {
+    var scriptUrl = (document.currentScript && document.currentScript.src) || '';
+    var params = new URLSearchParams(scriptUrl.split('?')[1]);
+    return params.get('auth_proxy') || 'https://numparser.igorek1986.ru/myshows/auth';
+    })();
     var DEFAULT_CACHE_DAYS = 30;
     var JSON_HEADERS = {  
         'Content-Type': 'application/json'  
