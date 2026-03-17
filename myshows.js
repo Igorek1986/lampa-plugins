@@ -3,13 +3,12 @@
 
     var DEFAULT_ADD_THRESHOLD = '0';
     var DEFAULT_MIN_PROGRESS = 90;
-    var API_URL = 'https://api.myshows.me/v3/rpc/';
+    var API_URL = 'https://myshows.me/v3/rpc/';
     var MAP_KEY = 'myshows_hash_map';
-    // var MYSHOWS_AUTH_PROXY = 'https://numparser.igorek1986.ru/myshows/auth';
     var MYSHOWS_AUTH_PROXY = (function() {
     var scriptUrl = (document.currentScript && document.currentScript.src) || '';
     var params = new URLSearchParams(scriptUrl.split('?')[1]);
-    return params.get('auth_proxy') || 'https://numparser.igorek1986.ru/myshows/auth';
+    return params.get('auth_proxy') || 'https://myshows.igorek1986.ru/myshows/auth';
     })();
     var DEFAULT_CACHE_DAYS = 30;
     var JSON_HEADERS = {
@@ -590,7 +589,7 @@
             },
             field: {
             name: 'MyShows Логин',
-            description: 'Введите логин или email, привязанный к аккаунту myshows.me'
+            description: 'Введите логин от аккаунта myshows.me'
             },
             onChange: function(value) {
             setProfileSetting('myshows_login', value);
@@ -609,13 +608,36 @@
             },
             field: {
             name: 'MyShows Пароль',
-            description: 'Введите пароль от аккаунта myshows.me'
+            description: 'Введите пароль от аккаунта myshows.me. Логин и пароль передаются через прокси-сервер исключительно для получения токена авторизации и нигде не сохраняются.'
             },
             onChange: function(value) {
             setProfileSetting('myshows_password', value);
             tryAuthFromSettings();
             }
         });
+
+        if (tokenValue) {
+            Lampa.SettingsApi.addParam({
+                component: 'myshows',
+                param: {
+                    type: 'button'
+                },
+                field: {
+                    name: 'Выйти из MyShows',
+                    description: 'Очистить токен, логин и пароль'
+                },
+                onChange: function() {
+                    setProfileSetting('myshows_token', '');
+                    setProfileSetting('myshows_login', '');
+                    setProfileSetting('myshows_password', '');
+                    Lampa.Storage.set('myshows_token', '', true);
+                    Lampa.Storage.set('myshows_login', '', true);
+                    Lampa.Storage.set('myshows_password', '', true);
+                    Lampa.Noty.show('✅ Выход из MyShows выполнен');
+                    setTimeout(function() { window.location.reload(); }, 1500);
+                }
+            });
+        }
 
         var xhr = new XMLHttpRequest();
         xhr.open('GET', '/timecode/batch_add', true);
