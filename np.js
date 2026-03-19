@@ -14,14 +14,7 @@
     var MIN_PROGRESS = Lampa.Storage.get('numparser_min_progress', DEFAULT_MIN_PROGRESS);
     var newProgress = MIN_PROGRESS;
     Lampa.Storage.set('base_url_numparser', BASE_URL);
-    var IS_LAMPAC = null;
-    var HAS_TIMECODE_USER = null;
-
-
-    // ✅ НОВАЯ ЛОГИКА: Глобальное хранилище таймкодов  
-    var globalTimecodes = null;  
-    var timecodesLoading = false;  
-    var timecodesCallbacks = [];  
+    var NUMPARSER_HIDE_WATCHED = null;
 
 
     function createLogMethod(emoji, consoleMethod) {
@@ -46,300 +39,30 @@
         warn: createLogMethod('⚠️', console.warn),
         debug: createLogMethod('🐛', console.debug)
     };
-  
-    // Функция загрузки всех таймкодов пользователя  
-    function loadAllTimecodes(callback) {  
-        // ✅ Проверяем, что callback - это функция  
-        if (callback && typeof callback === 'function') {  
-            if (globalTimecodes !== null) {  
-                callback(globalTimecodes);  
-                return;  
-            }  
-            
-            timecodesCallbacks.push(callback);  
-            
-            if (timecodesLoading) {  
-                return;  
-            }  
-        } else {  
-            // Если callback не передан, просто загружаем данные  
-            if (globalTimecodes !== null) {  
-                return;  
-            }  
-            
-            if (timecodesLoading) {  
-                return;  
-            }  
-        }  
-        
-        timecodesLoading = true;   
-        Log.info('Loading all timecodes from /timecode/all_views');  
-  
-        var uid = Lampa.Storage.get('account_email') || Lampa.Storage.get('user_uid') || Lampa.Storage.get('lampac_unic_id', '');  
-        var profileId = Lampa.Storage.get('lampac_profile_id', '');  
-  
-        if (!uid) {  
-            Log.info('No user ID found, skipping timecode loading');  
-            globalTimecodes = {};  
-            timecodesLoading = false;  
-              
-            // Вызываем все ожидающие callbacks  
-            timecodesCallbacks.forEach(function(cb) {  
-                cb(globalTimecodes);  
-            });  
-            timecodesCallbacks = [];  
-            return;  
-        }  
-  
-        var url = window.location.origin + '/timecode/all_views?uid=' + encodeURIComponent(uid);  
-        if (profileId) {  
-            url += '&profile_id=' + encodeURIComponent(profileId);  
-        }  
-  
-        var network = new Lampa.Reguest();
-        network.silent(url, function(response) {
-            // Успех — значит, эндпоинт доступен
-            var hasData = response && Object.keys(response).length > 0;
-            globalTimecodes = response || {};
-            timecodesLoading = false;
-            
-            // Передаём и данные, и флаг доступности
-            if (callback) callback(globalTimecodes, true, hasData);
-            
-            timecodesCallbacks.forEach(function(cb) { cb(globalTimecodes); });
-            timecodesCallbacks = [];
-        }, function(error) {
-            // Ошибка — эндпоинт недоступен
-            Log.error('Timecode endpoint not available:', error);
-            globalTimecodes = {};
-            timecodesLoading = false;
-            
-            if (callback) callback(globalTimecodes, false, false);
-            
-            timecodesCallbacks.forEach(function(cb) { cb(globalTimecodes); });
-            timecodesCallbacks = [];
-        });
-    }
-  
-    // ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ ФИЛЬТРАЦИИ  
-    function basicFilterWatchedContent(results, callback) {
-        if (!Lampa.Storage.get('numparser_hide_watched')) {
-            callback(results);
-            return;
-        }
-
-        var filtered = results.filter(function (item) {
-            if (!item) return false;
-
-            var mediaType = (item.first_air_date || item.number_of_seasons) ? 'tv' : 'movie';
-            var favoriteItem = Lampa.Favorite.check(item);
-            var thrown = !!favoriteItem && favoriteItem.thrown;
-            if (thrown) return false;
-
-            if (mediaType === 'movie') {
-                var cardId = item.id + '_movie';
-                if (globalTimecodes && globalTimecodes[cardId]) {
-                    for (var key in globalTimecodes[cardId]) {
-                        try {
-                            var data = JSON.parse(globalTimecodes[cardId][key]);
-                            if (data.percent >= MIN_PROGRESS) {
-                                return false;
-                            }
-                        } catch (e) {
-                            Log.error('Error parsing timecode:', e);
-                        }
-                    }
-                }
-            }
-
-            if (mediaType === 'tv') {
-                var cardId = item.id + '_tv';
-                var releasedEpisodes = getReleasedEpisodesFromTMDB(item);
-                if (!releasedEpisodes || !releasedEpisodes.length) {
-                    return true;
-                }
-                if (globalTimecodes && globalTimecodes[cardId]) {
-                    var originalTitle = item.original_name || item.original_title || item.name || item.title;
-                    var allWatched = releasedEpisodes.every(function(episode) {
-                        var hashString = episode.season_number.toString() +
-                                        episode.episode_number.toString() +
-                                        originalTitle;
-                        var episodeHash = Lampa.Utils.hash(hashString);
-                        if (globalTimecodes[cardId][episodeHash]) {
-                            try {
-                                var data = JSON.parse(globalTimecodes[cardId][episodeHash]);
-                                if (data.percent >= MIN_PROGRESS) {
-                                    return true;
-                                }
-                            } catch (e) {
-                                Log.error('Error parsing timecode for hash:', episodeHash, e);
-                            }
-                        }
-                        return false;
-                    });
-                    return !allWatched;
-                }
-            }
-
-            return true;
-        });
-
-        callback(filtered);
-    }
-  
-    var isLoadingMore = {};
-
-    // Асинхронная функция для догрузки страниц
-    function loadMoreUntilFullAsync(currentResults, category, currentPage, source, totalPages, callback) {  
-        var results = currentResults.slice();  
-        var page = currentPage;  
-        var maxPages = 10;  
-    
-        Log.info('Loading more - current:', results.length, 'needed:', 20 - results.length,   
-                    'page:', page, 'totalPages:', totalPages, 'maxPages:', maxPages, 'category:', category);  
-    
-        function loadNextPage() {  
-            Log.info('Loading page', page, 'current results:', results.length, 'totalPages:', totalPages);  
-            
-            if (results.length >= 20 || page >= totalPages || page >= maxPages) {  
-                Log.info('Stopping loading - reached limit. Results:', results.length,   
-                            'Page:', page, 'TotalPages:', totalPages, 'MaxPages:', maxPages);  
-                callback(results.slice(0, 20));  
-                return;  
-            }  
-    
-            page++;  
-            isLoadingMore[category + '_' + page] = true;  
-            
-            var params = {  
-                url: category,  
-                page: page,  
-                source: source  
-            };  
-    
-            Log.info('Requesting page', page, 'of category', category);  
-            Lampa.Api.sources[source].list(params, function(response) {  
-                delete isLoadingMore[category + '_' + page];  
-                
-                if (response && response.results && Array.isArray(response.results)) {  
-                    Log.info('Received page', page, 'with', response.results.length,   
-                            'items. Response total_pages:', response.total_pages);  
-                    
-                    // ✅ ИСПРАВЛЕНО: Асинхронный вызов с callback  
-                    basicFilterWatchedContent(response.results, function(filtered) {  
-                        Log.info('After filtering new page:', filtered.length, 'items remain');  
-                        
-                        results = results.concat(filtered);  
-                        Log.info('Total results after concatenation:', results.length);  
-                        
-                        if (results.length < 20 && page < totalPages && page < maxPages) {  
-                            Log.info('Need more items. Current:', results.length, 'Loading next page...');  
-                            loadNextPage();  
-                        } else {  
-                            Log.info('Loading complete. Final result:', results.length, 'items');  
-                            callback(results.slice(0, 20));  
-                        }  
-                    });  
-                } else {  
-                    Log.info('No valid response received for page', page);  
-                    callback(results.slice(0, 20));  
-                }  
-            });  
-        }  
-    
-        loadNextPage();  
-    }
-
-    function getReleasedEpisodesFromTMDB(item) {      
-        var episodes = [];      
-        
-        if (!item) {  
-            return episodes;  
-        }  
-        
-        // Проверяем наличие last_episode_to_myshows    
-        if (item.last_episode_to_myshows) {    
-            
-            var lastEp = item.last_episode_to_myshows;    
-            
-            // Если есть данные seasons, используем их  
-            if (item.seasons && Array.isArray(item.seasons)) {  
-                for (var season = 1; season <= lastEp.season_number; season++) {      
-                    var maxEpisode = (season === lastEp.season_number)       
-                        ? lastEp.episode_number       
-                        : getEpisodeCountForSeason(item.seasons, season);      
-                        
-                    for (var episode = 1; episode <= maxEpisode; episode++) {      
-                        episodes.push({      
-                            season_number: season,      
-                            episode_number: episode      
-                        });      
-                    }      
-                }  
-            } else {  
-                // Если нет seasons, генерируем только для последнего сезона  
-                for (var episode = 1; episode <= lastEp.episode_number; episode++) {  
-                    episodes.push({  
-                        season_number: lastEp.season_number,  
-                        episode_number: episode  
-                    });  
-                }  
-            }  
-             
-            return episodes;    
-        }    
-        
-        // Fallback на TMDB (остальной код без изменений)   
-        var lastEpisode = item.last_episode_to_air;      
-        
-        if (!lastEpisode || !item.seasons) {    
-            return episodes;    
-        }    
-        
-        for (var season = 1; season <= lastEpisode.season_number; season++) {      
-            var maxEpisode = (season === lastEpisode.season_number)       
-                ? lastEpisode.episode_number       
-                : getEpisodeCountForSeason(item.seasons, season);      
-                
-            for (var episode = 1; episode <= maxEpisode; episode++) {      
-                episodes.push({      
-                    season_number: season,      
-                    episode_number: episode      
-                });      
-            }      
-        }      
-        
-        return episodes;      
-    }
-    
-    function getEpisodeCountForSeason(seasons, seasonNumber) {  
-        var season = seasons.find(function(s) {   
-            return s.season_number === seasonNumber && s.episode_count > 0;   
-        });  
-        return season ? season.episode_count : 0;  
-    }
 
     function getAllCategories() {
         var currentYear = new Date().getFullYear();
         var list = [
             { key: 'myshows_unwatched', title: 'Непросмотренные (MyShows)' },
-            { key: 'legends_id',         title: 'Топ фильмы' },
+            { key: 'lampac_movies_ru_new',      title: 'Новые русские фильмы' },
+            { key: 'lampac_movies_new',         title: 'Новые фильмы' },
+            { key: 'lampac_all_tv_shows',       title: 'Сериалы' },
+            { key: 'lampac_all_tv_shows_ru',    title: 'Русские сериалы' },
+            { key: 'continues', title: "Продолжить просмотр NUMParser"},
             { key: 'continues_movie', title: "Продолжить просмотр (Фильмы)"},
             { key: 'continues_tv', title: "Продолжить просмотр (Сериалы)"},
             { key: 'continues_anime', title: "Продолжить просмотр (Аниме)"},
             { key: 'episodes',           title: 'Ближайшие выходы эпизодов' },
             { key: 'recent',             title: "Недавние выходы эпизодов"},
             { key: 'lampac_movies_4k_new',      title: 'В высоком качестве (новые)' },
-            { key: 'lampac_movies_new',         title: 'Новые фильмы' },
-            { key: 'lampac_movies_ru_new',      title: 'Новые русские фильмы' },
-            { key: 'lampac_all_tv_shows',       title: 'Сериалы' },
-            { key: 'lampac_all_tv_shows_ru',    title: 'Русские сериалы' },
-            { key: 'anime_id',           title: 'Аниме' },
+            { key: 'legends_id',         title: 'Топ фильмы' },
             { key: 'lampac_movies_4k',          title: 'В высоком качестве' },
             { key: 'lampac_movies',             title: 'Фильмы' },
             { key: 'lampac_movies_ru',          title: 'Русские фильмы' },
             { key: 'lampac_all_cartoon_movies', title: 'Мультфильмы' },
-            { key: 'lampac_all_cartoon_series', title: 'Мультсериалы' }
+            { key: 'lampac_all_cartoon_series', title: 'Мультсериалы' },
+            { key: 'lampac_all_anime',           title: 'Аниме' },
+            { key: 'anime_id',           title: 'Аниме' }
         ];
 
         // Добавляем годы в ОБРАТНОМ порядке: от нового к старому
@@ -355,94 +78,66 @@
         self.network = new Lampa.Reguest();
         self.discovery = false;
 
-        function normalizeData(json, category, page, source, callback) {  
-            Log.info('Normalize data called for:', category, 'page:', page, 'initial results:', json.results ? json.results.length : 0);
-            var isInternal = isLoadingMore[category + '_' + page];
-
-            var currentActivity = Lampa.Activity.active();  
-            var isCategoryFull = currentActivity && currentActivity.component === 'category_full';
-            
-            var normalized = {  
-                results: (json.results || []).map(function (item) {  
+        function normalizeData(json, callback) {
+            var normalized = {
+                results: (json.results || []).map(function (item) {
 
                     var poster_path = item.poster_path || item.poster || '';
                     // Если это полный URL — извлекаем только путь после домена
                     if (poster_path && poster_path.indexOf('http') === 0) {
-                        // Пример: "http://image.tmdb.org/t/p/w342/uhQBzTD8cDmk5pXrstnJwqVHNUE.jpg"
-                        // Нам нужно: "=/uhQBzTD8cDmk5pXrstnJwqVHNUE.jpg"
                         var match = poster_path.match(/\/t\/p\/[^\/]+\/(.+)$/);
                         if (match) {
                             poster_path = '/' + match[1];
                         } else {
-                            poster_path = ''; 
+                            poster_path = '';
                         }
                     }
 
-
-                    var dataItem = {  
-                        id: item.id,  
+                    var dataItem = {
+                        id: item.id,
                         poster_path: poster_path,
-                        img: item.img,  
-                        overview: item.overview || item.description || '',  
-                        vote_average: item.vote_average || 0,  
-                        backdrop_path: item.backdrop_path || item.backdrop || '',  
-                        background_image: item.background_image,  
-                        source: Lampa.Storage.get('numparser_source_name') || SOURCE_NAME, 
-                        media_type: (item.first_air_date || item.number_of_seasons) ? 'tv' : 'movie',  
-                        original_title: item.original_title || item.original_name || '',  
-                        title: item.title || item.name || '',  
-                        original_language: item.original_language || 'en',  
-                        first_air_date: item.first_air_date,  
-                        number_of_seasons: item.number_of_seasons,  
-                        status: item.status || '',  
-                    };  
+                        img: item.img,
+                        overview: item.overview || item.description || '',
+                        vote_average: item.vote_average || 0,
+                        backdrop_path: item.backdrop_path || item.backdrop || '',
+                        background_image: item.background_image,
+                        source: Lampa.Storage.get('numparser_source_name') || SOURCE_NAME,
+                        media_type: item.media_type || ((item.first_air_date || item.number_of_seasons) ? 'tv' : 'movie'),
+                        original_title: item.original_title || item.original_name || '',
+                        title: item.title || item.name || '',
+                        original_language: item.original_language || 'en',
+                        first_air_date: item.first_air_date,
+                        number_of_seasons: item.number_of_seasons,
+                        status: item.status || '',
+                    };
 
                     if (item.release_quality) {
                         var mode = Lampa.Storage.get('numparser_quality_mode', 'simple');
-                        dataItem.release_quality = mode === 'simple' 
-                            ? getQuality(item.release_quality) 
+                        dataItem.release_quality = mode === 'simple'
+                            ? getQuality(item.release_quality)
                             : item.release_quality;
                     }
-                    if (item.release_date) dataItem.release_date = item.release_date;  
-                    if (item.last_air_date) dataItem.last_air_date = item.last_air_date;  
-                    if (item.last_episode_to_air) dataItem.last_episode_to_air = item.last_episode_to_air;  
-                    if (item.seasons) dataItem.seasons = item.seasons;  
-                    if (item.progress_marker) dataItem.progress_marker = item.progress_marker;  
-                    if (item.watched_count !== undefined) dataItem.watched_count = item.watched_count;  
-                    if (item.total_count !== undefined) dataItem.total_count = item.total_count;  
-                    if (item.released_count !== undefined) dataItem.released_count = item.released_count;  
-                    if (item.last_episode_to_myshows !== undefined) dataItem.last_episode_to_myshows = item.last_episode_to_myshows;  
+                    if (item.release_date) dataItem.release_date = item.release_date;
+                    if (item.last_air_date) dataItem.last_air_date = item.last_air_date;
+                    if (item.last_episode_to_air) dataItem.last_episode_to_air = item.last_episode_to_air;
+                    if (item.seasons) dataItem.seasons = item.seasons;
+                    if (item.progress_marker) dataItem.progress_marker = item.progress_marker;
+                    if (item.watched_count !== undefined) dataItem.watched_count = item.watched_count;
+                    if (item.total_count !== undefined) dataItem.total_count = item.total_count;
+                    if (item.released_count !== undefined) dataItem.released_count = item.released_count;
+                    if (item.last_episode_to_myshows !== undefined) dataItem.last_episode_to_myshows = item.last_episode_to_myshows;
 
-                    dataItem.promo_title = dataItem.title || dataItem.name || dataItem.original_title || dataItem.original_name;  
-                    dataItem.promo = dataItem.overview;  
+                    dataItem.promo_title = dataItem.title || dataItem.name || dataItem.original_title || dataItem.original_name;
+                    dataItem.promo = dataItem.overview;
 
-                    return dataItem;  
-                }),  
-                page: json.page || 1,  
-                total_pages: json.total_pages || json.pagesCount || 1,  
-                total_results: json.total_results || json.total || 0  
-            };  
+                    return dataItem;
+                }),
+                page: json.page || 1,
+                total_pages: json.total_pages || json.pagesCount || 1,
+                total_results: json.total_results || json.total || 0
+            };
 
-            Log.info('Before filtering in normalizeData:', normalized.results.length, 'items');  
-            
-            if (Lampa.Storage.get('numparser_hide_watched')) {    
-                // ✅ ПРАВИЛЬНО - асинхронный вызов с callback  
-                basicFilterWatchedContent(normalized.results, function(filtered) {  
-                    // Догружаем только если это НЕ внутренний запрос    
-                    if (!isInternal && !isCategoryFull && filtered.length < 20 && normalized.total_pages > 1) {  
-                    // if (!isInternal && filtered.length < 20 && normalized.total_pages > 1) {    
-                        loadMoreUntilFullAsync(filtered, category, page, source, normalized.total_pages, function(results) {    
-                            normalized.results = results;    
-                            callback(normalized);    
-                        });    
-                    } else {    
-                        normalized.results = filtered;    
-                        callback(normalized);    
-                    }  
-                });  
-            } else {    
-                callback(normalized);    
-            }
+            callback(normalized);
         }
 
         self.get = function (url, params, onComplete, onError) {
@@ -451,17 +146,8 @@
                     onError(new Error('Empty response from server'));
                     return;
                 }
-                
-                var urlParts = url.split('/');
-                var category = urlParts[urlParts.length - 1].split('?')[0];
-                var page = 1;
-                var urlParams = new URLSearchParams(url.split('?')[1] || '');
-                if (urlParams.has('page')) {
-                    page = parseInt(urlParams.get('page'));
-                }
-                
-                // Используем асинхронную версию normalizeData с callback
-                normalizeData(json, category, page, SOURCE_NAME, function(normalizedJson) {
+
+                normalizeData(json, function(normalizedJson) {
                     onComplete(normalizedJson);
                 });
             }, function (error) {
@@ -474,10 +160,22 @@
             onComplete = onComplete || function () {};
             onError = onError || function () {};
 
-            var category = params.url // || CATEGORIES.movies_new;
+            var category = params.url;
             var page = params.page || 1;
-            
-            var url = BASE_URL + '/' + category + '?page=' + page + '&language=' + Lampa.Storage.get('tmdb_lang', 'ru');  
+            var isContinues = category === 'continues' || category.indexOf('continues_') === 0;
+            var token = '';
+            if (Lampa.Storage.get('numparser_hide_watched') || isContinues) {
+                token = Lampa.Storage.get('numparser_api_key', '');
+            }
+
+            var url = BASE_URL + '/' + category + '?page=' + page + '&language=' + Lampa.Storage.get('tmdb_lang', 'ru');
+            if (token) {
+                url += '&token=' + encodeURIComponent(token);
+                var profileId = getProfileId();
+                if (profileId) url += '&profile_id=' + encodeURIComponent(profileId);
+                var minProgress = getProfileSetting('numparser_min_progress', DEFAULT_MIN_PROGRESS);
+                url += '&min_progress=' + encodeURIComponent(minProgress);
+            }
 
             self.get(url, params, function (json) {
                 onComplete({
@@ -658,86 +356,92 @@
             }
 
             function addEpisodesV3(partsData, title, getFunc) {
-                partsData.push(function (callback) {  
-                    var results = getFunc().slice(0, 20);  
-                    
-                    results.forEach(function(item) {  
-                        item.params = {  
-                            createInstance: function(data) {  
-                                return Lampa.Maker.make('Episode', data, function(module) {  
-                                    return module.only('Card', 'Callback');  
-                                });  
-                            },  
-                            emit: {  
-                                onlyEnter: function() {  
-                                    Lampa.Router.call('full', item.card);  
-                                },  
-                                onlyFocus: function() {  
-                                    Lampa.Background.change(Lampa.Utils.cardImgBackgroundBlur(item.card));  
-                                }  
-                            }  
-                        };  
-                        
-                        Lampa.Arrays.extend(item, item.episode);  
-                    });  
-                    
-                    callback({  
-                        source: 'tmdb',  
-                        results: results,  
-                        title: title,  
-                        nomore: true  
-                    });  
+                partsData.push(function (callback) {
+                    var results = getFunc().slice(0, 20);
+
+                    results.forEach(function(item) {
+                        item.params = {
+                            createInstance: function(data) {
+                                return Lampa.Maker.make('Episode', data, function(module) {
+                                    return module.only('Card', 'Callback');
+                                });
+                            },
+                            emit: {
+                                onlyEnter: function() {
+                                    Lampa.Router.call('full', item.card);
+                                },
+                                onlyFocus: function() {
+                                    Lampa.Background.change(Lampa.Utils.cardImgBackgroundBlur(item.card));
+                                }
+                            }
+                        };
+
+                        Lampa.Arrays.extend(item, item.episode);
+                    });
+
+                    callback({
+                        source: 'tmdb',
+                        results: results,
+                        title: title,
+                        nomore: true
+                    });
                 });
             }
 
             function addContinues(partsData, title, getFunc, type) {
-                partsData.push(function (callback) {  
-                    var results = getFunc(type).slice(0, 20);  
-                    
-                    results.forEach(function(item) {  
+                partsData.push(function (callback) {
+                    var results = getFunc(type).slice(0, 20);
+
+                    results.forEach(function(item) {
                         Log.info('addContinues', item);
-                        item.params = {  
-                            createInstance: function(data) {  
-                                return Lampa.Maker.make('Card', data, function(module) {  
-                                    return module.only('Card', 'Callback');  
-                                });  
-                            },  
-                            emit: {  
-                                onlyEnter: function() {  
-                                    Lampa.Router.call('full', item);  
-                                },  
-                            }  
-                        };  
-                        
-                    });  
-                    
-                    callback({  
-                        source: 'tmdb',  
-                        results: results,  
-                        title: title,  
-                        nomore: true  
-                    });  
+                        item.params = {
+                            createInstance: function(data) {
+                                return Lampa.Maker.make('Card', data, function(module) {
+                                    return module.only('Card', 'Callback');
+                                });
+                            },
+                            emit: {
+                                onlyEnter: function() {
+                                    Lampa.Router.call('full', item);
+                                },
+                            }
+                        };
+
+                    });
+
+                    callback({
+                        source: 'tmdb',
+                        results: results,
+                        title: title,
+                        nomore: true
+                    });
                 });
             }
 
             function makeRequest(category, title, callback) {
                 var page = 1;
-                var url = BASE_URL + '/' + category + '?page=' + page + '&language=' + Lampa.Storage.get('tmdb_lang', 'ru');  
+                var isContinues = category === 'continues' || category.indexOf('continues_') === 0;
+                var token = '';
+                if (Lampa.Storage.get('numparser_hide_watched') || isContinues) {
+                    token = Lampa.Storage.get('numparser_api_key', '');
+                }
+                var url = BASE_URL + '/' + category + '?page=' + page + '&language=' + Lampa.Storage.get('tmdb_lang', 'ru');
+                if (token) {
+                    url += '&token=' + encodeURIComponent(token);
+                    var profileId = getProfileId();
+                    if (profileId) url += '&profile_id=' + encodeURIComponent(profileId);
+                    var minProgress = getProfileSetting('numparser_min_progress', DEFAULT_MIN_PROGRESS);
+                    url += '&min_progress=' + encodeURIComponent(minProgress);
+                }
 
                 self.get(url, params, function (json) {
-                    var filteredResults = json.results || [];
+                    var results = json.results || [];
                     var totalResults = json.total_results || 0;
                     var totalPages = json.total_pages || 1;
 
-                    // Корректируем общее количество результатов с учетом фильтрации
-                    if (filteredResults.length < (json.results || []).length) {
-                        totalResults = totalResults - ((json.results || []).length - filteredResults.length);
-                        totalPages = Math.ceil(totalResults / 20); // ПЕРЕСЧИТЫВАЕМ totalPages
-                    }
-
-                    if (window.MyShows && window.MyShows.prepareProgressMarkers) {    
-                        var preparedData = window.MyShows.prepareProgressMarkers({results: filteredResults});    
-                        filteredResults = preparedData.results || preparedData.shows || filteredResults;    
+                    if (window.MyShows && window.MyShows.prepareProgressMarkers) {
+                        var preparedData = window.MyShows.prepareProgressMarkers({results: results});
+                        results = preparedData.results || preparedData.shows || results;
                     }
 
                     var result = {
@@ -745,9 +449,9 @@
                         title: title,
                         page: page,
                         total_results: totalResults,
-                        total_pages: totalPages, // Используем пересчитанное значение
+                        total_pages: totalPages,
                         more: totalPages > page,
-                        results: filteredResults,
+                        results: results,
                         source: Lampa.Storage.get('numparser_source_name') || SOURCE_NAME,
                         _original_total_results: json.total_results || 0,
                         _original_total_pages: json.total_pages || 1,
@@ -853,6 +557,7 @@
             } else {
                 self.img_episode.src = './img/img_broken.svg';
             }
+
             if (self.onVisible) {
                 self.onVisible(self.card, card);
             }
@@ -899,22 +604,46 @@
     // === Поддержка профилей ===
     function getProfileId() {
 
-        if (IS_LAMPAC) {
-            var profileId = Lampa.Storage.get('lampac_profile_id', '');
-        } else {
-            var profileId = '';
-            // Проверяем что аккаунт существует и имеет профиль
-            if (Lampa.Account.Permit.account && Lampa.Account.Permit.account.profile && Lampa.Account.Permit.account.profile.id) {
-                profileId = '_' + Lampa.Account.Permit.account.profile.id;
-            }
+        if (window._np_profiles_started) {
+            var npId = Lampa.Storage.get('np_profile_id', '');
+            if (npId) return String(npId);
         }
-        return profileId;
+
+        if (window.profiles_plugin) {
+            var profileId = Lampa.Storage.get('lampac_profile_id', '');
+            if (profileId) return String(profileId);
+        }
+
+        try {
+            if (Lampa.Account.Permit.account && Lampa.Account.Permit.account.profile && Lampa.Account.Permit.account.profile.id) {
+                return String(Lampa.Account.Permit.account.profile.id);
+            }
+        } catch (e) {}
+
+        return '';
     }
 
     function getProfileKey(baseKey) {
-        Log.info('IS_LAMPAC:', IS_LAMPAC, 'baseKey: ', baseKey);
         var profileId = getProfileId();
-        return baseKey + '_profile' + profileId;
+        if (profileId) {
+            return baseKey + '_profile_' + profileId;
+        } else {
+            return baseKey;
+        }
+    }
+
+    function getProfileName() {
+
+        var npName = Lampa.Storage.get('np_profile_name', '');
+        if (npName) return String(npName);
+
+        try {
+            if (Lampa.Account.Permit.account && Lampa.Account.Permit.account.profile && Lampa.Account.Permit.account.profile.name) {
+                return String(Lampa.Account.Permit.account.profile.name);
+            }
+        } catch (e) {}
+
+        return '';
     }
 
     function getProfileSetting(key, defaultValue) {
@@ -932,31 +661,24 @@
 
     // Загружаем профильные настройки
     function loadNumparserProfileSettings() {
-
-        if (!hasProfileSetting('numparser_hide_watched') && HAS_TIMECODE_USER) {
+        if (!hasProfileSetting('numparser_hide_watched')) {
             setProfileSetting('numparser_hide_watched', "true");
         }
-
         if (!hasProfileSetting('numparser_min_progress')) {
             setProfileSetting('numparser_min_progress', DEFAULT_MIN_PROGRESS);
         }
-
         if (!hasProfileSetting('numparser_source_name')) {
             setProfileSetting('numparser_source_name', DEFAULT_SOURCE_NAME);
         }
-
         if (!hasProfileSetting('numparser_menu_sort')) {
             setProfileSetting('numparser_menu_sort', []);
         }
-
         if (!hasProfileSetting('numparser_menu_hide')) {
             setProfileSetting('numparser_menu_hide', []);
         }
 
         // Восстанавливаем значения в Lampa.Storage, чтобы UI знал актуальные данные
-        if (HAS_TIMECODE_USER) {
-            Lampa.Storage.set('numparser_hide_watched', getProfileSetting('numparser_hide_watched', "true"), "true");
-        }
+        Lampa.Storage.set('numparser_hide_watched', getProfileSetting('numparser_hide_watched', "true"), "true");
         Lampa.Storage.set('numparser_min_progress', getProfileSetting('numparser_min_progress', DEFAULT_MIN_PROGRESS), "true");
         Lampa.Storage.set('numparser_source_name', getProfileSetting('numparser_source_name', DEFAULT_SOURCE_NAME), "true");
         Lampa.Storage.set('numparser_menu_sort', getProfileSetting('numparser_menu_sort', []));
@@ -1002,11 +724,51 @@
             }
             if (!exists) {
                 ordered.push(cat);
-            }
+        }
         }
 
         // Создаём DOM
+
+        // CSS для фокуса на кнопках управления (однократно)
+        if (!document.getElementById('np-ctrl-style')) {
+            $('<style id="np-ctrl-style">').text(
+                '.menu-edit-list__ctrl{justify-content:center;opacity:.7;transition:opacity .15s;}' +
+                '.menu-edit-list__ctrl.focus{opacity:1;background:rgba(255,255,255,.12);border-radius:.3em;}'
+            ).appendTo('head');
+        }
+
+        // Скролл к элементу по центру — Lampa двигает scroll__body через CSS transform
+        function scrollItemCenter(el) {
+            var body = el.parentNode;
+            while (body && (body.className || '').indexOf('scroll__body') < 0) {
+                body = body.parentNode;
+            }
+            if (!body) { return; }
+            var content = body.parentNode;
+            var viewH = content.clientHeight;
+            var bodyH = body.offsetHeight;
+            var elR = el.getBoundingClientRect();
+            var bodyR = body.getBoundingClientRect();
+            var elOffset = elR.top - bodyR.top;
+            var elH = elR.bottom - elR.top;
+            var targetY = -elOffset + (viewH - elH) / 2;
+            if (targetY > 0) targetY = 0;
+            // Отступ 50px снизу: последний элемент не прячется за край контейнера
+            if (targetY < viewH - 50 - bodyH) targetY = viewH - 50 - bodyH;
+            body.style.transform = 'translateY(' + targetY + 'px)';
+        }
+
         var list = $('<div class="menu-edit-list"></div>');
+
+        // Кнопки "Включить все / Отключить все" — внутри list чтобы не ломать навигацию Lampa
+        var btnEnableAll = $('<div class="menu-edit-list__item menu-edit-list__ctrl selector">Включить все</div>');
+        var btnDisableAll = $('<div class="menu-edit-list__item menu-edit-list__ctrl selector">Отключить все</div>');
+        btnEnableAll.on('hover:enter', function () { list.find('.dot').attr('opacity', '1'); });
+        btnDisableAll.on('hover:enter', function () { list.find('.dot').attr('opacity', '0'); });
+        list.append(btnEnableAll).append(btnDisableAll);
+
+        // Единый таймер дебаунса для всех строк списка
+        var npScrollTimer;
 
         ordered.forEach(function (cat) {
             var isVisible = savedHide.indexOf(cat.key) === -1;
@@ -1033,19 +795,28 @@
                 </div>
             `).data('key', cat.key);
 
+            // При навигации: clearTimeout отменяет предыдущий если пришёл новый hover:focus,
+            // setTimeout(0) запускается до следующего кадра — Lampa и мы рисуемся за один рендер
+            item.find('.selector').on('hover:focus', function () {
+                clearTimeout(npScrollTimer);
+                npScrollTimer = setTimeout(function () { scrollItemCenter(item[0]); }, 0);
+            });
+
             item.find('.move-up').on('hover:enter', function () {
-                var prev = item.prev();
+                var prev = item.prev(':not(.menu-edit-list__ctrl)');
                 if (prev.length) {
                     item.insertBefore(prev);
-                    Lampa.Controller.toggle('modal'); 
+                    Lampa.Controller.toggle('modal');
+                    scrollItemCenter(item[0]); // синхронно — выигрываем у Lampa
                 };
             });
 
             item.find('.move-down').on('hover:enter', function () {
-                var next = item.next();
+                var next = item.next(':not(.menu-edit-list__ctrl)');
                 if (next.length) {
                     item.insertAfter(next);
-                    Lampa.Controller.toggle('modal'); 
+                    Lampa.Controller.toggle('modal');
+                    scrollItemCenter(item[0]); // синхронно — выигрываем у Lampa
                 };
             });
 
@@ -1062,12 +833,13 @@
             title: 'Порядок категорий',
             html: list,
             size: 'small',
-            onBack: function () {
+                        onBack: function () {
                 var newOrder = [];
                 var newHide = [];
 
                 list.find('.menu-edit-list__item').each(function () {
                     var key = $(this).data('key');
+                    if (!key) return; // кнопки "Включить все / Отключить все" не имеют key
                     var isVisible = $(this).find('.dot').attr('opacity') === '1';
                     newOrder.push(key);
                     if (!isVisible) newHide.push(key);
@@ -1076,24 +848,24 @@
                 setProfileSetting('numparser_menu_sort', newOrder);
                 setProfileSetting('numparser_menu_hide', newHide);
                 Lampa.Modal.close();
-                Lampa.Controller.toggle('settings_component'); 
+                    Lampa.Controller.toggle('settings_component');
+                }
+            });
+        }
+
+    function initSettings() {
+
+        try {
+            if (Lampa.SettingsApi.removeComponent) {
+                Lampa.SettingsApi.removeComponent('numparser_settings');
             }
-        });
-    }
+        } catch (e) {}
 
-    function initSettings() {  
-
-        try {  
-            if (Lampa.SettingsApi.removeComponent) {  
-                Lampa.SettingsApi.removeComponent('numparser_settings');  
-            }  
-        } catch (e) {}  
-
-        Lampa.SettingsApi.addComponent({  
-            component: 'numparser_settings',  
-            name: SOURCE_NAME,  
+        Lampa.SettingsApi.addComponent({
+            component: 'numparser_settings',
+            name: SOURCE_NAME,
             icon: ICON
-        });  
+        });
 
         Lampa.SettingsApi.addParam({
             component: 'numparser_settings',
@@ -1111,36 +883,35 @@
             }
         });
 
-        // Добавляем переключатель фильтрации
-        Log.info('TimecodeUser!', HAS_TIMECODE_USER, 'LAMPAC:', IS_LAMPAC);
-        if (IS_LAMPAC && HAS_TIMECODE_USER) {
-            Lampa.SettingsApi.addParam({
-                component: 'numparser_settings',
-                param: {
-                    name: 'numparser_hide_watched',
-                    type: 'trigger',
-                    default: getProfileSetting('numparser_hide_watched', "true"),
-                },
-                field: {
-                    name: 'Скрыть просмотренные',
-                    description: 'Скрывать просмотренные фильмы и сериалы'
-                },
+        Lampa.SettingsApi.addParam({
+            component: 'numparser_settings',
+            param: {
+                name: 'numparser_hide_watched',
+                type: 'trigger',
+                default: getProfileSetting('numparser_hide_watched', "true"),
+            },
+            field: {
+                name: 'Скрыть просмотренные',
+                description: 'Скрывать просмотренные фильмы и сериалы'
+            },
 
-                onChange: function (value) {
-                    setProfileSetting('numparser_hide_watched', value === true || value === "true");
+            onChange: function (value) {
+                setProfileSetting('numparser_hide_watched', value === true || value === "true");
 
-                    var active = Lampa.Activity.active();
-                    if (active && active.activity_line && active.activity_line.listener && typeof active.activity_line.listener.send === 'function') {
-                        active.activity_line.listener.send({
-                            type: 'append',
-                            data: active.activity_line.card_data,
-                            line: active.activity_line
-                        });
-                    } else {
-                        location.reload();
-                    }
+                var active = Lampa.Activity.active();
+                if (active && active.activity_line && active.activity_line.listener && typeof active.activity_line.listener.send === 'function') {
+                    active.activity_line.listener.send({
+                        type: 'append',
+                        data: active.activity_line.card_data,
+                        line: active.activity_line
+                    });
+                } else {
+                    location.reload();
                 }
-            });
+            }
+        });
+
+        if (NUMPARSER_HIDE_WATCHED) {
 
             // Добавляем настройку прогресса
             Lampa.SettingsApi.addParam({
@@ -1173,7 +944,43 @@
                     MIN_PROGRESS = newProgress;
                 }
             });
-        };
+
+            // Токен устройства (ввод вручную)
+            Lampa.SettingsApi.addParam({
+                component: 'numparser_settings',
+                param: {
+                    name: 'numparser_api_key',
+                    type: 'input',
+                    placeholder: 'Вставьте токен',
+                    values: '',
+                    default: Lampa.Storage.get('numparser_api_key', ''),
+                },
+                field: {
+                    name: 'Токен устройства',
+                    description: 'Токен для идентификации устройства. Получите на сайте или привяжите кнопкой ниже.'
+                },
+                onChange: function (value) {
+                    Lampa.Storage.set('numparser_api_key', value);
+                }
+            });
+
+            // Привязка через код (без ручного ввода токена)
+            Lampa.SettingsApi.addParam({
+                component: 'numparser_settings',
+                param: {
+                    name: 'numparser_activate_device',
+                    type: 'button',
+                    title: 'Привязать устройство'
+                },
+                field: {
+                    name: 'Привязать устройство',
+                    description: 'Показать код для ввода на сайте — без ручного набора токена'
+                },
+                onChange: function () {
+                    startDeviceActivation();
+                }
+            });
+        }
 
         // Настройка для изменения названия источника
         Lampa.SettingsApi.addParam({
@@ -1195,8 +1002,8 @@
                 $('.num_text').text(value);
                 Lampa.Settings.update();
             }
-        });      
-        
+        });
+
         Lampa.SettingsApi.addParam({
             component: 'numparser_settings',
             param: {
@@ -1239,30 +1046,257 @@
         return qualityStr;
     }
 
+    // ── Device Activation Flow ──────────────────────────────────────────────────
+
+    function startDeviceActivation() {
+        var overlay = null;
+        var pollTimer = null;
+
+        function removeOverlay() {
+            if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+            if (overlay)   { overlay.remove(); overlay = null; }
+        }
+
+        function setStatus(text, color) {
+            if (overlay) overlay.find('.num-act-status').css('color', color || '').text(text);
+        }
+
+        function showOverlay(code, expiresIn) {
+            var remaining = expiresIn;
+
+            overlay = $([
+                '<div class="num-act-overlay">',
+                  '<div class="num-act-box">',
+                    '<div class="num-act-title">Привязка устройства</div>',
+                    '<div class="num-act-url">' + BASE_URL + '</div>',
+                    '<div class="num-act-hint">Мои устройства → Привязать устройство</div>',
+                    '<div class="num-act-hint">Введите этот код:</div>',
+                    '<div class="num-act-code">' + code.replace(/(.{3})(.{3})/, '$1 $2') + '</div>',
+                    '<div class="num-act-timer">Действует ' + remaining + ' сек.</div>',
+                    '<div class="num-act-status">Ожидаю привязки…</div>',
+                    '<div class="num-act-close">Нажмите Назад для отмены</div>',
+                  '</div>',
+                '</div>'
+            ].join('')).appendTo('body');
+
+            // Обратный отсчёт
+            var countdown = setInterval(function () {
+                remaining--;
+                if (!overlay) { clearInterval(countdown); return; }
+                overlay.find('.num-act-timer').text('Действует ' + remaining + ' сек.');
+                if (remaining <= 0) {
+                    clearInterval(countdown);
+                    setStatus('Код истёк. Закройте и попробуйте снова.', '#f87171');
+                    removeOverlay();
+                }
+            }, 1000);
+
+            // Закрытие по клику на фон или кнопке Back
+            overlay.on('click', function (e) {
+                if ($(e.target).hasClass('num-act-overlay')) removeOverlay();
+            });
+
+            // Перехватываем Back (keydown Escape / Lampa back)
+            function onBack() {
+                removeOverlay();
+                Lampa.Controller.toggle('settings_component');
+            }
+            Lampa.Controller.add('num_act', { back: onBack, toggle: function () {} });
+            Lampa.Controller.toggle('num_act');
+        }
+
+        function startPolling(code, interval) {
+            pollTimer = setInterval(function () {
+                fetch(BASE_URL + '/device/status?code=' + encodeURIComponent(code))
+                    .then(function (r) { return r.json(); })
+                    .then(function (data) {
+                        if (data.linked && data.token) {
+                            Lampa.Storage.set('numparser_api_key', data.token);
+                            setStatus('Устройство привязано!', '#4ade80');
+                            Lampa.Noty.show('NUMParser: устройство привязано');
+                            setTimeout(function () {
+                                removeOverlay();
+                                Lampa.Settings.update();
+
+                                setTimeout(function () {
+                                    location.reload();
+                                }, 1000);
+                            }, 2000);
+                        }
+                    })
+                    .catch(function () { /* сеть временно недоступна — продолжаем */ });
+            }, interval * 1000);
+        }
+
+        // Запрос кода у сервера
+        fetch(BASE_URL + '/device/code', { method: 'POST' })
+            .then(function (r) { return r.json(); })
+            .then(function (data) {
+                showOverlay(data.code, data.expires_in);
+                startPolling(data.code, data.poll_interval || 3);
+            })
+            .catch(function () {
+                Lampa.Noty.show('NUMParser: не удалось получить код активации');
+            });
+    }
+
+    // CSS для оверлея активации (инжектируем один раз)
+    (function injectActivationStyles() {
+        if (document.getElementById('num-act-styles')) return;
+        var s = document.createElement('style');
+        s.id = 'num-act-styles';
+        s.textContent = [
+            '.num-act-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.92);z-index:9999;display:-webkit-box;display:-webkit-flex;display:flex;-webkit-align-items:center;align-items:center;-webkit-justify-content:center;justify-content:center}',
+            '.num-act-box{background:#1e1e2e;border-radius:1.8rem;padding:4rem 6rem;text-align:center;max-width:900px;width:85%;border:2px solid #ffffff15}',
+            '.num-act-title{font-size:2.4rem;font-weight:700;margin-bottom:1.8rem}',
+            '.num-act-url{color:#60a5fa;font-size:1.5rem;font-weight:600;margin-bottom:1.2rem;word-break:break-all}',
+            '.num-act-hint{color:#aaa;font-size:1.3rem;margin-bottom:.6rem}',
+            '.num-act-code{font-size:5rem;font-weight:800;letter-spacing:1rem;color:#4ade80;font-family:monospace;border:3px solid #4ade80;border-radius:1rem;padding:.8rem 2.5rem;display:inline-block;margin:1.5rem 0}',
+            '.num-act-timer{color:#888;font-size:1.1rem;margin-bottom:1rem}',
+            '.num-act-status{font-size:1.3rem;min-height:2rem}',
+            '.num-act-close{color:#555;font-size:1rem;margin-top:1.8rem}',
+        ].join('');
+        document.head.appendChild(s);
+    })();
+
+    // ── End Device Activation Flow ──────────────────────────────────────────────
+
+    var _timecodeInterceptorActive = false;
+    var _lastSentTimecodes = {};  // { "cardId::hash": { percent, sentAt } }
+    var SYNC_THROTTLE_MS = 15000; // не чаще раза в 15 сек на одну (card+hash) пару
+
+    function getCurrentCard() {
+        var card = (Lampa.Activity && Lampa.Activity.active && Lampa.Activity.active() && (
+            Lampa.Activity.active().card_data ||
+            Lampa.Activity.active().card ||
+            Lampa.Activity.active().movie
+        )) || null;
+
+        if (card) {
+            card.isMovie = isMovieContent(card);
+        }
+        Log.info('Current card', card);
+        return card;
+    }
+
+    function isMovieContent(card) {
+        // Проверяем наличие явных признаков фильма
+        if (card && (
+            (card.number_of_seasons === undefined || card.number_of_seasons === null) &&
+            (card.media_type === 'movie') ||
+            (Lampa.Activity.active() && Lampa.Activity.active().method === 'movie')
+        )) {
+            return true;
+        }
+
+        // Проверяем наличие явных признаков сериала
+        if (card && (
+            (card.number_of_seasons > 0) ||
+            (card.media_type === 'tv') ||
+            (Lampa.Activity.active() && Lampa.Activity.active().method === 'tv') ||
+            (card.name !== undefined)
+        )) {
+            return false;
+        }
+
+        // Дополнительные проверки
+        return Boolean(!card.original_name && (card.original_title || card.title));
+    }
+
+    function setupTimecodeSync() {
+        if (_timecodeInterceptorActive) return;
+        _timecodeInterceptorActive = true;
+
+        function tryAttach() {
+            if (window.Lampa && Lampa.Timeline && Lampa.Timeline.listener) {
+                Lampa.Timeline.listener.follow('update', onTimelineUpdate);
+                Log.info('Timecode sync: Timeline attached');
+            } else {
+                setTimeout(tryAttach, 1000);
+            }
+        }
+        tryAttach();
+    }
+
+    function onTimelineUpdate(data) {
+        if (!data || !data.data || !data.data.hash || !data.data.road) return;
+
+        var token = Lampa.Storage.get('numparser_api_key', '');
+        if (!token) {
+            Log.info('Timecode sync: skip — no token');
+            return;
+        }
+
+        var card = getCurrentCard();
+        if (!card || !card.id) {
+            Log.info('Timecode sync: skip — no card');
+            return;
+        }
+
+        var hash    = String(data.data.hash);
+        var road    = data.data.road;
+        var percent = Math.round(road.percent  || 0);
+        var time    = Math.round(road.time     || 0);
+        var duration = Math.round(road.duration || 0);
+
+        var mt     = card.media_type || (card.isMovie ? 'movie' : 'tv');
+        var cardId = String(card.id) + '_' + mt;
+        var key    = cardId + '::' + hash;
+        var now    = Date.now();
+        var last   = _lastSentTimecodes[key];
+
+        // Пропускаем если процент не изменился или не прошло время дросселя
+        if (last && (now - last.sentAt < SYNC_THROTTLE_MS) && last.percent === percent) return;
+
+        _lastSentTimecodes[key] = { percent: percent, sentAt: now };
+
+        Log.info('Timecode sync: sending', cardId, hash, percent + '%');
+
+        var timecodeUrl = BASE_URL + '/timecode?token=' + encodeURIComponent(token);
+        var profileId = getProfileId();
+        var profileName = getProfileName();
+        if (profileId) timecodeUrl += '&profile_id=' + encodeURIComponent(profileId);
+        if (profileName) {timecodeUrl += '&profile_name=' + encodeURIComponent(profileName);}
+
+        fetch(timecodeUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                card_id: cardId,
+                item: hash,
+                data: JSON.stringify({ time: time, duration: duration, percent: percent })
+            })
+        }).then(function() {
+            Log.info('Timecode saved:', cardId, hash, percent + '%');
+        }).catch(function(err) {
+            Log.error('Timecode save error:', err);
+        });
+    }
+
     function startPlugin() {
 
         if (window.numparser_plugin) return;
         window.numparser_plugin = true;
 
-        var originalCategoryFull = Lampa.Component.get('category_full');  
-        if (originalCategoryFull) {  
-            Lampa.Component.add('category_full', function(object) {  
-                var comp = originalCategoryFull(object);  
-                var originalBuild = comp.build;  
-                
-                comp.build = function(data) {  
-                    // Если результатов нет, но есть еще страницы - пробуем загрузить следующую  
-                    if (!data.results.length && object.source === SOURCE_NAME && data.total_pages > 1) {  
-                        object.page = 2;  
-                        Lampa.Api.list(object, this.build.bind(this), this.empty.bind(this));  
-                        return;  
-                    }  
-                    
-                    originalBuild.call(this, data);  
-                };  
-                
-                return comp;  
-            });  
+        var originalCategoryFull = Lampa.Component.get('category_full');
+        if (originalCategoryFull) {
+            Lampa.Component.add('category_full', function(object) {
+                var comp = originalCategoryFull(object);
+                var originalBuild = comp.build;
+
+                comp.build = function(data) {
+                    // Если результатов нет, но есть еще страницы - пробуем загрузить следующую
+                    if (!data.results.length && object.source === SOURCE_NAME && data.total_pages > 1) {
+                        object.page = 2;
+                        Lampa.Api.list(object, this.build.bind(this), this.empty.bind(this));
+                        return;
+                    }
+
+                    originalBuild.call(this, data);
+                };
+
+                return comp;
+            });
         }
 
         var numparserApi = new NumparserApiService();
@@ -1299,108 +1333,55 @@
             });
         });
 
+        // === Общая функция обновления настроек при смене профиля ===
+        function refreshProfileSettings() {
+            loadNumparserProfileSettings();
+
+            // Если панель настроек открыта — обновим значения в UI
+            setTimeout(function() {
+                var settingsPanel = document.querySelector('[data-component="numparser_settings"]');
+                if (!settingsPanel) return;
+
+                var hideWatched = settingsPanel.querySelector('select[data-name="numparser_hide_watched"]');
+                if (hideWatched) hideWatched.value = getProfileSetting('numparser_hide_watched', "true");
+
+                var minProgress = settingsPanel.querySelector('select[data-name="numparser_min_progress"]');
+                if (minProgress) minProgress.value = getProfileSetting('numparser_min_progress', DEFAULT_MIN_PROGRESS).toString();
+
+                var sourceName = settingsPanel.querySelector('input[data-name="numparser_source_name"]');
+                if (sourceName) {
+                    sourceName.value = getProfileSetting('numparser_source_name', DEFAULT_SOURCE_NAME);
+                }
+            }, 100);
+        }
+
+
         // === Обновляем настройки при смене профиля ===
         Lampa.Listener.follow('profile', function(e) {
             if (e.type === 'changed') {
-
-                loadNumparserProfileSettings();
-
-                // Если панель настроек открыта — обновим значения
-                setTimeout(function() {
-                    var settingsPanel = document.querySelector('[data-component="numparser_settings"]');
-                    if (settingsPanel) {
-                        var hideWatched = settingsPanel.querySelector('select[data-name="numparser_hide_watched"]');
-                        if (hideWatched) hideWatched.value = getProfileSetting('numparser_hide_watched', "true");
-
-                        var minProgress = settingsPanel.querySelector('select[data-name="numparser_min_progress"]');
-                        if (minProgress) minProgress.value = getProfileSetting('numparser_min_progress', DEFAULT_MIN_PROGRESS).toString();
-
-                        var sourceName = settingsPanel.querySelector('input[data-name="numparser_source_name"]');
-                        if (sourceName) sourceName.value = getProfileSetting('numparser_source_name', DEFAULT_SOURCE_NAME);
-                    }
-                }, 100);
+                refreshProfileSettings();
             }
         });
-    }
 
-    var lastKnownProfileId = '';
-
-    Lampa.Listener.follow('profile', function(e) {
-        Log.info('Profile Change - Type:', e.type);
-        
-        if (e.type === 'changed') {
-            var newProfileId = getProfileId();
-            
-            // ✅ Проверяем, действительно ли профиль изменился
-            if (newProfileId !== lastKnownProfileId) {
-                Log.info('🔀 Смена профиля:', lastKnownProfileId, '->', newProfileId);
-                
-                // Сбрасываем кэш
-                globalTimecodes = null;
-                if (IS_LAMPAC) {
-                    loadAllTimecodes(); 
-                }
-                timecodesLoading = false;
-                timecodesCallbacks = [];
-                
-                // Обновляем последний известный профиль
-                lastKnownProfileId = newProfileId;
-                
-            } else {
-                Log.info('⚠️ Профиль не изменился');
+        // Слушаем изменения профиля для обновления меню Lampa
+        Lampa.Listener.follow('state:changed', function(e) {
+            if (e.target === 'favorite' && e.reason === 'profile') {
+                refreshProfileSettings();
             }
-        }
-    });
+        });
 
-    // Проверка Lampac или Lampa и наличие TimecodeUser
-    function checkEnvironment(path, callback) {
-        
-        // Проверка через /version
-        var xhr = new XMLHttpRequest();
-        xhr.open('GET', path, true);
-        
-        xhr.onload = function() {
-            callback(xhr.status === 200);
-        };
-        
-        xhr.onerror = function() {
-            callback(false);
-        };
-        
-        xhr.send();
+        setupTimecodeSync();
     }
 
     function initNUMPlugin() {
         startPlugin();
 
-        checkEnvironment('/version', function(isLampac) {
-            IS_LAMPAC = isLampac;
-            Log.info('✅ Среда:', IS_LAMPAC ? 'Lampac' : 'Обычная Lampa');
+        NUMPARSER_HIDE_WATCHED = Lampa.Storage.get('numparser_hide_watched');
 
-            // ✅ Загружаем таймкоды ОДИН РАЗ при старте
-            if (IS_LAMPAC) {
-                loadAllTimecodes(function(timecodes, isAvailable, hasData) {
-                    if (isAvailable) {
-                        HAS_TIMECODE_USER = true;
-                        Log.info('✅ TimecodeUser:', HAS_TIMECODE_USER ? 'Доступен' : 'Не доступен', isAvailable);
-                    }
-
-                    lastKnownProfileId = getProfileId();
-                    Log.info('Начальный профиль:', lastKnownProfileId);
-
-                    setTimeout(function() {
-                        initSettings();
-                        loadNumparserProfileSettings();
-                    }, 50);
-                });
-            } else {
-                HAS_TIMECODE_USER = false;
-                setTimeout(function() {
-                    initSettings();
-                    loadNumparserProfileSettings();
-                }, 50);
-            }
-        });
+        setTimeout(function() {
+            initSettings();
+            loadNumparserProfileSettings();
+        }, 50);
     }
 
     if (window.appready) {

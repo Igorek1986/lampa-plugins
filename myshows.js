@@ -56,31 +56,26 @@
         return url;
     }
 
+    // === Поддержка профилей ===
     function getProfileId() {
-        var lampaProfileId =
-            Lampa.Account.Permit.account &&
-            Lampa.Account.Permit.account.profile &&
-            Lampa.Account.Permit.account.profile.id
-                ? '_' + Lampa.Account.Permit.account.profile.id
-                : '';
 
-        if (IS_LAMPAC) {
-            var lampacProfileId = Lampa.Storage.get('lampac_profile_id', '');
-
-            if (lampacProfileId) {
-                // ✅ Нормализация: всегда "_id"
-                if (lampacProfileId[0] !== '_') {
-                    lampacProfileId = '_' + lampacProfileId;
-                }
-                return lampacProfileId;
-            }
-
-            // fallback на профиль Lampa
-            return lampaProfileId;
+        if (window._np_profiles_started) {
+            var npId = Lampa.Storage.get('np_profile_id', '');
+            if (npId) return String(npId);
         }
 
-        // Не LAMPAC → только профиль Lampa
-        return lampaProfileId;
+        if (window.profiles_plugin) {
+            var profileId = Lampa.Storage.get('lampac_profile_id', '');
+            if (profileId) return String(profileId);
+        }
+
+        try {
+            if (Lampa.Account.Permit.account && Lampa.Account.Permit.account.profile && Lampa.Account.Permit.account.profile.id) {
+                return String(Lampa.Account.Permit.account.profile.id);
+            }
+        } catch (e) {}
+
+        return '';
     }
 
     // Сохранение кеша с использованием профилей
@@ -345,11 +340,13 @@
     function getProfileKey(baseKey) {
         Log.info('IS_LAMPAC:', IS_LAMPAC, 'baseKey: ', baseKey);
         var profileId = getProfileId();
+        if (profileId && profileId.charAt(0) === '_') profileId = profileId.slice(1);
+
         if (!profileId) {
             return baseKey;
         }
 
-        return baseKey + '_profile' + profileId;
+        return baseKey + '_profile_' + profileId;
     }
 
     function getProfileSetting(key, defaultValue) {
