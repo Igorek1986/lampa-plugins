@@ -1323,9 +1323,12 @@
     function normalizeForComparison(str) {
         if (!str) return '';
         return str
+            .normalize('NFD')             // é → e + combining accent
+            .replace(/[\u0300-\u036f]/g, '') // убираем комбинирующие знаки
             .toLowerCase()
-            .normalize('NFD')  // декомпозиция: é → e +  ́
-            .replace(/[\u0300-\u036f]/g, '')  // удаляем все комбинирующие знаки
+            .replace(/-/g, ' ')           // дефисы → пробел
+            .replace(/[^\w\s]/g, '')      // убираем пунктуацию (кроме букв/цифр/пробелов)
+            .replace(/\s+/g, ' ')         // схлопываем пробелы
             .trim();
     }
 
@@ -3814,7 +3817,7 @@
             /* Поддержка glass-стиля */    
             body.glass--style.platform--browser .card .myshows-progress,    
             body.glass--style.platform--nw .card .myshows-progress,    
-            body.glass--style.platform--apple .card .myshows-progress {    
+            body.glass--style.platform--apple .card .д-progress {    
                 background-color: rgba(76, 175, 80, 0.8);    
                 -webkit-backdrop-filter: blur(1em);    
                 backdrop-filter: blur(1em);    
@@ -4522,7 +4525,7 @@
             }
 
             var episode = show.episodes[currentEpisodeIndex];
-            Log.info('Processing episode:', episode.seasonNumber + 'x' + episode.episodeNumber, 'for show:', show.title);
+            Log.info('Processing episode:', episode.seasonNumber + 'x' + episode.episodeNumber, 'for show:', show.title, 'TMDB Name', tmdbCard.original_name, 'TMDB Original Title', tmdbCard.original_title);
 
             if (watchedEpisodeIds.indexOf(episode.id) !== -1) {
                 try {
@@ -4531,7 +4534,7 @@
                         episode.seasonNumber,
                         episode.seasonNumber > 10 ? ':' : '',
                         episode.episodeNumber,
-                        show.titleOriginal || show.title
+                        tmdbCard.original_name || tmdbCard.original_title || show.titleOriginal || show.title
                     ].join(''));
 
                     var duration = episode.runtime ? episode.runtime * 60 : (show.runtime ? show.runtime * 60 : 2700);
