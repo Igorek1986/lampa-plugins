@@ -353,9 +353,33 @@
         return Lampa.Storage.get(getProfileKey(key), defaultValue);
     }
 
+    var _syncApplying = false;
+
     function setProfileSetting(key, value) {
         Log.info('Setting profile setting:', getProfileKey(key), value);
         Lampa.Storage.set(getProfileKey(key), value);
+        if (!_syncApplying && window.__NMSync) window.__NMSync.patch('myshows', getProfileKey(key), value);
+    }
+
+    var MYSHOWS_SENSITIVE_KEYS = ['myshows_login', 'myshows_password', 'myshows_token'];
+
+    // Базовый ключ из профильного: 'myshows_token_profile_abc' → 'myshows_token'
+    function _baseKey(profileKey) {
+        var idx = profileKey.lastIndexOf('_profile_');
+        return idx >= 0 ? profileKey.slice(0, idx) : profileKey;
+    }
+
+    // Применить настройку пришедшую с сервера (без обратной отправки)
+    function _applyMyShowsSetting(profileKey, value) {
+        _syncApplying = true;
+        // Всегда обновляем профильный ключ в хранилище
+        Lampa.Storage.set(profileKey, value);
+        // Базовый ключ обновляем только если этот профиль сейчас активен
+        var base = _baseKey(profileKey);
+        if (getProfileKey(base) === profileKey) {
+            Lampa.Storage.set(base, value, true);
+        }
+        _syncApplying = false;
     }
 
     function loadProfileSettings() {
@@ -5960,6 +5984,9 @@
                 // Инициализируем все компоненты
                 initCurrentProfile();
                 initSettings();
+                if (window.__NMSync) {
+                    window.__NMSync.register('myshows', MYSHOWS_SENSITIVE_KEYS, _applyMyShowsSetting);
+                }
                 initMyShowsCaches();
                 addMyShowsComponents();
                 addMyShowsMenuItems();

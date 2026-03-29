@@ -1,4 +1,4 @@
-(function () {
+ (function () {
     'use strict';
 
     var DEFAULT_SOURCE_NAME = 'NUMParser';
@@ -112,7 +112,7 @@
                     };
 
                     if (item.release_quality) {
-                        var mode = Lampa.Storage.get('numparser_quality_mode', 'simple');
+                        var mode = getProfileSetting('numparser_quality_mode', 'simple');
                         dataItem.release_quality = mode === 'simple'
                             ? getQuality(item.release_quality)
                             : item.release_quality;
@@ -650,8 +650,30 @@
         return Lampa.Storage.get(getProfileKey(key), defaultValue);
     }
 
+    var _syncApplying = false;
+
     function setProfileSetting(key, value) {
         Lampa.Storage.set(getProfileKey(key), value);
+        if (!_syncApplying && window.__NMSync) window.__NMSync.patch('np', getProfileKey(key), value);
+    }
+
+    // Базовый ключ из профильного: 'numparser_hide_watched_profile_abc' → 'numparser_hide_watched'
+    function _baseKey(profileKey) {
+        var idx = profileKey.lastIndexOf('_profile_');
+        return idx >= 0 ? profileKey.slice(0, idx) : profileKey;
+    }
+
+    // Применить настройку пришедшую с сервера (без обратной отправки)
+    function _applyNpSetting(profileKey, value) {
+        _syncApplying = true;
+        // Всегда обновляем профильный ключ в хранилище
+        Lampa.Storage.set(profileKey, value);
+        // Базовый ключ обновляем только если этот профиль сейчас активен
+        var base = _baseKey(profileKey);
+        if (getProfileKey(base) === profileKey) {
+            Lampa.Storage.set(base, value);
+        }
+        _syncApplying = false;
     }
 
     function hasProfileSetting(key) {
@@ -676,6 +698,9 @@
         if (!hasProfileSetting('numparser_menu_hide')) {
             setProfileSetting('numparser_menu_hide', []);
         }
+        if (!hasProfileSetting('numparser_quality_mode')) {
+            setProfileSetting('numparser_quality_mode', 'simple');
+        }
 
         // Восстанавливаем значения в Lampa.Storage, чтобы UI знал актуальные данные
         Lampa.Storage.set('numparser_hide_watched', getProfileSetting('numparser_hide_watched', "true"), "true");
@@ -683,6 +708,7 @@
         Lampa.Storage.set('numparser_source_name', getProfileSetting('numparser_source_name', DEFAULT_SOURCE_NAME), "true");
         Lampa.Storage.set('numparser_menu_sort', getProfileSetting('numparser_menu_sort', []));
         Lampa.Storage.set('numparser_menu_hide', getProfileSetting('numparser_menu_hide', []));
+        Lampa.Storage.set('numparser_quality_mode', getProfileSetting('numparser_quality_mode', 'simple'));
     }
 
     function openNumparserMenuEditor() {
@@ -1013,14 +1039,14 @@
                     'full': 'Полное (WEBDL 1080p, BDRip и т.д.)',
                     'simple': 'Упрощённое (SD, 720p, 1080p, 4K)'
                 },
-                default: 'simple'
+                default: getProfileSetting('numparser_quality_mode', 'simple')
             },
             field: {
                 name: 'Формат качества',
                 description: 'Как отображать качество видео'
             },
             onChange: function (value) {
-                Lampa.Storage.set('numparser_quality_mode', value);
+                setProfileSetting('numparser_quality_mode', value);
             }
         });
     }
@@ -1349,9 +1375,10 @@
                 if (minProgress) minProgress.value = getProfileSetting('numparser_min_progress', DEFAULT_MIN_PROGRESS).toString();
 
                 var sourceName = settingsPanel.querySelector('input[data-name="numparser_source_name"]');
-                if (sourceName) {
-                    sourceName.value = getProfileSetting('numparser_source_name', DEFAULT_SOURCE_NAME);
-                }
+                if (sourceName) sourceName.value = getProfileSetting('numparser_source_name', DEFAULT_SOURCE_NAME);
+
+                var qualityMode = settingsPanel.querySelector('select[data-name="numparser_quality_mode"]');
+                if (qualityMode) qualityMode.value = getProfileSetting('numparser_quality_mode', 'simple');
             }, 100);
         }
 
@@ -1381,6 +1408,9 @@
         setTimeout(function() {
             initSettings();
             loadNumparserProfileSettings();
+            if (window.__NMSync) {
+                window.__NMSync.register('np', [], _applyNpSetting);
+            }
         }, 50);
     }
 
