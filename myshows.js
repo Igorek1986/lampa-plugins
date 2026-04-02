@@ -3889,17 +3889,17 @@
             if (token) {
                 getUnwatchedShowsWithDetails(function(result) {
                     if (result && result.shows && result.shows.length > 0) {
+                        var PAGE_SIZE = 20;
                         var myshowsCategory = {
                             title: 'Непросмотренные сериалы (MyShows)',
-                            results: result.shows,
+                            results: result.shows.slice(0, PAGE_SIZE),
                             source: 'tmdb',
-                            line_type: 'myshows_unwatched'
+                            url: 'myshows://unwatched',
+                            line_type: 'myshows_unwatched',
+                            total_pages: Math.ceil(result.shows.length / PAGE_SIZE)
                         };
-
-                        // Сохраняем ссылку на данные для последующих модификаций
                         window.myShowsData = myshowsCategory;
                         myShowsData = myshowsCategory;
-
                         data.unshift(myshowsCategory);
                     }
                     oncomplite(data);
@@ -3910,6 +3910,24 @@
 
         oncomplite(data);
         return false;
+    }
+
+    // Перехват Activity.push: любая навигация с url=myshows://unwatched → наш компонент
+    function patchActivityForMyShows() {
+        if (window._myshows_activity_patched) return;
+        window._myshows_activity_patched = true;
+
+        var originalPush = Lampa.Activity.push;
+        Lampa.Activity.push = function(params) {
+            if (params && params.url === 'myshows://unwatched') {
+                return originalPush.call(this, {
+                    component: 'myshows_unwatched',
+                    title: params.title || 'Непросмотренные сериалы (MyShows)',
+                    page: params.page || 1
+                });
+            }
+            return originalPush.call(this, params);
+        };
     }
 
     // Главная TMDB
@@ -5295,12 +5313,39 @@
             });
         }
 
+        // Непросмотренные — пагинация поверх getUnwatchedShowsWithDetails (данные берутся из кеша при повторных вызовах)
+        function myshowsUnwatched(object, oncomplite, onerror) {
+            var PAGE_SIZE = 20;
+            var currentPage = object.page || 1;
+            var cacheKey = 'unwatched_raw';
+
+            getUnwatchedShowsWithDetails(function(result) {
+                if (!result || result.error || !result.shows || result.shows.length === 0) {
+                    if (onerror) onerror();
+                    return;
+                }
+                if (!cachedShuffledItems[cacheKey]) {
+                    cachedShuffledItems[cacheKey] = result.shows.slice();
+                }
+                var cached = cachedShuffledItems[cacheKey];
+                var totalPages = Math.ceil(cached.length / PAGE_SIZE);
+                var start = (currentPage - 1) * PAGE_SIZE;
+                oncomplite({
+                    results: cached.slice(start, start + PAGE_SIZE),
+                    page: currentPage,
+                    total_pages: totalPages,
+                    total_results: cached.length
+                });
+            });
+        }
+
         Log.info('=== ApiMyShows Factory END ===');
 
         return {
             myshowsWatchlist: myshowsWatchlist,
             myshowsWatched: myshowsWatched,
-            myshowsCancelled: myshowsCancelled
+            myshowsCancelled: myshowsCancelled,
+            myshowsUnwatched: myshowsUnwatched
         };
     }
 
@@ -5318,143 +5363,85 @@
                 onCreate: function() {
                     this.activity.loader(true);
 
+                    var self = this;
                     var token = getProfileSetting('myshows_token', '');
 
-                    // Проверяем токен только при создании компонента
                     if (!token) {
-                        this.empty();
-                        this.activity.loader(false);
+                        self.empty();
+                        self.activity.loader(false);
                         return;
                     }
 
                     var allData = {};
                     var loaded = 0;
-                    var total = 3;
+                    var total = 4;
 
                     function checkComplete() {
                         loaded++;
-                        if (loaded === total) {
-                            buildLines.call(this);
-                        }
+                        if (loaded === total) buildLines();
                     }
 
-                    Api.myshowsWatchlist({page: 0}, function(result) {
+                    getUnwatchedShowsWithDetails(function(result) {
+                        allData.unwatched = result;
+                        checkComplete();
+                    });
+
+                    Api.myshowsWatchlist({ page: 1 }, function(result) {
                         allData.watchlist = result;
-                        checkComplete.call(this);
-                    }.bind(this));
+                        checkComplete();
+                    }, checkComplete);
 
-                    Api.myshowsWatched({page: 0}, function(result) {
+                    Api.myshowsWatched({ page: 1 }, function(result) {
                         allData.watched = result;
-                        checkComplete.call(this);
-                    }.bind(this));
+                        checkComplete();
+                    }, checkComplete);
 
-                    Api.myshowsCancelled({page: 0}, function(result) {
+                    Api.myshowsCancelled({ page: 1 }, function(result) {
                         allData.cancelled = result;
-                        checkComplete.call(this);
-                    }.bind(this));
+                        checkComplete();
+                    }, checkComplete);
 
                     function buildLines() {
-                        Log.info('Watchlist total_pages:', allData.watchlist.total_pages);
-                        Log.info('Watched total_pages:', allData.watched.total_pages);
-                        Log.info('Cancelled total_pages:', allData.cancelled.total_pages);
                         var lines = [];
+                        var PAGE_SIZE = 20;
 
-                        getUnwatchedShowsWithDetails(function(result) {
-                            if (result && result.shows && result.shows.length > 0) {
-                                lines.unshift({
-                                    title: 'Непросмотренные сериалы (MyShows)',
-                                    results: result.shows,
-                                    params: {
-                                        module: Lampa.Maker.module('Line').only('Items', 'Create', 'More', 'Event'),
-                                        emit: {
-                                            onMore: function() {
-                                                Lampa.Activity.push({
-                                                    url: '',
-                                                    title: 'Непросмотренные сериалы (MyShows)',
-                                                    component: 'myshows_unwatched',
-                                                    page: 2
-                                                });
-                                            }
+                        function addLine(title, results, totalPages, moreComponent) {
+                            if (!results || !results.length) return;
+                            lines.push({
+                                title: title,
+                                results: results,
+                                total_pages: totalPages || 1,
+                                params: {
+                                    module: Lampa.Maker.module('Line').only('Items', 'Create', 'More', 'Event'),
+                                    emit: {
+                                        onMore: function() {
+                                            Lampa.Activity.push({
+                                                url: moreComponent === 'myshows_unwatched' ? 'myshows://unwatched' : '',
+                                                title: title,
+                                                component: moreComponent,
+                                                page: 1
+                                            });
                                         }
                                     }
-                                });
-                            }
+                                }
+                            });
+                        }
 
-                            // Добавляем остальные линии
-                            if (allData.watchlist && allData.watchlist.results && allData.watchlist.results.length) {
-                                lines.push({
-                                    title: 'Хочу посмотреть',
-                                    results: allData.watchlist.results,
-                                    total_pages: allData.watchlist.total_pages || 1,
-                                    params: {
-                                        module: Lampa.Maker.module('Line').only('Items', 'Create', 'More', 'Event'),
-                                        emit: {
-                                            onMore: function() {
-                                                Lampa.Activity.push({
-                                                    url: '',
-                                                    title: 'Хочу посмотреть (MyShows)',
-                                                    component: 'myshows_watchlist',
-                                                    page: 1
-                                                });
-                                            }
-                                        }
-                                    }
-                                });
-                            }
+                        function finish() {
+                            if (lines.length) self.build(lines);
+                            else self.empty();
+                            self.activity.loader(false);
+                        }
 
-                            if (allData.watched && allData.watched.results && allData.watched.results.length) {
-                                Log.info('allData.watched', allData.watched);
-
-                                lines.push({
-                                    title: 'История',
-                                    results: allData.watched.results,
-                                    total_pages: allData.watched.total_pages || 1,
-                                    params: {
-                                        module: Lampa.Maker.module('Line').only('Items', 'Create', 'More', 'Event'),
-                                        emit: {
-                                            onMore: function() {
-                                                Log.info('onMore: opening watched page');
-                                                Lampa.Activity.push({
-                                                    url: '',
-                                                    title: 'История (MyShows)',
-                                                    component: 'myshows_watched',
-                                                    page: 1
-                                                });
-                                            }
-                                        }
-                                    }
-                                });
-                            }
-
-                            if (allData.cancelled && allData.cancelled.results && allData.cancelled.results.length) {
-                                lines.push({
-                                    title: 'Бросил смотреть',
-                                    results: allData.cancelled.results,
-                                    total_pages: allData.cancelled.total_pages || 1,
-                                    params: {
-                                        module: Lampa.Maker.module('Line').only('Items', 'Create', 'More', 'Event'),
-                                        emit: {
-                                            onMore: function() {
-                                                Lampa.Activity.push({
-                                                    url: '',
-                                                    title: 'Бросил смотреть (MyShows)',
-                                                    component: 'myshows_cancelled',
-                                                    page: 1
-                                                });
-                                            }
-                                        }
-                                    }
-                                });
-                            }
-
-                            if (lines.length) {
-                                this.build(lines);
-                            } else {
-                                this.empty();
-                            }
-
-                            this.activity.loader(false);
-                        }.bind(this));
+                        var unwatchedShows = allData.unwatched && !allData.unwatched.error && allData.unwatched.shows;
+                        if (unwatchedShows && unwatchedShows.length) {
+                            var totalPages = Math.ceil(unwatchedShows.length / PAGE_SIZE);
+                            addLine('Непросмотренные сериалы (MyShows)', unwatchedShows.slice(0, PAGE_SIZE), totalPages, 'myshows_unwatched');
+                        }
+                        addLine('Хочу посмотреть', allData.watchlist && allData.watchlist.results, allData.watchlist && allData.watchlist.total_pages, 'myshows_watchlist');
+                        addLine('История', allData.watched && allData.watched.results, allData.watched && allData.watched.total_pages, 'myshows_watched');
+                        addLine('Бросил смотреть', allData.cancelled && allData.cancelled.results, allData.cancelled && allData.cancelled.total_pages, 'myshows_cancelled');
+                        finish();
                     }
                 },
 
@@ -5618,6 +5605,54 @@
                     Api.myshowsCancelled(object, function(result) {
                         resolve(Lampa.Utils.addSource(result, 'myshows'));
                     }, function(error) {
+                        reject();
+                    });
+                },
+                onInstance: function(item, data) {
+                    item.use({
+                        onEnter: function() {
+                            Lampa.Activity.push({
+                                url: '',
+                                component: 'full',
+                                id: data.id,
+                                method: data.name ? 'tv' : 'movie',
+                                card: data
+                            });
+                        },
+                        onFocus: function() {
+                            Lampa.Background.change(Lampa.Utils.cardImgBackground(data));
+                        }
+                    });
+                }
+            });
+
+            return comp;
+        });
+
+        // Непросмотренные сериалы — полноэкранный вид с пагинацией
+        Lampa.Component.add('myshows_unwatched', function(object) {
+            var comp = Lampa.Maker.make('Category', object, function(module) {
+                return module.toggle(module.MASK.base, 'Pagination');
+            });
+
+            comp.use({
+                onCreate: function() {
+                    this.activity.loader(true);
+                    if (!getProfileSetting('myshows_token', '')) {
+                        this.empty();
+                        this.activity.loader(false);
+                        return;
+                    }
+                    Api.myshowsUnwatched(object, function(result) {
+                        this.build(result);
+                    }.bind(this), function() {
+                        this.empty();
+                    }.bind(this));
+                },
+                onNext: function(resolve, reject) {
+                    Api.myshowsUnwatched(object, function(result) {
+                        resolve(result);
+                    }, function() {
                         reject();
                     });
                 },
@@ -5974,6 +6009,7 @@
 
             addMyShowsToTMDB();
             addMyShowsToCUB();
+            patchActivityForMyShows();
             // Небольшая задержка для стабильности
             setTimeout(function() {
                 // Инициализируем все компоненты

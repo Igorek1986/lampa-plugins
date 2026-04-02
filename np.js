@@ -271,8 +271,6 @@
 
                 // MyShows — особый случай
                 if (key === 'myshows_unwatched') {
-                    var hasCreds = Lampa.Storage.get('myshows_login') && Lampa.Storage.get('myshows_password');
-                    if (!hasCreds) continue;
                     if (!window.MyShows || !window.MyShows.getUnwatchedShowsWithDetails) continue;
 
                     // 🔥 Захватываем title СЕЙЧАС
@@ -284,10 +282,13 @@
                                 callback({skip: true});
                                 return;
                             }
+                            var PAGE_SIZE = 20;
+                            var total_pages = Math.ceil(response.shows.length / PAGE_SIZE);
                             callback({
-                                title: currentTitle, // ← Используем захваченное значение
-                                results: response.shows,
-                                nomore: true
+                                title: currentTitle,
+                                results: response.shows.slice(0, PAGE_SIZE),
+                                url: 'myshows://unwatched',
+                                total_pages: total_pages
                             });
                         });
                     });
