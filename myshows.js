@@ -59,12 +59,7 @@
     // === Поддержка профилей ===
     function getProfileId() {
 
-        if (window._np_profiles_started) {
-            var npId = Lampa.Storage.get('np_profile_id', '');
-            if (npId) return String(npId);
-        }
-
-        if (window.profiles_plugin) {
+        if (window._np_profiles_started || window.profiles_plugin) {
             var profileId = Lampa.Storage.get('lampac_profile_id', '');
             if (profileId) return String(profileId);
         }
