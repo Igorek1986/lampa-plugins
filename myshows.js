@@ -2193,7 +2193,10 @@
     }
 
     function enrichShowData(fullResponse, myshowsData) {
-        var enriched = Object.assign({}, fullResponse);
+        var enriched = {};
+        for (var _k in fullResponse) {
+            if (fullResponse.hasOwnProperty(_k)) enriched[_k] = fullResponse[_k];
+        }
 
         if (myshowsData) {
             enriched.progress_marker = myshowsData.progress_marker;
@@ -2234,7 +2237,7 @@
 
         Log.info('[DEBUG] Всего шоу из MyShows:', shows.length);
         shows.forEach(function(show, idx) {
-            Log.info(`[DEBUG] Шоу ${idx + 1}: "${show.title}" (ID: ${show.myshowsId})`);
+            Log.info('[DEBUG] Шоу ' + (idx + 1) + ': "' + show.title + '" (ID: ' + show.myshowsId + ')');
         });
 
         status.onComplite = function (data) {
@@ -2244,7 +2247,7 @@
 
             Log.info('[DEBUG] Успешно обработано шоу:', matchedShows.length);
             matchedShows.forEach(function(show, idx) {
-                Log.info(`[DEBUG] Обработано ${idx + 1}: "${show.name}" (ID: ${show.id})`);
+                Log.info('[DEBUG] Обработано ' + (idx + 1) + ': "' + show.name + '" (ID: ' + show.id + ')');
             });
 
             var sortOrder = getProfileSetting('myshows_sort_order', 'progress');
@@ -2257,7 +2260,7 @@
 
             Log.info('[DEBUG] Шоу в кэше:', cachedShows.length);
             cachedShows.forEach(function(show, idx) {
-                Log.info(`[DEBUG] Кэш ${idx + 1}: "${show.name}" (ID: ${show.id})`);
+                Log.info('[DEBUG] Кэш ' + (idx + 1) + ': "' + show.name + '" (ID: ' + show.id + ')');
             });
 
             // Создаем массив задач для partNext
@@ -3645,7 +3648,7 @@
 
                     var parentSection = cardElement.closest('.items-line');
                     var allCards = parentSection.querySelectorAll('.card');
-                    var currentIndex = Array.from(allCards).indexOf(cardElement);
+                    var currentIndex = [].slice.call(allCards).indexOf(cardElement);
 
                     setTimeout(function() {
                         removeCompletedCard(cardElement, showName, parentSection, currentIndex);
@@ -6071,7 +6074,7 @@
                 if (cleanedTitle !== originalTitle) titles.push(cleanedTitle);
 
                 var attempts = [];
-                titles.forEach(t => {
+                titles.forEach(function(t) {
                     if (currentItem.year > 1900 && currentItem.year < 2100) {
                         attempts.push({ query: t, year: currentItem.year });
                     }
