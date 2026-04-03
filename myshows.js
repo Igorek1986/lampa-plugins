@@ -1505,95 +1505,44 @@
             .trim();
     }
 
-    function getMovieCandidates(data, title, year, callback) {
+    // dataKey: 'show' для сериалов, 'movie' для фильмов
+    function getMediaCandidates(data, title, year, dataKey, getBestFn, callback) {
         var candidates = [];
         for (var i = 0; i < data.length; ++i) {
             try {
-                var movie = data[i].movie;
-                if (!movie) {
-                    continue
-                }
-                var titleMatch = movie.titleOriginal && normalizeForComparison(movie.titleOriginal.toLowerCase()) === normalizeForComparison(title.toLowerCase());
-                var yearMatch = movie.year == year;
-
-                if (titleMatch && yearMatch) {
-                    candidates.push(movie);
-                }
-            } catch (e) {
-                callback(null);
-            }
-        }
-
-        if (candidates.length === 0) {
-            callback(null);
-            return;
-        } else if (candidates.length == 1) {
-            callback(candidates[0].id)
-        } else getBestMovieCandidate(candidates, function(candidate) {
-            callback(candidate ? candidate.id : null);
-        })
-    }
-
-    function getShowCandidates(data, title, year, callback) {
-        Log.info('getShowCandidates called with:', {
-            dataLength: data.length,
-            title: title,
-            year: year
-        });
-
-        var candidates = [];
-
-        for (var i = 0; i < data.length; ++i) {
-            try {
-                var item = data[i];
-                if (!item || !item.show) {
-                    continue;
-                }
-
-                var show = item.show;
-
-                // Нормализация для сравнения
-                var titleMatch = show.titleOriginal &&
-                    normalizeForComparison(show.titleOriginal.toLowerCase()) ===
+                var item = data[i][dataKey];
+                if (!item) continue;
+                var titleMatch = item.titleOriginal &&
+                    normalizeForComparison(item.titleOriginal.toLowerCase()) ===
                     normalizeForComparison(title.toLowerCase());
-
-                var yearMatch = show.year == year;
-
-                Log.info('Checking show:', {
-                    id: show.id,
-                    titleOriginal: show.titleOriginal,
-                    normalizedShowTitle: show.titleOriginal ? normalizeForComparison(show.titleOriginal.toLowerCase()) : 'null',
-                    normalizedInputTitle: normalizeForComparison(title.toLowerCase()),
-                    titleMatch: titleMatch,
-                    year: show.year,
-                    yearMatch: yearMatch
-                });
-
-                // Точное совпадение по названию и году
+                var yearMatch = item.year == year;
                 if (titleMatch && yearMatch) {
-                    candidates.push(show);
-                    Log.info('Added exact match candidate:', show.id);
+                    candidates.push(item);
                 }
             } catch (e) {
-                Log.error('Error processing show:', e);
+                Log.error('Error processing ' + dataKey + ':', e);
                 callback(null);
                 return;
             }
         }
 
-        Log.info('Found candidates:', candidates.length);
-
         if (candidates.length === 0) {
             callback(null);
-        } else if (candidates.length == 1) {
-            Log.info('Returning single candidate:', candidates[0].id);
+        } else if (candidates.length === 1) {
             callback(candidates[0].id);
         } else {
-            Log.info('Multiple candidates, getting best one');
-            getBestShowCandidate(candidates, function(candidate) {
+            getBestFn(candidates, function(candidate) {
                 callback(candidate ? candidate.id : null);
             });
         }
+    }
+
+    function getShowCandidates(data, title, year, callback) {
+        getMediaCandidates(data, title, year, 'show', getBestShowCandidate, callback);
+    }
+
+    function getMovieCandidates(data, title, year, callback) {
+        getMediaCandidates(data, title, year, 'movie', getBestMovieCandidate, callback);
     }
 
     function getBestMovieCandidate(candidates, callback) {
