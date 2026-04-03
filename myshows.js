@@ -5768,212 +5768,62 @@
             return comp;
         });
 
-        Lampa.Component.add('myshows_watchlist', function(object) {
-            var comp = Lampa.Maker.make('Category', object, function(module) {
-                return module.toggle(module.MASK.base, 'Pagination');
-            });
+        // apiFn    — метод из Api (myshowsWatchlist / myshowsWatched / ...)
+        // useSource — оборачивать ли результат в Lampa.Utils.addSource
+        function addCategoryComponent(name, apiFn, useSource) {
+            Lampa.Component.add(name, function(object) {
+                var comp = Lampa.Maker.make('Category', object, function(module) {
+                    return module.toggle(module.MASK.base, 'Pagination');
+                });
 
-            comp.use({
-                onCreate: function() {
-                    this.activity.loader(true);
-
-                    var token = getProfileSetting('myshows_token', '');
-
-                    // Проверяем токен только при создании компонента
-                    if (!token) {
-                        this.empty();
-                        this.activity.loader(false);
-                        return;
-                    }
-
-                    Api.myshowsWatchlist(object, function(result) {
-                        this.build(Lampa.Utils.addSource(result, 'myshows'));
-                    }.bind(this), function(error) {
-                        this.empty();
-                    }.bind(this));
-                },
-                onNext: function(resolve, reject) {
-                    Api.myshowsWatchlist(object, function(result) {
-                        resolve(Lampa.Utils.addSource(result, 'myshows'));
-                    }, function(error) {
-                        reject();
-                    });
-                },
-                onInstance: function(item, data) {
-                    item.use({
-                        onEnter: function() {
-                            Lampa.Activity.push({
-                                url: '',
-                                component: 'full',
-                                id: data.id,
-                                method: data.name ? 'tv' : 'movie',
-                                card: data
-                            });
-                        },
-                        onFocus: function() {
-                            Lampa.Background.change(Lampa.Utils.cardImgBackground(data));
+                comp.use({
+                    onCreate: function() {
+                        this.activity.loader(true);
+                        if (!getProfileSetting('myshows_token', '')) {
+                            this.empty();
+                            this.activity.loader(false);
+                            return;
                         }
-                    });
-                }
-            });
-
-            return comp;
-        });
-
-        // myshows_watched
-        Lampa.Component.add('myshows_watched', function(object) {
-            var comp = Lampa.Maker.make('Category', object, function(module) {
-                return module.toggle(module.MASK.base, 'Pagination');
-            });
-
-            comp.use({
-                onCreate: function() {
-                    this.activity.loader(true);
-
-                    var token = getProfileSetting('myshows_token', '');
-
-                    // Проверяем токен только при создании компонента
-                    if (!token) {
-                        this.empty();
-                        this.activity.loader(false);
-                        return;
+                        var self = this;
+                        apiFn(object, function(result) {
+                            self.build(useSource ? Lampa.Utils.addSource(result, 'myshows') : result);
+                        }, function() {
+                            self.empty();
+                        });
+                    },
+                    onNext: function(resolve, reject) {
+                        apiFn(object, function(result) {
+                            resolve(useSource ? Lampa.Utils.addSource(result, 'myshows') : result);
+                        }, function() {
+                            reject();
+                        });
+                    },
+                    onInstance: function(item, data) {
+                        item.use({
+                            onEnter: function() {
+                                Lampa.Activity.push({
+                                    url: '',
+                                    component: 'full',
+                                    id: data.id,
+                                    method: data.name ? 'tv' : 'movie',
+                                    card: data
+                                });
+                            },
+                            onFocus: function() {
+                                Lampa.Background.change(Lampa.Utils.cardImgBackground(data));
+                            }
+                        });
                     }
+                });
 
-                    // НЕ перезаписывайте page - используйте переданный параметр
-                    Api.myshowsWatched(object, function(result) {
-                        this.build(Lampa.Utils.addSource(result, 'myshows'));
-                    }.bind(this), function(error) {
-                        this.empty();
-                    }.bind(this));
-                },
-                onNext: function(resolve, reject) {
-                    Api.myshowsWatched(object, function(result) {
-                        resolve(Lampa.Utils.addSource(result, 'myshows'));
-                    }, function(error) {
-                        reject();
-                    });
-                },
-                onInstance: function(item, data) {
-                    item.use({
-                        onEnter: function() {
-                            Lampa.Activity.push({
-                                url: '',
-                                component: 'full',
-                                id: data.id,
-                                method: data.name ? 'tv' : 'movie',
-                                card: data
-                            });
-                        },
-                        onFocus: function() {
-                            Lampa.Background.change(Lampa.Utils.cardImgBackground(data));
-                        }
-                    });
-                }
+                return comp;
             });
+        }
 
-            return comp;
-        });
-
-        // myshows_cancelled
-        Lampa.Component.add('myshows_cancelled', function(object) {
-            var comp = Lampa.Maker.make('Category', object, function(module) {
-                return module.toggle(module.MASK.base, 'Pagination');
-            });
-
-            comp.use({
-                onCreate: function() {
-                    this.activity.loader(true);
-
-                    var token = getProfileSetting('myshows_token', '');
-
-                    // Проверяем токен только при создании компонента
-                    if (!token) {
-                        this.empty();
-                        this.activity.loader(false);
-                        return;
-                    }
-
-                    Api.myshowsCancelled(object, function(result) {
-                        this.build(Lampa.Utils.addSource(result, 'myshows'));
-                    }.bind(this), function(error) {
-                        this.empty();
-                    }.bind(this));
-                },
-                onNext: function(resolve, reject) {
-                    Api.myshowsCancelled(object, function(result) {
-                        resolve(Lampa.Utils.addSource(result, 'myshows'));
-                    }, function(error) {
-                        reject();
-                    });
-                },
-                onInstance: function(item, data) {
-                    item.use({
-                        onEnter: function() {
-                            Lampa.Activity.push({
-                                url: '',
-                                component: 'full',
-                                id: data.id,
-                                method: data.name ? 'tv' : 'movie',
-                                card: data
-                            });
-                        },
-                        onFocus: function() {
-                            Lampa.Background.change(Lampa.Utils.cardImgBackground(data));
-                        }
-                    });
-                }
-            });
-
-            return comp;
-        });
-
-        // Непросмотренные сериалы — полноэкранный вид с пагинацией
-        Lampa.Component.add('myshows_unwatched', function(object) {
-            var comp = Lampa.Maker.make('Category', object, function(module) {
-                return module.toggle(module.MASK.base, 'Pagination');
-            });
-
-            comp.use({
-                onCreate: function() {
-                    this.activity.loader(true);
-                    if (!getProfileSetting('myshows_token', '')) {
-                        this.empty();
-                        this.activity.loader(false);
-                        return;
-                    }
-                    Api.myshowsUnwatched(object, function(result) {
-                        this.build(result);
-                    }.bind(this), function() {
-                        this.empty();
-                    }.bind(this));
-                },
-                onNext: function(resolve, reject) {
-                    Api.myshowsUnwatched(object, function(result) {
-                        resolve(result);
-                    }, function() {
-                        reject();
-                    });
-                },
-                onInstance: function(item, data) {
-                    item.use({
-                        onEnter: function() {
-                            Lampa.Activity.push({
-                                url: '',
-                                component: 'full',
-                                id: data.id,
-                                method: data.name ? 'tv' : 'movie',
-                                card: data
-                            });
-                        },
-                        onFocus: function() {
-                            Lampa.Background.change(Lampa.Utils.cardImgBackground(data));
-                        }
-                    });
-                }
-            });
-
-            return comp;
-        });
+        addCategoryComponent('myshows_watchlist', Api.myshowsWatchlist, true);
+        addCategoryComponent('myshows_watched',   Api.myshowsWatched,   true);
+        addCategoryComponent('myshows_cancelled', Api.myshowsCancelled, true);
+        addCategoryComponent('myshows_unwatched', Api.myshowsUnwatched, false);
     }
 
     // // Без кеша
