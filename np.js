@@ -283,7 +283,7 @@
                                 return;
                             }
                             var PAGE_SIZE = 20;
-                            var total_pages = Math.ceil(response.shows.length / PAGE_SIZE);
+                            var total_pages = Math.ceil(response.shows.length / PAGE_SIZE) || 1;
                             callback({
                                 title: currentTitle,
                                 results: response.shows.slice(0, PAGE_SIZE),
