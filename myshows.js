@@ -3794,62 +3794,51 @@
         Log.info('Scroll object available');
 
         try {
-            // ✅ ИСПРАВЛЕНО: Используем прямой конструктор Card
-            var newCard = new Lampa.Card(showData, {
-                object: { source: 'tmdb' },
-                card_category: true
+            var newCard = Lampa.Maker.make('Card', showData, function(module) {
+                return module.only('Card', 'Callback');
             });
 
             Log.info('Card created');
 
-            // ✅ Создаём карточку через create()
+            // Обработчики через use() — новый API Lampa
+            newCard.use({
+                onEnter: function(html, data) {
+                    Lampa.Activity.push({
+                        url: data.url,
+                        component: 'full',
+                        id: data.id,
+                        method: 'tv',
+                        card: data,
+                        source: 'tmdb'
+                    });
+                },
+                onVisible: function() {
+                    addProgressMarkerToCard(this.html, this.data);
+                },
+                onUpdate: function() {
+                    addProgressMarkerToCard(this.html, this.data);
+                }
+            });
+
             newCard.create();
 
-            // ✅ Настраиваем обработчики
-            newCard.onEnter = function(target, card_data) {
-                Lampa.Activity.push({
-                    url: card_data.url,
-                    component: 'full',
-                    id: card_data.id,
-                    method: 'tv',
-                    card: card_data,
-                    source: 'tmdb'
-                });
-            };
-
-            // ✅ Получаем DOM-элемент
+            // render(true) возвращает jQuery-объект в новом API
             var cardElement = newCard.render(true);
 
             if (cardElement) {
                 Log.info('Card rendered');
 
-                // ✅ Сохраняем кастомные данные
-                cardElement.card_data = cardElement.card_data || {};
-                cardElement.card_data.progress_marker = showData.progress_marker;
-                cardElement.card_data.remaining = showData.remaining;
-                cardElement.card_data.next_episode = showData.next_episode;
-                cardElement.card_data.watched_count = showData.watched_count;
-                cardElement.card_data.total_count = showData.total_count;
-                cardElement.card_data.released_count = showData.released_count;
+                // Ставим card_data на DOM-элемент — нужно для findCardInMyShowsSection
+                var domEl = cardElement[0] || cardElement;
+                domEl.card_data = showData;
 
-                // ✅ Подписываемся на события
-                cardElement.addEventListener('visible', function() {
-                    Log.info('New card visible event fired');
-                    addProgressMarkerToCard(cardElement, cardElement.card_data);
-                });
-
-                cardElement.addEventListener('update', function() {
-                    Log.info('New card update event fired');
-                    addProgressMarkerToCard(cardElement, cardElement.card_data);
-                });
-
-                // ✅ Добавляем в scroll
+                // Добавляем в scroll (Scroll.append принимает jQuery)
                 scroll.append(cardElement);
                 Log.info('Card appended to scroll');
 
-                // Сразу добавляем маркер и загружаем постер, не дожидаясь события visible
-                addProgressMarkerToCard(cardElement, cardElement.card_data);
-                try { cardElement.dispatchEvent(new Event('visible')); } catch(e) {}
+                // Сразу добавляем маркер и инициируем загрузку постера
+                addProgressMarkerToCard(cardElement, showData);
+                newCard.visible();
 
                 if (window.Lampa && window.Lampa.Controller) {
                     window.Lampa.Controller.collectionAppend(cardElement);
