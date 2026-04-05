@@ -460,27 +460,24 @@
 
     var _syncApplying = false;
 
-    function setProfileSetting(key, value) {
-        Log.info('Setting profile setting:', getProfileKey(key), value);
+    // sync=true (по умолчанию) — сохранить и на сервер. sync=false — только локально.
+    // loadProfileSettings использует sync=false, чтобы дефолты не уходили на сервер.
+    // onChange-обработчики настроек вызывают без флага (sync=true) — пользователь явно изменил.
+    function setProfileSetting(key, value, sync) {
         Lampa.Storage.set(getProfileKey(key), value);
-        if (!_syncApplying && window.__NMSync) window.__NMSync.patch('myshows', getProfileKey(key), value);
+        if (sync !== false && !_syncApplying && window.__NMSync) window.__NMSync.patch('myshows', getProfileKey(key), value);
     }
 
     var MYSHOWS_SENSITIVE_KEYS = ['myshows_login', 'myshows_password', 'myshows_token'];
 
-    // Базовый ключ из профильного: 'myshows_token_profile_abc' → 'myshows_token'
-    function _baseKey(profileKey) {
-        var idx = profileKey.lastIndexOf('_profile_');
-        return idx >= 0 ? profileKey.slice(0, idx) : profileKey;
-    }
-
     // Применить настройку пришедшую с сервера (без обратной отправки)
     function _applyMyShowsSetting(profileKey, value) {
+        // Базовые ключи без _profile_ — legacy, игнорируем
+        if (profileKey.indexOf('_profile_') < 0) return;
+
         _syncApplying = true;
-        // Всегда обновляем профильный ключ в хранилище
         Lampa.Storage.set(profileKey, value);
-        // Базовый ключ обновляем только если этот профиль сейчас активен
-        var base = _baseKey(profileKey);
+        var base = profileKey.slice(0, profileKey.lastIndexOf('_profile_'));
         if (getProfileKey(base) === profileKey) {
             Lampa.Storage.set(base, value, true);
         }
@@ -489,43 +486,43 @@
 
     function loadProfileSettings() {
         if (!hasProfileSetting('myshows_view_in_main')) {
-            setProfileSetting('myshows_view_in_main', true);
+            setProfileSetting('myshows_view_in_main', true, false);
         }
 
         if (!hasProfileSetting('myshows_button_view')) {
-            setProfileSetting('myshows_button_view', true);
+            setProfileSetting('myshows_button_view', true, false);
         }
 
         if (!hasProfileSetting('myshows_sort_order')) {
-            setProfileSetting('myshows_sort_order', 'progress');
+            setProfileSetting('myshows_sort_order', 'progress', false);
         }
 
         if (!hasProfileSetting('myshows_add_threshold')) {
-            setProfileSetting('myshows_add_threshold', DEFAULT_ADD_THRESHOLD);
+            setProfileSetting('myshows_add_threshold', DEFAULT_ADD_THRESHOLD, false);
         }
 
         if (!hasProfileSetting('myshows_min_progress')) {
-            setProfileSetting('myshows_min_progress', DEFAULT_MIN_PROGRESS);
+            setProfileSetting('myshows_min_progress', DEFAULT_MIN_PROGRESS, false);
         }
 
         if (!hasProfileSetting('myshows_token')) {
-            setProfileSetting('myshows_token', '');
+            setProfileSetting('myshows_token', '', false);
         }
 
         if (!hasProfileSetting('myshows_login')) {
-            setProfileSetting('myshows_login', '');
+            setProfileSetting('myshows_login', '', false);
         }
 
         if (!hasProfileSetting('myshows_password')) {
-            setProfileSetting('myshows_password', '');
+            setProfileSetting('myshows_password', '', false);
         }
 
         if (!hasProfileSetting('myshows_cache_days')) {
-            setProfileSetting('myshows_cache_days', DEFAULT_CACHE_DAYS);
+            setProfileSetting('myshows_cache_days', DEFAULT_CACHE_DAYS, false);
         }
 
         if (!hasProfileSetting('myshows_use_np')) {
-            setProfileSetting('myshows_use_np', false);
+            setProfileSetting('myshows_use_np', false, false);
         }
 
         var myshowsViewInMain = getProfileSetting('myshows_view_in_main', true);
@@ -2834,98 +2831,9 @@
                     // Определяем тип контента
                     var isSerial = currentCard.number_of_seasons > 0 || currentCard.seasons;
 
-                    // Ждём обновления данных на сервере
+                    // Ждём обновления данных на сервере, затем обновляем статус и маркеры
                     setTimeout(function() {
-                        if (IS_NP && getNpToken() && getNpBaseUrl() && currentCard.id) {
-                            // IS_NP: статус берём из БД по tmdb_id
-                            var mediaType = isSerial ? 'tv' : 'movie';
-                            var profileId = getProfileId();
-                            var statusUrl = getNpBaseUrl() + '/myshows/status' +
-                                '?token=' + encodeURIComponent(getNpToken()) +
-                                '&profile_id=' + encodeURIComponent(profileId) +
-                                '&tmdb_id=' + encodeURIComponent(currentCard.id) +
-                                '&media_type=' + mediaType;
-                            var net = new Lampa.Reguest();
-                            net.silent(statusUrl, function(response) {
-                                var cacheType = response && response.cache_type;
-                                var status;
-                                if (isSerial) {
-                                    if (cacheType === 'watchlist') status = 'later';
-                                    else if (cacheType === 'watching' || cacheType === 'cancelled') status = cacheType;
-                                    else status = 'remove';
-                                } else {
-                                    if (cacheType === 'watched') status = 'finished';
-                                    else if (cacheType === 'watchlist') status = 'later';
-                                    else status = 'remove';
-                                }
-                                updateButtonStates(status, !isSerial, true);
-                                Lampa.Storage.set('myshows_was_watching', false);
-                            }, function() {});
-
-                            if (isSerial) {
-                                loadCacheFromServer('unwatched_serials', 'shows', function(cachedResult) {
-                                    if (cachedResult && cachedResult.shows) {
-                                        var foundShow = cachedResult.shows.find(function(show) {
-                                            return (show.original_name || show.name || show.title) === originalName;
-                                        });
-                                        if (foundShow && (foundShow.progress_marker || foundShow.next_episode || foundShow.remaining)) {
-                                            updateMarkersOnFullCard(foundShow.progress_marker, foundShow.next_episode, foundShow.remaining);
-                                        }
-                                    }
-                                });
-                            }
-                            return;
-                        }
-
-                        if (isSerial) {
-                            // Для сериалов
-                            loadCacheFromServer('unwatched_serials', 'shows', function(cachedResult) {
-                                if (cachedResult && cachedResult.shows) {
-                                    var foundShow = cachedResult.shows.find(function(show) {
-                                        return (show.original_name || show.name || show.title) === originalName;
-                                    });
-
-                                    if (foundShow && (foundShow.progress_marker || foundShow.next_episode || foundShow.remaining)) {
-                                        Log.info('Updating markers on full page');
-                                        updateMarkersOnFullCard(foundShow.progress_marker, foundShow.next_episode, foundShow.remaining);
-                                    }
-                                }
-                            });
-                            loadCacheFromServer('serial_status', 'shows', function(cachedResult) {
-                                if (cachedResult && cachedResult.shows) {
-                                    var foundShow = cachedResult.shows.find(function(show) {
-                                        return show.title === originalName ||
-                                            show.titleOriginal === originalName ||
-                                            (show.title && show.title.toLowerCase() === originalName.toLowerCase()) ||
-                                            (show.titleOriginal && show.titleOriginal.toLowerCase() === originalName.toLowerCase());
-                                    });
-
-                                    if (foundShow) {
-                                        Log.info('Updating serial status to:', foundShow.watchStatus);
-                                        updateButtonStates(foundShow.watchStatus, false, true);
-                                        Lampa.Storage.set('myshows_was_watching', false);
-                                    }
-                                }
-                            });
-                        } else {
-                            // Для фильмов
-                            loadCacheFromServer('movie_status', 'movies', function(cachedResult) {
-                                if (cachedResult && cachedResult.movies) {
-                                    var foundMovie = cachedResult.movies.find(function(movie) {
-                                        return movie.title === originalName ||
-                                            movie.titleOriginal === originalName ||
-                                            (movie.title && movie.title.toLowerCase() === originalName.toLowerCase()) ||
-                                            (movie.titleOriginal && movie.titleOriginal.toLowerCase() === originalName.toLowerCase());
-                                    });
-
-                                    if (foundMovie) {
-                                        Log.info('Updating movie status to:', foundMovie.watchStatus);
-                                        updateButtonStates(foundMovie.watchStatus, true, true);
-                                        Lampa.Storage.set('myshows_was_watching', false);
-                                    }
-                                }
-                            });
-                        }
+                        refreshFullCardStatus(isSerial, originalName, currentCard);
                     }, 3000);
                 }
             }
@@ -3013,228 +2921,144 @@
                     });
 
                     if (foundShow && foundShow.progress_marker) {
-                        addProgressMarkerToFullCard(event.body, foundShow);
+                        updateFullCardMarkers(foundShow, event.body);
                     }
                 }
             });
         }
     });
 
-    function addProgressMarkerToFullCard(bodyElement, showData) {
-        var posterElement = bodyElement.find('.full-start-new__poster');
+    // Единая функция обновления маркеров на полной карточке.
+    // showData: { progress_marker, next_episode, remaining }
+    // bodyElement: опциональный jQuery-элемент; если не передан — ищет постер сам.
+    // Обновляет статус кнопок и маркеры на полной карточке после возврата с просмотра.
+    // Три ветки: IS_NP (статус из БД по tmdb_id), сериал (кэш serial_status), фильм (кэш movie_status).
+    function refreshFullCardStatus(isSerial, originalName, currentCard) {
+        if (IS_NP && getNpToken() && getNpBaseUrl() && currentCard.id) {
+            var mediaType = isSerial ? 'tv' : 'movie';
+            var statusUrl = getNpBaseUrl() + '/myshows/status' +
+                '?token=' + encodeURIComponent(getNpToken()) +
+                '&profile_id=' + encodeURIComponent(getProfileId()) +
+                '&tmdb_id=' + encodeURIComponent(currentCard.id) +
+                '&media_type=' + mediaType;
+            var net = new Lampa.Reguest();
+            net.silent(statusUrl, function(response) {
+                var cacheType = response && response.cache_type;
+                var status;
+                if (isSerial) {
+                    if (cacheType === 'watchlist') status = 'later';
+                    else if (cacheType === 'watching' || cacheType === 'cancelled') status = cacheType;
+                    else status = 'remove';
+                } else {
+                    if (cacheType === 'watched') status = 'finished';
+                    else if (cacheType === 'watchlist') status = 'later';
+                    else status = 'remove';
+                }
+                updateButtonStates(status, !isSerial, true);
+                Lampa.Storage.set('myshows_was_watching', false);
+            }, function() {});
+
+            if (isSerial) {
+                loadCacheFromServer('unwatched_serials', 'shows', function(cachedResult) {
+                    if (cachedResult && cachedResult.shows) {
+                        var foundShow = cachedResult.shows.find(function(show) {
+                            return (show.original_name || show.name || show.title) === originalName;
+                        });
+                        if (foundShow && (foundShow.progress_marker || foundShow.next_episode || foundShow.remaining)) {
+                            updateFullCardMarkers(foundShow);
+                        }
+                    }
+                });
+            }
+            return;
+        }
+
+        function matchByName(item) {
+            var t = item.title || '';
+            var o = item.titleOriginal || item.original_name || item.name || '';
+            return t === originalName || o === originalName ||
+                t.toLowerCase() === originalName.toLowerCase() ||
+                o.toLowerCase() === originalName.toLowerCase();
+        }
+
+        if (isSerial) {
+            loadCacheFromServer('unwatched_serials', 'shows', function(cachedResult) {
+                if (cachedResult && cachedResult.shows) {
+                    var foundShow = cachedResult.shows.find(matchByName);
+                    if (foundShow && (foundShow.progress_marker || foundShow.next_episode || foundShow.remaining)) {
+                        updateFullCardMarkers(foundShow);
+                    }
+                }
+            });
+            loadCacheFromServer('serial_status', 'shows', function(cachedResult) {
+                if (cachedResult && cachedResult.shows) {
+                    var foundShow = cachedResult.shows.find(matchByName);
+                    if (foundShow) {
+                        updateButtonStates(foundShow.watchStatus, false, true);
+                        Lampa.Storage.set('myshows_was_watching', false);
+                    }
+                }
+            });
+        } else {
+            loadCacheFromServer('movie_status', 'movies', function(cachedResult) {
+                if (cachedResult && cachedResult.movies) {
+                    var foundMovie = cachedResult.movies.find(matchByName);
+                    if (foundMovie) {
+                        updateButtonStates(foundMovie.watchStatus, true, true);
+                        Lampa.Storage.set('myshows_was_watching', false);
+                    }
+                }
+            });
+        }
+    }
+
+    function updateFullCardMarkers(showData, bodyElement) {
+        var posterElement = bodyElement
+            ? bodyElement.find('.full-start-new__poster')
+            : $('.full-start-new__poster');
 
         if (!posterElement.length) return;
 
         var posterDom = posterElement[0];
 
-        // Находим существующие маркеры
         var existingProgress = posterDom.querySelector('.myshows-progress');
         var existingRemaining = posterDom.querySelector('.myshows-remaining');
-        var existingNext = posterDom.querySelector('.myshows-next-episode');
+        var existingNext     = posterDom.querySelector('.myshows-next-episode');
 
-        // ✅ Добавляем маркер прогресса
+        function addMarker(cls, text) {
+            var el = document.createElement('div');
+            el.className = cls;
+            el.textContent = text;
+            posterDom.appendChild(el);
+            setTimeout(function() {
+                el.style.opacity = '0';
+                el.style.transform = 'translateY(10px)';
+                el.style.transition = 'all 0.4s ease';
+                setTimeout(function() {
+                    el.style.opacity = '1';
+                    el.style.transform = 'translateY(0)';
+                }, 10);
+                setTimeout(function() { el.style.transition = ''; }, 410);
+            }, 50);
+        }
+
         if (showData.progress_marker) {
-            if (existingProgress) {
-                animateFullCardMarker(existingProgress, showData.progress_marker, 'progress');
-            } else {
-                var progressMarker = document.createElement('div');
-                progressMarker.className = 'myshows-progress';
-                progressMarker.textContent = showData.progress_marker;
-                posterDom.appendChild(progressMarker);
-
-                // ✅ Анимация плавного появления
-                setTimeout(function() {
-                    progressMarker.style.opacity = '0';
-                    progressMarker.style.transform = 'translateY(10px)';
-                    progressMarker.style.transition = 'all 0.4s ease';
-
-                    setTimeout(function() {
-                        progressMarker.style.opacity = '1';
-                        progressMarker.style.transform = 'translateY(0)';
-                    }, 10);
-
-                    setTimeout(function() {
-                        progressMarker.style.transition = '';
-                    }, 410);
-                }, 50);
-            }
+            if (existingProgress) animateFullCardMarker(existingProgress, showData.progress_marker, 'progress');
+            else addMarker('myshows-progress', showData.progress_marker);
         } else if (existingProgress) {
             existingProgress.remove();
         }
 
-        // ✅ Добавляем маркер оставшиеся
         if (showData.remaining !== undefined && showData.remaining !== null) {
-            if (existingRemaining) {
-                animateFullCardMarker(existingRemaining, showData.remaining.toString(), 'remaining');
-            } else {
-                var remainingMarker = document.createElement('div');
-                remainingMarker.className = 'myshows-remaining';
-                remainingMarker.textContent = showData.remaining;
-                posterDom.appendChild(remainingMarker);
-
-                // Анимация плавного появления
-                setTimeout(function() {
-                    remainingMarker.style.opacity = '0';
-                    remainingMarker.style.transform = 'translateY(10px)';
-                    remainingMarker.style.transition = 'all 0.4s ease';
-
-                    setTimeout(function() {
-                        remainingMarker.style.opacity = '1';
-                        remainingMarker.style.transform = 'translateY(0)';
-                    }, 10);
-
-                    setTimeout(function() {
-                        remainingMarker.style.transition = '';
-                    }, 410);
-                }, 50);
-            }
+            if (existingRemaining) animateFullCardMarker(existingRemaining, showData.remaining.toString(), 'remaining');
+            else addMarker('myshows-remaining', showData.remaining);
         } else if (existingRemaining) {
             existingRemaining.remove();
         }
 
-        // ✅ Добавляем маркер следующей серии
         if (showData.next_episode) {
-            if (existingNext) {
-                animateFullCardMarker(existingNext, showData.next_episode, 'next');
-            } else {
-                var nextEpisodeMarker = document.createElement('div');
-                nextEpisodeMarker.className = 'myshows-next-episode';
-                nextEpisodeMarker.textContent = showData.next_episode;
-                posterDom.appendChild(nextEpisodeMarker);
-
-                // Анимация плавного появления
-                setTimeout(function() {
-                    nextEpisodeMarker.style.opacity = '0';
-                    nextEpisodeMarker.style.transform = 'translateY(10px)';
-                    nextEpisodeMarker.style.transition = 'all 0.4s ease';
-
-                    setTimeout(function() {
-                        nextEpisodeMarker.style.opacity = '1';
-                        nextEpisodeMarker.style.transform = 'translateY(0)';
-                    }, 10);
-
-                    setTimeout(function() {
-                        nextEpisodeMarker.style.transition = '';
-                    }, 410);
-                }, 50);
-            }
-        } else if (existingNext) {
-            existingNext.remove();
-        }
-    }
-
-    function updateMarkersOnFullCard(progressMarker, nextEpisode, remainingMarker) {
-        Log.info('updateMarkersOnFullCard called');
-
-        var posterElement = $('.full-start-new__poster');
-
-        if (!posterElement.length) {
-            Log.warn('Full poster not found via jQuery');
-            return;
-        }
-
-        var posterDom = posterElement[0];
-
-        // Находим существующие маркеры
-        var existingProgress = posterDom.querySelector('.myshows-progress');
-        var existingRemaining = posterDom.querySelector('.myshows-remaining');
-        var existingNext = posterDom.querySelector('.myshows-next-episode');
-
-        // ✅ Добавляем маркер прогресса
-        if (progressMarker) {
-            if (existingProgress) {
-                // Если маркер уже есть - анимируем изменение
-                animateFullCardMarker(existingProgress, progressMarker, 'progress');
-                Log.info('Progress marker UPDATED with animation:', progressMarker);
-            } else {
-                // ✅ ИСПРАВЛЕНО: НОВЫЙ МАРКЕР - анимация появления БЕЗ SCALE
-                var progressDiv = document.createElement('div');
-                progressDiv.className = 'myshows-progress';
-                progressDiv.textContent = progressMarker;
-                posterDom.appendChild(progressDiv);
-
-                // ✅ Анимация ПЛАВНОГО ПОЯВЛЕНИЯ (не scale!)
-                setTimeout(function() {
-                    progressDiv.style.opacity = '0';
-                    progressDiv.style.transform = 'translateY(10px)';
-                    progressDiv.style.transition = 'all 0.4s ease';
-
-                    // Запускаем анимацию
-                    setTimeout(function() {
-                        progressDiv.style.opacity = '1';
-                        progressDiv.style.transform = 'translateY(0)';
-                    }, 10);
-
-                    // Убираем transition после анимации
-                    setTimeout(function() {
-                        progressDiv.style.transition = '';
-                    }, 410);
-                }, 50);
-
-                Log.info('Progress marker ADDED (first appearance):', progressMarker);
-            }
-        } else if (existingProgress) {
-            existingProgress.remove();
-        }
-
-        // ✅ Добавляем маркер оставшихся
-        if (remainingMarker !== undefined && remainingMarker !== null) {
-            if (existingRemaining) {
-                animateFullCardMarker(existingRemaining, remainingMarker.toString(), 'remaining');
-                Log.info('Remaining marker updated:', remainingMarker);
-            } else {
-                var remainingDiv = document.createElement('div');
-                remainingDiv.className = 'myshows-remaining';
-                remainingDiv.textContent = remainingMarker;
-                posterDom.appendChild(remainingDiv);
-
-                // ✅ Анимация плавного появления
-                setTimeout(function() {
-                    remainingDiv.style.opacity = '0';
-                    remainingDiv.style.transform = 'translateY(10px)';
-                    remainingDiv.style.transition = 'all 0.4s ease';
-
-                    setTimeout(function() {
-                        remainingDiv.style.opacity = '1';
-                        remainingDiv.style.transform = 'translateY(0)';
-                    }, 10);
-
-                    setTimeout(function() {
-                        remainingDiv.style.transition = '';
-                    }, 410);
-                }, 50);
-            }
-        } else if (existingRemaining) {
-            existingRemaining.remove();
-        }
-
-        // ✅ Добавляем маркер следующей серии
-        if (nextEpisode) {
-            if (existingNext) {
-                animateFullCardMarker(existingNext, nextEpisode, 'next');
-                Log.info('Next episode marker updated:', nextEpisode);
-            } else {
-                var nextDiv = document.createElement('div');
-                nextDiv.className = 'myshows-next-episode';
-                nextDiv.textContent = nextEpisode;
-                posterDom.appendChild(nextDiv);
-
-                // ✅ Анимация плавного появления
-                setTimeout(function() {
-                    nextDiv.style.opacity = '0';
-                    nextDiv.style.transform = 'translateY(10px)';
-                    nextDiv.style.transition = 'all 0.4s ease';
-
-                    setTimeout(function() {
-                        nextDiv.style.opacity = '1';
-                        nextDiv.style.transform = 'translateY(0)';
-                    }, 10);
-
-                    setTimeout(function() {
-                        nextDiv.style.transition = '';
-                    }, 410);
-                }, 50);
-            }
+            if (existingNext) animateFullCardMarker(existingNext, showData.next_episode, 'next');
+            else addMarker('myshows-next-episode', showData.next_episode);
         } else if (existingNext) {
             existingNext.remove();
         }
@@ -6165,7 +5989,19 @@
                 initCurrentProfile();
                 initSettings();
                 if (window.__NMSync) {
-                    window.__NMSync.register('myshows', MYSHOWS_SENSITIVE_KEYS, _applyMyShowsSetting);
+                    var MYSHOWS_SYNC_KEYS = ['myshows_view_in_main', 'myshows_button_view',
+                        'myshows_sort_order', 'myshows_add_threshold', 'myshows_min_progress',
+                        'myshows_token', 'myshows_login', 'myshows_password',
+                        'myshows_cache_days', 'myshows_use_np'];
+                    window.__NMSync.register('myshows', MYSHOWS_SENSITIVE_KEYS, _applyMyShowsSetting, function (serverKeys) {
+                        // Досылаем на сервер ключи которые есть локально но отсутствуют на сервере
+                        MYSHOWS_SYNC_KEYS.forEach(function (key) {
+                            var profileKey = getProfileKey(key);
+                            if (serverKeys.indexOf(profileKey) < 0 && hasProfileSetting(key)) {
+                                setProfileSetting(key, getProfileSetting(key));
+                            }
+                        });
+                    });
                 }
                 initMyShowsCaches();
                 addMyShowsComponents();

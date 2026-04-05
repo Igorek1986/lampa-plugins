@@ -649,9 +649,12 @@
 
     var _syncApplying = false;
 
-    function setProfileSetting(key, value) {
+    // sync=true (по умолчанию) — сохранить и на сервер. sync=false — только локально.
+    // loadNumparserProfileSettings использует sync=false, чтобы дефолты не уходили на сервер.
+    // onChange-обработчики настроек вызывают без флага (sync=true) — пользователь явно изменил.
+    function setProfileSetting(key, value, sync) {
         Lampa.Storage.set(getProfileKey(key), value);
-        if (!_syncApplying && window.__NMSync) window.__NMSync.patch('np', getProfileKey(key), value);
+        if (sync !== false && !_syncApplying && window.__NMSync) window.__NMSync.patch('np', getProfileKey(key), value);
     }
 
     // Базовый ключ из профильного: 'numparser_hide_watched_profile_abc' → 'numparser_hide_watched'
@@ -681,22 +684,22 @@
     // Загружаем профильные настройки
     function loadNumparserProfileSettings() {
         if (!hasProfileSetting('numparser_hide_watched')) {
-            setProfileSetting('numparser_hide_watched', "true");
+            setProfileSetting('numparser_hide_watched', "true", false);
         }
         if (!hasProfileSetting('numparser_min_progress')) {
-            setProfileSetting('numparser_min_progress', DEFAULT_MIN_PROGRESS);
+            setProfileSetting('numparser_min_progress', DEFAULT_MIN_PROGRESS, false);
         }
         if (!hasProfileSetting('numparser_source_name')) {
-            setProfileSetting('numparser_source_name', DEFAULT_SOURCE_NAME);
+            setProfileSetting('numparser_source_name', DEFAULT_SOURCE_NAME, false);
         }
         if (!hasProfileSetting('numparser_menu_sort')) {
-            setProfileSetting('numparser_menu_sort', []);
+            setProfileSetting('numparser_menu_sort', [], false);
         }
         if (!hasProfileSetting('numparser_menu_hide')) {
-            setProfileSetting('numparser_menu_hide', []);
+            setProfileSetting('numparser_menu_hide', [], false);
         }
         if (!hasProfileSetting('numparser_quality_mode')) {
-            setProfileSetting('numparser_quality_mode', 'simple');
+            setProfileSetting('numparser_quality_mode', 'simple', false);
         }
 
         // Восстанавливаем значения в Lampa.Storage, чтобы UI знал актуальные данные
@@ -1406,7 +1409,18 @@
             initSettings();
             loadNumparserProfileSettings();
             if (window.__NMSync) {
-                window.__NMSync.register('np', [], _applyNpSetting);
+                var NP_SYNC_KEYS = ['numparser_hide_watched', 'numparser_min_progress',
+                    'numparser_source_name', 'numparser_menu_sort', 'numparser_menu_hide',
+                    'numparser_quality_mode'];
+                window.__NMSync.register('np', [], _applyNpSetting, function (serverKeys) {
+                    // Досылаем на сервер ключи которые есть локально но отсутствуют на сервере
+                    NP_SYNC_KEYS.forEach(function (key) {
+                        var profileKey = getProfileKey(key);
+                        if (serverKeys.indexOf(profileKey) < 0 && hasProfileSetting(key)) {
+                            setProfileSetting(key, getProfileSetting(key));
+                        }
+                    });
+                });
             }
         }, 50);
     }
