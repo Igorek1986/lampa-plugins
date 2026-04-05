@@ -704,6 +704,31 @@
                     setProfileSetting('myshows_button_view', value);
                 }
             });
+
+            if (tokenValue && getNpToken() && getNpBaseUrl()) {
+                Lampa.SettingsApi.addParam({
+                    component: 'myshows',
+                    param: {
+                        name: 'myshows_use_np',
+                        type: 'trigger',
+                        default: getProfileSetting('myshows_use_np', false)
+                    },
+                    field: {
+                        name: 'Использовать NP FastAPI',
+                        description: 'Хранить данные о непросмотренных на NP-сервере для быстрой загрузки'
+                    },
+                    onChange: function(value) {
+                        setProfileSetting('myshows_use_np', value);
+                        IS_NP = !!value;
+                        if (IS_NP) {
+                            var cached = cachedShuffledItems['unwatched_raw'];
+                            if (cached && cached.length) {
+                                saveCacheToServer({ shows: cached }, 'unwatched_serials', function() {});
+                            }
+                        }
+                    }
+                });
+            }
         }
 
         Lampa.SettingsApi.addParam({
@@ -763,31 +788,6 @@
                     Lampa.Storage.set('myshows_password', '', true);
                     Lampa.Noty.show('✅ Выход из MyShows выполнен');
                     setTimeout(function() { window.location.reload(); }, 1500);
-                }
-            });
-        }
-
-        if (tokenValue && getNpToken() && getNpBaseUrl()) {
-            Lampa.SettingsApi.addParam({
-                component: 'myshows',
-                param: {
-                    name: 'myshows_use_np',
-                    type: 'trigger',
-                    default: getProfileSetting('myshows_use_np', false)
-                },
-                field: {
-                    name: 'Использовать NP FastAPI',
-                    description: 'Хранить данные о непросмотренных на NP-сервере для быстрой загрузки'
-                },
-                onChange: function(value) {
-                    setProfileSetting('myshows_use_np', value);
-                    IS_NP = !!value;
-                    if (IS_NP) {
-                        var cached = cachedShuffledItems['unwatched_raw'];
-                        if (cached && cached.length) {
-                            saveCacheToServer({ shows: cached }, 'unwatched_serials', function() {});
-                        }
-                    }
                 }
             });
         }
@@ -863,7 +863,6 @@
             });
         }
     }
-
 
     if (IS_LAMPAC && Lampa.Storage.get('lampac_profile_id')) {
         var originalProfileWaiter = window.__profile_extra_waiter;
