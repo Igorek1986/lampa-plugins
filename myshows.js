@@ -780,14 +780,28 @@
                     description: 'Очистить токен, логин и пароль'
                 },
                 onChange: function() {
-                    setProfileSetting('myshows_token', '');
-                    setProfileSetting('myshows_login', '');
-                    setProfileSetting('myshows_password', '');
+                    // Очищаем локально немедленно
+                    setProfileSetting('myshows_token', '', false);
+                    setProfileSetting('myshows_login', '', false);
+                    setProfileSetting('myshows_password', '', false);
                     Lampa.Storage.set('myshows_token', '', true);
                     Lampa.Storage.set('myshows_login', '', true);
                     Lampa.Storage.set('myshows_password', '', true);
                     Lampa.Noty.show('✅ Выход из MyShows выполнен');
-                    setTimeout(function() { window.location.reload(); }, 1500);
+                    try { sessionStorage.setItem('myshows_just_logged_out', '1'); } catch(e) {}
+                    if (window.__NMSync) {
+                        var done = 0;
+                        var total = 3;
+                        var onDone = function() {
+                            done++;
+                            if (done >= total) window.location.reload();
+                        };
+                        window.__NMSync.patch('myshows', getProfileKey('myshows_token'), '', onDone);
+                        window.__NMSync.patch('myshows', getProfileKey('myshows_login'), '', onDone);
+                        window.__NMSync.patch('myshows', getProfileKey('myshows_password'), '', onDone);
+                    } else {
+                        setTimeout(function() { window.location.reload(); }, 1500);
+                    }
                 }
             });
         }
@@ -5993,6 +6007,20 @@
                         'myshows_token', 'myshows_login', 'myshows_password',
                         'myshows_cache_days', 'myshows_use_np'];
                     window.__NMSync.register('myshows', MYSHOWS_SENSITIVE_KEYS, _applyMyShowsSetting, function (serverKeys) {
+                        // Если страница загрузилась после выхода — переочищаем чувствительные ключи
+                        // (на случай если какой-то PATCH не дошёл до сервера)
+                        try {
+                            if (sessionStorage.getItem('myshows_just_logged_out')) {
+                                sessionStorage.removeItem('myshows_just_logged_out');
+                                setProfileSetting('myshows_token', '', false);
+                                setProfileSetting('myshows_login', '', false);
+                                setProfileSetting('myshows_password', '', false);
+                                window.__NMSync.patch('myshows', getProfileKey('myshows_token'), '');
+                                window.__NMSync.patch('myshows', getProfileKey('myshows_login'), '');
+                                window.__NMSync.patch('myshows', getProfileKey('myshows_password'), '');
+                                return;
+                            }
+                        } catch(e) {}
                         // Досылаем на сервер ключи которые есть локально но отсутствуют на сервере
                         MYSHOWS_SYNC_KEYS.forEach(function (key) {
                             var profileKey = getProfileKey(key);
