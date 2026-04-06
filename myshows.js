@@ -2600,9 +2600,17 @@
         return total;
     }
 
+    function openMyShowsPage() {
+        Lampa.Activity.push({
+            url: '',
+            title: 'MyShows',
+            component: 'myshows_all',
+        });
+    }
+
     window.MyShows = {
         getUnwatchedShowsWithDetails: getUnwatchedShowsWithDetails,
-
+        openPage: openMyShowsPage,
     };
 
     function updateCardWithAnimation(cardElement, newText, markerClass) {
