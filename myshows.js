@@ -5717,6 +5717,12 @@
                             },
                             onFocus: function() {
                                 Lampa.Background.change(Lampa.Utils.cardImgBackground(data));
+                            },
+                            onVisible: function() {
+                                addProgressMarkerToCard(this.html, data);
+                            },
+                            onUpdate: function() {
+                                addProgressMarkerToCard(this.html, data);
                             }
                         });
                     }
