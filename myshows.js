@@ -249,14 +249,12 @@
 
     }
 
-    function initMyShowsCaches() {
-        // По умолчанию для браузера
-        var updateDelay = 5000;
+    function getRefreshDelay() {
+        return Lampa.Platform.tv() ? 25000 : 5000;
+    }
 
-        // Проверяем, если это ТВ платформа
-        if (Lampa.Platform.tv()) {
-            updateDelay = 25000; // 25 секунд для ТВ
-        }
+    function initMyShowsCaches() {
+        var updateDelay = getRefreshDelay();
 
         loadCacheFromServer('unwatched_serials', 'shows', function(cachedResult) {
             var cachedShows = cachedResult && cachedResult.shows;
@@ -998,7 +996,6 @@
             // Обновляем значения полей
             var myshowsViewInMain = settingsPanel.querySelector('select[data-name="myshows_view_in_main"]');
             if (myshowsViewInMain) myshowsViewInMain.value = getProfileSetting('myshows_view_in_main', true);
-
             var myshowsButtonView = settingsPanel.querySelector('select[data-name="myshows_button_view"]');
             if (myshowsViewInMain) myshowsButtonView.value = getProfileSetting('myshows_button_view', true);
 
@@ -1998,7 +1995,6 @@
 
     function autoSetupToken() {
         var token = getProfileSetting('myshows_token', '');
-
         if (token && token.length > 0) {
             return;
         }
@@ -2085,10 +2081,30 @@
                 }
             });
         } else {
-            Log.info('Not Lampac, using direct API');
-            fetchFromMyShowsAPI(function(freshResult) {
-                Log.info('Direct API result:', freshResult);
-                callback(freshResult);
+            // Без NP/Lampac — проверяем localStorage кеш, как в IS_NP ветке
+            loadCacheFromServer('unwatched_serials', 'shows', function(cachedResult) {
+                var shows = cachedResult && cachedResult.shows;
+                if (shows && shows.length > 0) {
+                    Log.info('getUnwatchedShowsWithDetails: localStorage cache hit, ' + shows.length + ' shows');
+                    var sortOrder = getProfileSetting('myshows_sort_order', 'progress');
+                    sortShows(shows, sortOrder);
+                    cachedResult.shows = shows;
+                    callback(cachedResult);
+                    // Фоновый refresh
+                    setTimeout(function() {
+                        fetchFromMyShowsAPI(function(freshResult) {
+                            if (freshResult && freshResult.shows && cachedResult.shows) {
+                                updateUIIfNeeded(cachedResult.shows, freshResult.shows);
+                            }
+                        });
+                    }, getRefreshDelay());
+                } else {
+                    Log.info('getUnwatchedShowsWithDetails: no cache, fetching from API');
+                    fetchFromMyShowsAPI(function(freshResult) {
+                        Log.info('Direct API result:', freshResult);
+                        callback(freshResult);
+                    });
+                }
             });
         }
     }
@@ -3998,7 +4014,6 @@
         var container = e.object.activity
             .render()
             .find('.full-start-new__buttons');
-
         if (!container.length) return;
 
         if (container.data('myshows-initialized')) {
@@ -5543,31 +5558,38 @@
                     var allData = {};
                     var loaded = 0;
                     var total = 4;
+                    var _t0 = Date.now();
+                    var _times = {};
 
-                    function checkComplete() {
+                    function checkComplete(label) {
+                        _times[label] = Date.now() - _t0;
+                        Log.info('myshows_all timing: ' + label + ' → ' + _times[label] + 'ms');
                         loaded++;
-                        if (loaded === total) buildLines();
+                        if (loaded === total) {
+                            Log.info('myshows_all timing: ALL DONE → ' + (Date.now() - _t0) + 'ms', _times);
+                            buildLines();
+                        }
                     }
 
                     getUnwatchedShowsWithDetails(function(result) {
                         allData.unwatched = result;
-                        checkComplete();
+                        checkComplete('unwatched');
                     });
 
                     Api.myshowsWatchlist({ page: 1 }, function(result) {
                         allData.watchlist = result;
-                        checkComplete();
-                    }, checkComplete);
+                        checkComplete('watchlist');
+                    }, function() { checkComplete('watchlist_err'); });
 
                     Api.myshowsWatched({ page: 1 }, function(result) {
                         allData.watched = result;
-                        checkComplete();
-                    }, checkComplete);
+                        checkComplete('watched');
+                    }, function() { checkComplete('watched_err'); });
 
                     Api.myshowsCancelled({ page: 1 }, function(result) {
                         allData.cancelled = result;
-                        checkComplete();
-                    }, checkComplete);
+                        checkComplete('cancelled');
+                    }, function() { checkComplete('cancelled_err'); });
 
                     function buildLines() {
                         var lines = [];
@@ -5697,6 +5719,42 @@
     }
 
     // // Без кеша
+    // ── Кеш TMDB карточек для категорий (watchlist/watched/cancelled) ──────────
+    var _TMDB_CARD_CACHE_KEY = 'myshows_tmdb_cards';
+    var _tmdbCardCache = (function () {
+        var stored = Lampa.Storage.get(_TMDB_CARD_CACHE_KEY);
+        return (stored && typeof stored === 'object') ? stored : {};
+    })();
+
+    function _cardCacheTTL() {
+        var days = parseInt(getProfileSetting('myshows_cache_days', DEFAULT_CACHE_DAYS)) || DEFAULT_CACHE_DAYS;
+        return days * 24 * 60 * 60 * 1000;
+    }
+
+    function _getCardFromCache(myshowsId) {
+        if (!myshowsId) return null;
+        var entry = _tmdbCardCache[String(myshowsId)];
+        if (!entry) {
+            Log.info('TMDB card cache MISS: myshows_id', myshowsId);
+            return null;
+        }
+        if (entry.t && (Date.now() - entry.t) > _cardCacheTTL()) {
+            Log.info('TMDB card cache EXPIRED: myshows_id', myshowsId);
+            delete _tmdbCardCache[String(myshowsId)];
+            return null;
+        }
+        Log.info('TMDB card cache HIT: myshows_id', myshowsId, '→', entry.card.title || entry.card.name);
+        return entry.card;
+    }
+
+    function _saveCardToCache(myshowsId, card) {
+        if (!myshowsId || !card) return;
+        _tmdbCardCache[String(myshowsId)] = { card: card, t: Date.now() };
+        Log.info('TMDB card cache SAVE: myshows_id', myshowsId, '→', card.title || card.name);
+        Lampa.Storage.set(_TMDB_CARD_CACHE_KEY, _tmdbCardCache);
+    }
+    // ── end кеш TMDB карточек ─────────────────────────────────────────────────
+
     function getTMDBDetailsSimple(items, callback) {
         Log.info('getTMDBDetailsSimple: Started with', items.length, 'items to enrich');
 
@@ -5726,6 +5784,18 @@
 
         for (var i = 0; i < items.length; i++) {
             (function(currentItem, index) {
+
+                // Проверяем кеш карточек по myshowsId
+                var cachedCard = _getCardFromCache(currentItem.myshowsId);
+                if (cachedCard) {
+                    var cardCopy = Object.assign({}, cachedCard);
+                    cardCopy.myshowsId = currentItem.myshowsId;
+                    cardCopy.watchStatus = currentItem.watchStatus;
+                    data.results.push(cardCopy);
+                    status.append('item_' + index, {});
+                    return;
+                }
+
                 var originalTitle = currentItem.originalTitle || currentItem.title;
                 var cleanedTitle = cleanTitle(originalTitle);
                 var titles = [originalTitle];
@@ -5770,6 +5840,7 @@
                                 enriched.last_episode_date = enriched.first_air_date;
                             }
 
+                            _saveCardToCache(currentItem.myshowsId, enriched);
                             data.results.push(enriched);
                             Log.info('getTMDBDetailsSimple: Found', enriched.title || enriched.name, 'for MyShows ID:', currentItem.myshowsId);
                         }
