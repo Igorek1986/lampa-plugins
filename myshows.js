@@ -680,7 +680,7 @@
                 },
                 field: {
                     name: 'Время жизни кеша',
-                    description: 'Через сколько дней очищать кеш маппинга эпизодов'
+                    description: 'Через сколько дней очищать кеш: карточки TMDB, маппинг эпизодов'
                 },
                 onChange: function(value) {
                     setProfileSetting('myshows_cache_days', parseInt(value));
@@ -5631,6 +5631,20 @@
                         addLine('Хочу посмотреть', allData.watchlist && allData.watchlist.results, allData.watchlist && allData.watchlist.total_pages, 'myshows_watchlist');
                         addLine('История', allData.watched && allData.watched.results, allData.watched && allData.watched.total_pages, 'myshows_watched');
                         addLine('Бросил смотреть', allData.cancelled && allData.cancelled.results, allData.cancelled && allData.cancelled.total_pages, 'myshows_cancelled');
+
+                        if (typeof window.surs_getCustomButtonsRow === 'function') {
+                            var sursParts = [];
+                            window.surs_getCustomButtonsRow(sursParts);
+                            if (sursParts.length > 0) {
+                                sursParts[0](function(buttonsData) {
+                                    if (buttonsData && buttonsData.results && buttonsData.results.length) {
+                                        lines.unshift(buttonsData);
+                                    }
+                                    finish();
+                                });
+                                return;
+                            }
+                        }
                         finish();
                     }
                 },
