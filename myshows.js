@@ -961,6 +961,7 @@
             }
             Log.info('startParams:', startParams);
 
+            sursAddBtn();
             // Перенаправляем на стартовую страницу с небольшой задержкой
             setTimeout(function() {
                 Lampa.Activity.replace(startParams);
@@ -970,8 +971,8 @@
         } else {
             // Если есть токен или мы не в компоненте MyShows
             // Загружаем данные для нового профиля
+            sursAddBtn();
             if (newToken) {
-                sursAddBtn();
                 // Асинхронно загружаем данные
                 setTimeout(function() {
                     try {
@@ -986,7 +987,6 @@
             } else {
                 // Нет токена - синхронизация завершена
                 myshowsProfileSynced = true;
-                sursAddBtn();
                 Log.info('✅ No MyShows token for this profile');
             }
         }
