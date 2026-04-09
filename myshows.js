@@ -971,6 +971,7 @@
             // Если есть токен или мы не в компоненте MyShows
             // Загружаем данные для нового профиля
             if (newToken) {
+                sursAddBtn();
                 // Асинхронно загружаем данные
                 setTimeout(function() {
                     try {
@@ -985,6 +986,7 @@
             } else {
                 // Нет токена - синхронизация завершена
                 myshowsProfileSynced = true;
+                sursAddBtn();
                 Log.info('✅ No MyShows token for this profile');
             }
         }
@@ -2631,27 +2633,29 @@
     };
 
     // ── SURS integration ──────────────────────────────────────────────────────
-    (function () {
-        var btn = {
-            id: 'myshows_unwatched',
-            title: 'MyShows',
-            icon: myshows_icon,
-            action: function () { window.MyShows.openPage(); }
-        };
+    var _sursBtn = {
+        id: 'myshows_unwatched',
+        title: 'MyShows',
+        icon: myshows_icon,
+        action: function () { window.MyShows.openPage(); }
+    };
 
-        function addBtn() {
-            if (!window.MyShows.isLoggedIn()) return;
-            window.surs_addExternalButton(btn);
+    function sursAddBtn() {
+        if (!window.MyShows.isLoggedIn()) {
+            if (typeof window.surs_removeExternalButton === 'function') window.surs_removeExternalButton(_sursBtn.id);
+            return;
         }
+        var existing = window.surs_external_buttons && window.surs_external_buttons.some(function(b) { return b.id === _sursBtn.id; });
+        if (!existing) window.surs_addExternalButton(_sursBtn);
+    }
 
-        if (window.plugin_custom_buttons_ready) {
-            addBtn();
-        } else {
-            Lampa.Listener.follow('custom_buttons', function (e) {
-                if (e.type === 'ready') addBtn();
-            });
-        }
-    })();
+    if (window.plugin_custom_buttons_ready) {
+        sursAddBtn();
+    } else {
+        Lampa.Listener.follow('custom_buttons', function (e) {
+            if (e.type === 'ready') sursAddBtn();
+        });
+    }
     // ── end SURS integration ──────────────────────────────────────────────────
 
     function updateCardWithAnimation(cardElement, newText, markerClass) {
