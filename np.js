@@ -392,31 +392,19 @@
 
             function addContinues(partsData, title, getFunc, type) {
                 partsData.push(function (callback) {
-                    var results = getFunc(type).slice(0, 20);
-
-                    results.forEach(function(item) {
-                        Log.info('addContinues', item);
+                    var results = (type !== undefined ? getFunc(type) : getFunc()).slice(0, 20);
+                    results.forEach(function (item) {
+                        if (item.first_air_date && !item.release_date) {
+                            item.release_date = item.first_air_date;
+                        }
                         item.params = {
-                            createInstance: function(data) {
-                                return Lampa.Maker.make('Card', data, function(module) {
-                                    return module.only('Card', 'Callback');
-                                });
+                            createInstance: function (data) {
+                                return Lampa.Maker.make('Card', data, function (m) { return m.only('Card', 'Release', 'Callback'); });
                             },
-                            emit: {
-                                onlyEnter: function() {
-                                    Lampa.Router.call('full', item);
-                                },
-                            }
+                            emit: { onlyEnter: function () { Lampa.Router.call('full', item); } }
                         };
-
                     });
-
-                    callback({
-                        source: 'tmdb',
-                        results: results,
-                        title: title,
-                        nomore: true
-                    });
+                    callback({ source: 'tmdb', results: results, title: title, nomore: true });
                 });
             }
 
