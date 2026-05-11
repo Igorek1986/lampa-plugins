@@ -1084,7 +1084,7 @@
         });
 
         // 1. Пробуем найти по IMDB
-        getShowIdByImdbId(imdbId, originalTitle || title, function(imdbResult) {
+        getShowIdByImdbId(imdbId, originalTitle || title, alternativeTitles, function(imdbResult) {
             if (imdbResult) {
                 Log.info('Found by IMDB ID:', imdbResult);
                 return callback(imdbResult);
@@ -1160,22 +1160,6 @@
         getShowIdByOriginalTitle(originalTitle, year, function(finalResult) {
             Log.info('Final result:', finalResult);
             callback(finalResult);
-        });
-    }
-
-    // Упрощенная версия tryAlternativeTitles (если нужно)
-    function tryAlternativeTitles(titles, index, year, callback) {
-        if (index >= titles.length) {
-            return callback(null);
-        }
-
-        var currentTitle = titles[index];
-        getShowIdByOriginalTitle(currentTitle, year, function(result) {
-            if (result) {
-                callback(result);
-            } else {
-                tryAlternativeTitles(titles, index + 1, year, callback);
-            }
         });
     }
 
@@ -1488,7 +1472,7 @@
         });
     }
 
-    function getShowIdByImdbId(id, expectedTitle, callback) {
+    function getShowIdByImdbId(id, expectedTitle, alternativeTitles, callback) {
         if (!id) {
             callback(null);
             return;
@@ -1500,10 +1484,27 @@
         }, function(success, data) {
             if (success && data && data.result) {
                 var found = data.result;
-                if (expectedTitle) {
-                    var foundTitle = (found.titleOriginal || found.title || '').toLowerCase();
-                    var exp = expectedTitle.toLowerCase();
-                    if (foundTitle.indexOf(exp) === -1 && exp.indexOf(foundTitle) === -1) {
+                var foundTitleClean = normalizeForComparison(cleanTitle(found.titleOriginal || found.title || ''));
+                if (isAsianContent(expectedTitle)) {
+                    // Иероглифы нельзя сравнить с латинским названием напрямую.
+                    // Проверяем found.titleOriginal против alternativeTitles (они в латинице).
+                    var matched = false;
+                    if (alternativeTitles) {
+                        for (var i = 0; i < alternativeTitles.length; i++) {
+                            if (normalizeForComparison(cleanTitle(alternativeTitles[i])) === foundTitleClean) {
+                                matched = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (!matched) {
+                        Log.warn('IMDB Asian mismatch: "' + (found.titleOriginal || found.title) + '" not in alternativeTitles — skip');
+                        callback(null);
+                        return;
+                    }
+                } else if (expectedTitle) {
+                    var exp = normalizeForComparison(cleanTitle(expectedTitle));
+                    if (foundTitleClean.indexOf(exp) === -1 && exp.indexOf(foundTitleClean) === -1) {
                         Log.warn('IMDB mismatch: expected "' + expectedTitle + '" got "' + (found.titleOriginal || found.title) + '" — skip');
                         callback(null);
                         return;
@@ -1547,8 +1548,8 @@
                 var item = data[i][dataKey];
                 if (!item) continue;
                 var titleMatch = item.titleOriginal &&
-                    normalizeForComparison(item.titleOriginal.toLowerCase()) ===
-                    normalizeForComparison(title.toLowerCase());
+                    normalizeForComparison(cleanTitle(item.titleOriginal).toLowerCase()) ===
+                    normalizeForComparison(cleanTitle(title).toLowerCase());
                 var yearMatch = item.year == year;
                 if (titleMatch && yearMatch) {
                     candidates.push(item);
@@ -1627,8 +1628,6 @@
 
             try {
                 var myShowsDate;
-                myShowsDate.setHours(0, 0, 0, 0);
-
 
                 // Обработка разных форматов дат
                 if (airDate.indexOf('.') !== -1) {
@@ -1643,9 +1642,12 @@
                     continue;
                 }
 
+                myShowsDate.setHours(0, 0, 0, 0);
+
                 var card = getCurrentCard();
                 var tmdbDate = card && card.first_air_date ? new Date(card.first_air_date) :
                             card && card.release_date ? new Date(card.release_date) : null;
+                if (!tmdbDate) continue;
                 tmdbDate.setHours(0, 0, 0, 0);
 
                 if (tmdbDate && myShowsDate.getTime() === tmdbDate.getTime()) {
@@ -2330,13 +2332,24 @@
         Log.info('[DEBUG] Ищем шоу "' + originalName + '" (ID: ' + currentShow.myshowsId + ')');
 
         var cachedShow = null;
+        var currentNameLower = cleanedName.toLowerCase();
         for (var _i = 0; _i < cachedShows.length; _i++) {
             var _s = cachedShows[_i];
-            var cachedName = cleanTitle(_s.original_title || _s.original_name || _s.name || '').toLowerCase();
-            var currentName = cleanedName.toLowerCase();
-            if (cachedName === currentName) {
-                Log.info('[DEBUG] Найдено в кэше: "' + _s.name + '" для "' + originalName + '"');
+            // Приоритет — поиск по myshowsId (надёжен даже при русской локализации TMDB)
+            if (currentShow.myshowsId && _s.myshowsId && _s.myshowsId === currentShow.myshowsId) {
                 cachedShow = _s;
+                Log.info('[DEBUG] Найдено в кэше по myshowsId: "' + _s.name + '" для "' + originalName + '"');
+                break;
+            }
+            var _fields = [_s.original_title, _s.original_name, _s.name, _s.title];
+            for (var _f = 0; _f < _fields.length; _f++) {
+                if (_fields[_f] && cleanTitle(_fields[_f]).toLowerCase() === currentNameLower) {
+                    cachedShow = _s;
+                    break;
+                }
+            }
+            if (cachedShow) {
+                Log.info('[DEBUG] Найдено в кэше по названию: "' + _s.name + '" для "' + originalName + '"');
                 break;
             }
         }
@@ -5145,7 +5158,7 @@
                     var itemsForPage = allItems.slice(start, end);
 
                     Log.info(
-                        'myshowsWatched: page ${currentPage}/${totalPages}, sending ${itemsForPage.length} items'
+                        'myshowsWatched: page ' + currentPage + '/' + totalPages + ', sending ' + itemsForPage.length + ' items'
                     );
 
                     if (IS_NP && getNpToken() && getNpBaseUrl()) {
