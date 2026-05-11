@@ -164,13 +164,15 @@
             var npUrl = getNpBaseUrl() + NP_PATHS[path] +
                 '?token=' + encodeURIComponent(getNpToken()) +
                 '&profile_id=' + encodeURIComponent(profileId);
-            var npNet = new Lampa.Reguest();
-            npNet.native(npUrl,
-                function(r) { if (callback) callback(r || true); },
-                function()  { if (callback) callback(false); },
-                JSON.stringify(payload),
-                { headers: JSON_HEADERS, method: 'POST' }
-            );
+            var xhr = new XMLHttpRequest();
+            xhr.open('POST', npUrl, true);
+            xhr.setRequestHeader('Content-Type', 'application/json');
+            xhr.onload = function() {
+                try { if (callback) callback(JSON.parse(xhr.responseText) || true); }
+                catch(e) { if (callback) callback(true); }
+            };
+            xhr.onerror = function() { if (callback) callback(false); };
+            xhr.send(JSON.stringify(payload));
             return;
         }
 
@@ -728,7 +730,7 @@
                 }
             });
 
-            if (tokenValue && getNpToken() && getNpBaseUrl()) {
+            if (getNpToken() && getNpBaseUrl()) {
                 Lampa.SettingsApi.addParam({
                     component: 'myshows',
                     param: {
@@ -737,7 +739,7 @@
                         default: getProfileSetting('myshows_use_np', false)
                     },
                     field: {
-                        name: 'Использовать NP FastAPI',
+                        name: 'Использовать NP сервер',
                         description: 'Хранить данные о непросмотренных на NP-сервере для быстрой загрузки'
                     },
                     onChange: function(value) {
@@ -941,7 +943,7 @@
         initSettings();
 
         // Обновляем IS_NP для нового профиля
-        IS_NP = !IS_LAMPAC && !!getNpToken() && !!getNpBaseUrl() && !!getProfileSetting('myshows_use_np', false);
+        IS_NP = !!getNpToken() && !!getNpBaseUrl() && !!getProfileSetting('myshows_use_np', false);
         Log.info('IS_NP after profile change:', IS_NP);
 
         // Очищаем кешированные данные
@@ -5902,7 +5904,7 @@
         // Сначала проверяем среду
         checkLampacEnvironment(function(isLampac) {
             IS_LAMPAC = isLampac;
-            IS_NP = !IS_LAMPAC && !!getNpToken() && !!getNpBaseUrl() && !!getProfileSetting('myshows_use_np', false);
+            IS_NP = !!getNpToken() && !!getNpBaseUrl() && !!getProfileSetting('myshows_use_np', false);
             Log.info('✅ Среда:', IS_LAMPAC ? 'Lampac' : (IS_NP ? 'NP FastAPI' : 'Обычная Lampa'));
 
             addMyShowsToTMDB();
