@@ -67,6 +67,29 @@
 
     function padTwo(n) { return ('0' + n).slice(-2); }
 
+    function cleanTitle(title) {
+        if (!title) return '';
+        return title.replace(/\s*\([^)]*\)\s*$/, '').trim();
+    }
+
+    function findByName(arr, name) {
+        if (!arr || !name) return null;
+        var lower = name.toLowerCase();
+        for (var i = 0; i < arr.length; i++) {
+            var item = arr[i];
+            var n1 = (item.original_name || item.name || item.title || '').toLowerCase();
+            var n2 = (item.titleOriginal || '').toLowerCase();
+            if (n1 === lower || n2 === lower) return item;
+        }
+        return null;
+    }
+
+    function findShowInCache(cacheType, arrayKey, name, callback) {
+        loadCacheFromServer(cacheType, arrayKey, function(result) {
+            callback(findByName(result && result[arrayKey], name));
+        });
+    }
+
     // === Поддержка профилей ===
     function getProfileId() {
 
@@ -2301,11 +2324,6 @@
     }
 
     function fetchTMDBShowDetails(currentShow, index, status, cachedShows, callback) {
-        function cleanTitle(title) {
-            if (!title) return '';
-            return title.replace(/\s*\([^)]*\)\s*$/, '').trim();
-        }
-
         var originalName = currentShow.originalTitle || currentShow.title || '';
         var cleanedName = cleanTitle(originalName);
 
@@ -2341,11 +2359,6 @@
     }
 
     function searchTMDBWithRetry(currentShow, index, status, callback) {
-        function cleanTitle(title) {
-            if (!title) return '';
-            return title.replace(/\s*\([^)]*\)\s*$/, '').trim();
-        }
-
         var originalTitle = currentShow.originalTitle || currentShow.title;
         var cleanedTitle = cleanTitle(currentShow.originalTitle) || cleanTitle(currentShow.title);
 
@@ -2775,8 +2788,7 @@
             var cardData = cardElement.card_data;
             if (!cardData) return;
 
-            var cardName = (cardData.original_title || cardData.original_name ||
-                        cardData.name || cardData.title) || '';
+            var cardName = getCardName(cardData) || '';
 
             if (cardName.toLowerCase() === showNameLower) {
                 Log.info('Found card to update:', cardName);
@@ -2916,38 +2928,15 @@
                 Lampa.Storage.set('myshows_was_watching', false);
 
                 setTimeout(function() {
-                    loadCacheFromServer('unwatched_serials', 'shows', function(cachedResult) {
-                        var foundInAPI = false;
-                        var foundShow = null;
-
-                        if (cachedResult && cachedResult.shows) {
-                            var _nameLower = originalName ? originalName.toLowerCase() : '';
-                            for (var i = 0; i < cachedResult.shows.length; i++) {
-                                var show = cachedResult.shows[i];
-                                if (((show.original_name || show.name || show.title) || '').toLowerCase() === _nameLower) {
-                                    foundShow = show;
-                                    break;
-                                }
+                    findShowInCache('unwatched_serials', 'shows', originalName, function(foundShow) {
+                        if (foundShow) {
+                            var existingCard = findCardInMyShowsSection(originalName);
+                            if (existingCard && foundShow.progress_marker) {
+                                updateAllMyShowsCards(originalName, foundShow.progress_marker, foundShow.next_episode, foundShow.remaining);
+                            } else if (!existingCard) {
+                                insertNewCardIntoMyShowsSection(foundShow);
                             }
-
-                            if (foundShow) {
-                                foundInAPI = true;
-
-                                var existingCard = findCardInMyShowsSection(originalName);
-
-                                if (existingCard && foundShow.progress_marker) {
-                                    updateAllMyShowsCards(
-                                        originalName,
-                                        foundShow.progress_marker,
-                                        foundShow.next_episode,
-                                        foundShow.remaining
-                                    );
-                                } else if (!existingCard) {
-                                    insertNewCardIntoMyShowsSection(foundShow);
-                                }
-                            }
-                        }
-                        if (!foundInAPI) {
+                        } else {
                             updateCompletedShowCard(originalName);
                         }
                     });
@@ -2956,20 +2945,9 @@
                 // Просто навигация - обновляем сразу без таймаута
                 var originalName = currentCard.original_name || currentCard.original_title || currentCard.title;
 
-                loadCacheFromServer('unwatched_serials', 'shows', function(cachedResult) {
-                    if (cachedResult && cachedResult.shows) {
-                        var _nl = originalName ? originalName.toLowerCase() : '';
-                        var foundShow = null;
-                        for (var _fi = 0; _fi < cachedResult.shows.length; _fi++) {
-                            if (((cachedResult.shows[_fi].original_name || cachedResult.shows[_fi].name || cachedResult.shows[_fi].title) || '').toLowerCase() === _nl) {
-                                foundShow = cachedResult.shows[_fi]; break;
-                            }
-                        }
-
-                        if (foundShow && foundShow.progress_marker) {
-                            // Обновляем UI
-                            updateAllMyShowsCards(originalName, foundShow.progress_marker, foundShow.next_episode, foundShow.remaining);
-                        }
+                findShowInCache('unwatched_serials', 'shows', originalName, function(foundShow) {
+                    if (foundShow && foundShow.progress_marker) {
+                        updateAllMyShowsCards(originalName, foundShow.progress_marker, foundShow.next_episode, foundShow.remaining);
                     }
                 });
             }
@@ -2984,20 +2962,9 @@
             var movie = event.data.movie;
             var originalName = movie.original_name || movie.name || movie.title;
 
-            // Загружаем данные MyShows
-            loadCacheFromServer('unwatched_serials', 'shows', function(cachedResult) {
-                if (cachedResult && cachedResult.shows) {
-                    var nameLower = originalName ? originalName.toLowerCase() : '';
-                    var foundShow = null;
-                    for (var _fj = 0; _fj < cachedResult.shows.length; _fj++) {
-                        if (((cachedResult.shows[_fj].original_name || cachedResult.shows[_fj].name || cachedResult.shows[_fj].title) || '').toLowerCase() === nameLower) {
-                            foundShow = cachedResult.shows[_fj]; break;
-                        }
-                    }
-
-                    if (foundShow && foundShow.progress_marker) {
-                        updateFullCardMarkers(foundShow, event.body);
-                    }
+            findShowInCache('unwatched_serials', 'shows', originalName, function(foundShow) {
+                if (foundShow && foundShow.progress_marker) {
+                    updateFullCardMarkers(foundShow, event.body);
                 }
             });
         }
@@ -3035,67 +3002,32 @@
             }, function() {});
 
             if (isSerial) {
-                loadCacheFromServer('unwatched_serials', 'shows', function(cachedResult) {
-                    if (cachedResult && cachedResult.shows) {
-                        var _nl2 = originalName ? originalName.toLowerCase() : '';
-                        var foundShow = null;
-                        for (var _fk = 0; _fk < cachedResult.shows.length; _fk++) {
-                            if (((cachedResult.shows[_fk].original_name || cachedResult.shows[_fk].name || cachedResult.shows[_fk].title) || '').toLowerCase() === _nl2) {
-                                foundShow = cachedResult.shows[_fk]; break;
-                            }
-                        }
-                        if (foundShow && (foundShow.progress_marker || foundShow.next_episode || foundShow.remaining)) {
-                            updateFullCardMarkers(foundShow);
-                        }
+                findShowInCache('unwatched_serials', 'shows', originalName, function(foundShow) {
+                    if (foundShow && (foundShow.progress_marker || foundShow.next_episode || foundShow.remaining)) {
+                        updateFullCardMarkers(foundShow);
                     }
                 });
             }
             return;
         }
 
-        function matchByName(item) {
-            var t = item.title || '';
-            var o = item.titleOriginal || item.original_name || item.name || '';
-            return t === originalName || o === originalName ||
-                t.toLowerCase() === originalName.toLowerCase() ||
-                o.toLowerCase() === originalName.toLowerCase();
-        }
-
         if (isSerial) {
-            loadCacheFromServer('unwatched_serials', 'shows', function(cachedResult) {
-                if (cachedResult && cachedResult.shows) {
-                    var foundShow = null;
-                    for (var _u = 0; _u < cachedResult.shows.length; _u++) {
-                        if (matchByName(cachedResult.shows[_u])) { foundShow = cachedResult.shows[_u]; break; }
-                    }
-                    if (foundShow && (foundShow.progress_marker || foundShow.next_episode || foundShow.remaining)) {
-                        updateFullCardMarkers(foundShow);
-                    }
+            findShowInCache('unwatched_serials', 'shows', originalName, function(foundShow) {
+                if (foundShow && (foundShow.progress_marker || foundShow.next_episode || foundShow.remaining)) {
+                    updateFullCardMarkers(foundShow);
                 }
             });
-            loadCacheFromServer('serial_status', 'shows', function(cachedResult) {
-                if (cachedResult && cachedResult.shows) {
-                    var foundShow = null;
-                    for (var _ss = 0; _ss < cachedResult.shows.length; _ss++) {
-                        if (matchByName(cachedResult.shows[_ss])) { foundShow = cachedResult.shows[_ss]; break; }
-                    }
-                    if (foundShow) {
-                        updateButtonStates(foundShow.watchStatus, false, true);
-                        Lampa.Storage.set('myshows_was_watching', false);
-                    }
+            findShowInCache('serial_status', 'shows', originalName, function(foundShow) {
+                if (foundShow) {
+                    updateButtonStates(foundShow.watchStatus, false, true);
+                    Lampa.Storage.set('myshows_was_watching', false);
                 }
             });
         } else {
-            loadCacheFromServer('movie_status', 'movies', function(cachedResult) {
-                if (cachedResult && cachedResult.movies) {
-                    var foundMovie = null;
-                    for (var _ms = 0; _ms < cachedResult.movies.length; _ms++) {
-                        if (matchByName(cachedResult.movies[_ms])) { foundMovie = cachedResult.movies[_ms]; break; }
-                    }
-                    if (foundMovie) {
-                        updateButtonStates(foundMovie.watchStatus, true, true);
-                        Lampa.Storage.set('myshows_was_watching', false);
-                    }
+            findShowInCache('movie_status', 'movies', originalName, function(foundMovie) {
+                if (foundMovie) {
+                    updateButtonStates(foundMovie.watchStatus, true, true);
+                    Lampa.Storage.set('myshows_was_watching', false);
                 }
             });
         }
@@ -3491,7 +3423,7 @@
             var cardElement = cards[i];
             var cardData = cardElement.card_data || {};
 
-            var cardName = (cardData.original_title || cardData.original_name || cardData.name || cardData.title) || '';
+            var cardName = getCardName(cardData) || '';
 
             if (cardName.toLowerCase() === showNameLower && cardData.progress_marker) {
                 Log.info('Found matching card for:', showName);
@@ -5636,11 +5568,6 @@
                 total_results: 0
             });
             return;
-        }
-
-        function cleanTitle(title) {
-            if (!title) return '';
-            return title.replace(/\s*\([^)]*\)\s*$/, '').trim();
         }
 
         var status = new Lampa.Status(items.length);
