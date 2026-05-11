@@ -65,6 +65,8 @@
         return url;
     }
 
+    function padTwo(n) { return ('0' + n).slice(-2); }
+
     // === Поддержка профилей ===
     function getProfileId() {
 
@@ -1606,13 +1608,13 @@
 
 
                 // Обработка разных форматов дат
-                if (airDate.includes('.')) {
+                if (airDate.indexOf('.') !== -1) {
                     var parts = airDate.split('.');
                     if (parts.length !== 3) {
                         continue;
                     }
                     myShowsDate = new Date(parts[2], parts[1]-1, parts[0]);
-                } else if (airDate.includes('-')) {
+                } else if (airDate.indexOf('-') !== -1) {
                     myShowsDate = new Date(airDate);
                 } else {
                     continue;
@@ -2587,8 +2589,8 @@
                 // Используем регулярное выражение для разбора формата sXXeYY
                 var match = shortName.match(/s(\d+)e(\d+)/i);
                 if (match) {
-                    var season = match[1].padStart(2, '0');  // "04"
-                    var episode = match[2].padStart(2, '0'); // "07"
+                    var season = padTwo(match[1]);
+                    var episode = padTwo(match[2]);
                     nextEpisode = 'S' + season + '/E' + episode; // "S04 E07"
                 } else {
                     nextEpisode = shortName.toUpperCase(); // Запасной вариант
@@ -3339,8 +3341,8 @@
         var speed = 250;
 
         function update() {
-            var seasonStr = "S" + currentSeason.toString().padStart(2, '0');
-            var epStr = "E" + currentEp.toString().padStart(2, '0');
+            var seasonStr = "S" + padTwo(currentSeason);
+            var epStr = "E" + padTwo(currentEp);
             container.textContent = seasonStr + "/" + epStr;
 
             // Легкая анимация
@@ -3406,8 +3408,8 @@
         var currentEp = oldEpNum;
 
         function update() {
-            var seasonStr = "S" + currentSeason.toString().padStart(2, '0');
-            var epStr = "E" + currentEp.toString().padStart(2, '0');
+            var seasonStr = "S" + padTwo(currentSeason);
+            var epStr = "E" + padTwo(currentEp);
             container.textContent = seasonStr + "/" + epStr;
 
             // Легкая анимация
@@ -3442,14 +3444,14 @@
     function animateInSameSeason(container, season, startEp, endEp, direction) {
         Log.info('animateInSameSeason:', season, startEp, '→', endEp, 'direction:', direction);
 
-        var seasonPrefix = "S" + season.toString().padStart(2, '0') + "/E";
+        var seasonPrefix = "S" + padTwo(season) + "/E";
         var current = startEp;
         var speed = 250;
 
         Log.info('Starting counter with prefix:', seasonPrefix);
 
         function update() {
-            var epStr = current.toString().padStart(2, '0');
+            var epStr = padTwo(current);
             var fullText = seasonPrefix + epStr;
             Log.info('Update step:', current, '->', fullText);
 
@@ -3718,247 +3720,104 @@
 
     function addProgressMarkerStyles() {
         var style = document.createElement('style');
-        style.textContent = `          
-            .myshows-progress {    
-                position: absolute;    
-                left: 0em;    
-                bottom: 0em;    
-                padding: 0.2em 0.4em;    
-                font-size: 1.2em;    
-                border-radius: 0.5em;    
-                font-weight: bold;    
-                z-index: 2;    
-                box-shadow: 0 2px 8px rgba(0,0,0,0.15);    
-                background: #4CAF50;    
-                color: #fff;  
-                transition: all 0.3s ease, transform 0.15s ease !important;
-                will-change: transform, color, background-color;
-            }
-
-            /* Стили для анимации перелистывания */
-            @keyframes digitFlip {
-                0% { 
-                    transform: translateY(0) scale(1); 
-                    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
-                }
-                50% { 
-                    transform: scale(1); 
-                    box-shadow: 0 5px 15px rgba(0,0,0,0.3);
-                }
-                100% { 
-                    transform: translateY(0) scale(1); 
-                    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
-                }
-            }
-
-            @keyframes pulse {
-                0% { transform: scale(1); }
-                50% { transform: scale(1); }
-                100% { transform: scale(1); }
-            }
-
-            .digit-animating {
-                animation: digitFlip 0.6s ease;
-            }
-
-            .marker-update {
-                animation: pulse 0.6s ease;
-            }
-
-            /* Анимация для счетчика */
-            .counter-animating {
-                animation: counterPulse 0.8s ease;
-            }
-
-            @keyframes counterPulse {
-                0% { 
-                    transform: scale(1); 
-                    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
-                }
-                25% { 
-                    transform: scale(1); 
-                    box-shadow: 0 4px 12px rgba(0,0,0,0.25);
-                }
-                50% { 
-                    transform: scale(1); 
-                    box-shadow: 0 3px 10px rgba(0,0,0,0.2);
-                }
-                100% { 
-                    transform: scale(1); 
-                    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
-                }
-            }
-
-            /* Анимация для смены серии */
-            /* .episode-changing {
-                animation: episodeChange 0.6s ease;
-            }
-
-            @keyframes episodeChange {
-                0% { 
-                    transform: translateY(0) scale(1); 
-                    opacity: 1;
-                }
-                50% { 
-                    transform: translateY(-8px) scale(1); 
-                    opacity: 0.7;
-                }
-                100% { 
-                    transform: translateY(0) scale(1); 
-                    opacity: 1;
-                }
-            } */
-
-            .myshows-remaining {    
-                position: absolute;    
-                right: 0em;    
-                top: 0em;    
-                padding: 0.2em 0.4em;    
-                font-size: 1.2em;    
-                border-radius: 1em;    
-                font-weight: bold;    
-                z-index: 2;      
-                background: rgba(0, 0, 0, 0.5);    
-                color: #fff;  
-                transition: all 0.3s ease;  /* ✅ Добавьте transition */  
-            }    
-            
-            .myshows-next-episode {    
-                position: absolute;    
-                left: 0em;    
-                bottom: 1.5em;    
-                padding: 0.2em 0.4em;    
-                font-size: 1.2em;    
-                border-radius: 0.5em;    
-                font-weight: bold;    
-                z-index: 2;    
-                box-shadow: 0 2px 8px rgba(0,0,0,0.15);    
-                letter-spacing: 0.04em;    
-                line-height: 1.1;    
-                background: #2196F3;    
-                color: #fff;  
-                transition: all 0.3s ease;  /* ✅ Добавьте transition */  
-            }    
-
-            .full-start-new__poster {  
-                position: relative;  
-            }  
-            
-            .full-start-new__poster .myshows-progress,  
-            .full-start-new__poster .myshows-next-episode {  
-                position: absolute;  
-                left: 0.5em;  
-                z-index: 3;  
-            }  
-            
-            .full-start-new__poster .myshows-progress,
-            .full-start-new__poster .myshows-remaining,
-            .full-start-new__poster .myshows-next-episode {
-                transition: all 0.3s ease !important;
-                will-change: transform, color, background-color;
-            }
-
-            .full-start-new__poster .myshows-progress.digit-animating,
-            .full-start-new__poster .myshows-remaining.digit-animating,
-            .full-start-new__poster .myshows-next-episode.digit-animating {
-                animation: digitFlip 0.6s ease;
-            }
-
-            .full-start-new__poster .marker-update {
-                animation: gentlePulse 0.6s ease;
-            }
-
-            @keyframes gentlePulse {
-                0% { transform: scale(1); }
-                50% { transform: scale(1); }
-                100% { transform: scale(1); }
-            }
-                        
-            .full-start-new__poster .myshows-progress {  
-                bottom: 0.5em;  
-            }  
-            
-            .full-start-new__poster .myshows-next-episode {  
-                bottom: 2em;  
-            }
-
-            /* Мобильная версия для full-карточки */  
-            body.true--mobile.orientation--portrait .full-start-new__poster .myshows-progress {  
-                bottom: 15em;  
-            }  
-            
-            body.true--mobile.orientation--portrait .full-start-new__poster .myshows-next-episode {  
-                bottom: 17em;  
-            }  
-            
-            /* Планшеты (альбомная ориентация) или широкие экраны */  
-            body.true--mobile.orientation--landscape .full-start-new__poster .myshows-progress {  
-                bottom: 2.5em;  
-            }  
-            
-            body.true--mobile.orientation--landscape .full-start-new__poster .myshows-next-episode {  
-                bottom: 4em;  
-            }  
-            
-            /* Дополнительно: медиа-запрос для планшетов по ширине экрана */  
-            @media screen and (min-width: 580px) and (max-width: 1024px) {  
-                body.true--mobile .full-start-new__poster .myshows-progress {  
-                    bottom: 2.5em;  
-                    font-size: 1.1em;  
-                }  
-                
-                body.true--mobile .full-start-new__poster .myshows-next-episode {  
-                    bottom: 4em;  
-                    font-size: 1.1em;  
-                }  
-            }
-            
-            /* Поддержка glass-стиля */    
-            body.glass--style.platform--browser .card .myshows-progress,    
-            body.glass--style.platform--nw .card .myshows-progress,    
-            body.glass--style.platform--apple .card .д-progress {    
-                background-color: rgba(76, 175, 80, 0.8);    
-                -webkit-backdrop-filter: blur(1em);    
-                backdrop-filter: blur(1em);    
-            }    
-            
-            body.glass--style.platform--browser .card .myshows-next-episode,    
-            body.glass--style.platform--nw .card .myshows-next-episode,    
-            body.glass--style.platform--apple .card .myshows-next-episode {    
-                background-color: rgba(33, 150, 243, 0.8);    
-                -webkit-backdrop-filter: blur(1em);    
-                backdrop-filter: blur(1em);    
-            }    
-            
-            /* ✅ Анимация */  
-            .myshows-progress.marker-update,  
-            .myshows-next-episode.marker-update {  
-                font-weight: 900;    
-                animation: gentleAppear 0.4s ease;
-            }  
-            
-            @keyframes gentleAppear {
-                0% { 
-                    opacity: 0;
-                    transform: translateY(10px);
-                }
-                100% { 
-                    opacity: 1;
-                    transform: translateY(0);
-                }
-            }
-
-            @keyframes gentlePulse {
-                0% { transform: scale(1); }
-                50% { transform: scale(1); } 
-                100% { transform: scale(1); }
-            }
-
-            /* Для scale анимации (только при изменениях) */
-            .scale-animation {
-                animation: gentlePulse 0.6s ease;
-            }
-        `;
+        style.textContent = [
+            '.myshows-progress {',
+            '    position: absolute; left: 0em; bottom: 0em;',
+            '    padding: 0.2em 0.4em; font-size: 1.2em; border-radius: 0.5em;',
+            '    font-weight: bold; z-index: 2; box-shadow: 0 2px 8px rgba(0,0,0,0.15);',
+            '    background: #4CAF50; color: #fff;',
+            '    transition: all 0.3s ease, transform 0.15s ease !important;',
+            '    will-change: transform, color, background-color;',
+            '}',
+            '@keyframes digitFlip {',
+            '    0%   { transform: translateY(0) scale(1); box-shadow: 0 2px 8px rgba(0,0,0,0.15); }',
+            '    50%  { transform: scale(1); box-shadow: 0 5px 15px rgba(0,0,0,0.3); }',
+            '    100% { transform: translateY(0) scale(1); box-shadow: 0 2px 8px rgba(0,0,0,0.15); }',
+            '}',
+            '@keyframes pulse {',
+            '    0%   { transform: scale(1); }',
+            '    50%  { transform: scale(1); }',
+            '    100% { transform: scale(1); }',
+            '}',
+            '.digit-animating { animation: digitFlip 0.6s ease; }',
+            '.marker-update   { animation: pulse 0.6s ease; }',
+            '.counter-animating { animation: counterPulse 0.8s ease; }',
+            '@keyframes counterPulse {',
+            '    0%   { transform: scale(1); box-shadow: 0 2px 8px rgba(0,0,0,0.15); }',
+            '    25%  { transform: scale(1); box-shadow: 0 4px 12px rgba(0,0,0,0.25); }',
+            '    50%  { transform: scale(1); box-shadow: 0 3px 10px rgba(0,0,0,0.2); }',
+            '    100% { transform: scale(1); box-shadow: 0 2px 8px rgba(0,0,0,0.15); }',
+            '}',
+            '.myshows-remaining {',
+            '    position: absolute; right: 0em; top: 0em;',
+            '    padding: 0.2em 0.4em; font-size: 1.2em; border-radius: 1em;',
+            '    font-weight: bold; z-index: 2;',
+            '    background: rgba(0,0,0,0.5); color: #fff; transition: all 0.3s ease;',
+            '}',
+            '.myshows-next-episode {',
+            '    position: absolute; left: 0em; bottom: 1.5em;',
+            '    padding: 0.2em 0.4em; font-size: 1.2em; border-radius: 0.5em;',
+            '    font-weight: bold; z-index: 2; box-shadow: 0 2px 8px rgba(0,0,0,0.15);',
+            '    letter-spacing: 0.04em; line-height: 1.1;',
+            '    background: #2196F3; color: #fff; transition: all 0.3s ease;',
+            '}',
+            '.full-start-new__poster { position: relative; }',
+            '.full-start-new__poster .myshows-progress,',
+            '.full-start-new__poster .myshows-next-episode {',
+            '    position: absolute; left: 0.5em; z-index: 3;',
+            '}',
+            '.full-start-new__poster .myshows-progress,',
+            '.full-start-new__poster .myshows-remaining,',
+            '.full-start-new__poster .myshows-next-episode {',
+            '    transition: all 0.3s ease !important;',
+            '    will-change: transform, color, background-color;',
+            '}',
+            '.full-start-new__poster .myshows-progress.digit-animating,',
+            '.full-start-new__poster .myshows-remaining.digit-animating,',
+            '.full-start-new__poster .myshows-next-episode.digit-animating {',
+            '    animation: digitFlip 0.6s ease;',
+            '}',
+            '.full-start-new__poster .marker-update { animation: gentlePulse 0.6s ease; }',
+            '@keyframes gentlePulse {',
+            '    0%   { transform: scale(1); }',
+            '    50%  { transform: scale(1); }',
+            '    100% { transform: scale(1); }',
+            '}',
+            '.full-start-new__poster .myshows-progress    { bottom: 0.5em; }',
+            '.full-start-new__poster .myshows-next-episode { bottom: 2em; }',
+            'body.true--mobile.orientation--portrait .full-start-new__poster .myshows-progress    { bottom: 15em; }',
+            'body.true--mobile.orientation--portrait .full-start-new__poster .myshows-next-episode { bottom: 17em; }',
+            'body.true--mobile.orientation--landscape .full-start-new__poster .myshows-progress    { bottom: 2.5em; }',
+            'body.true--mobile.orientation--landscape .full-start-new__poster .myshows-next-episode { bottom: 4em; }',
+            '@media screen and (min-width: 580px) and (max-width: 1024px) {',
+            '    body.true--mobile .full-start-new__poster .myshows-progress    { bottom: 2.5em; font-size: 1.1em; }',
+            '    body.true--mobile .full-start-new__poster .myshows-next-episode { bottom: 4em;   font-size: 1.1em; }',
+            '}',
+            'body.glass--style.platform--browser .card .myshows-progress,',
+            'body.glass--style.platform--nw .card .myshows-progress,',
+            'body.glass--style.platform--apple .card .д-progress {',
+            '    background-color: rgba(76,175,80,0.8);',
+            '    -webkit-backdrop-filter: blur(1em); backdrop-filter: blur(1em);',
+            '}',
+            'body.glass--style.platform--browser .card .myshows-next-episode,',
+            'body.glass--style.platform--nw .card .myshows-next-episode,',
+            'body.glass--style.platform--apple .card .myshows-next-episode {',
+            '    background-color: rgba(33,150,243,0.8);',
+            '    -webkit-backdrop-filter: blur(1em); backdrop-filter: blur(1em);',
+            '}',
+            '.myshows-progress.marker-update,',
+            '.myshows-next-episode.marker-update { font-weight: 900; animation: gentleAppear 0.4s ease; }',
+            '@keyframes gentleAppear {',
+            '    0%   { opacity: 0; transform: translateY(10px); }',
+            '    100% { opacity: 1; transform: translateY(0); }',
+            '}',
+            '@keyframes gentlePulse {',
+            '    0%   { transform: scale(1); }',
+            '    50%  { transform: scale(1); }',
+            '    100% { transform: scale(1); }',
+            '}',
+            '.scale-animation { animation: gentlePulse 0.6s ease; }'
+        ].join('\n');
         document.head.appendChild(style);
     }
 
@@ -4198,72 +4057,24 @@
         if (getProfileSetting('myshows_button_view', true) && getProfileSetting('myshows_token', false)) {
 
             var style = document.createElement('style');
-            style.textContent = `  
-                /* Общие transition для всех кнопок */  
-                .full-start__button[class*="myshows-"] svg {  
-                    transition: color 0.5s ease, filter 0.5s ease;  
-                }  
-                
-                /* СЕРИАЛЫ */  
-                .full-start__button.myshows-watching.myshows-active svg {  
-                    color: #FFC107;  
-                    filter: drop-shadow(0 0 3px rgba(255, 193, 7, 0.8));  
-                }  
-                .full-start__button.myshows-scheduled.myshows-active svg {  
-                    color: #2196F3;  
-                    filter: drop-shadow(0 0 3px rgba(33, 150, 243, 0.8));  
-                }  
-                .full-start__button.myshows-thrown.myshows-active svg {  
-                    color: #FF9800;  
-                    filter: drop-shadow(0 0 3px rgba(255, 152, 0, 0.8));  
-                }  
-                .full-start__button.myshows-cancelled.myshows-active svg {  
-                    color: #F44336;  
-                    filter: drop-shadow(0 0 3px rgba(244, 67, 54, 0.8));  
-                }  
-                
-                /* ФИЛЬМЫ */  
-                .full-start__button.myshows-movie-watched.myshows-active svg {  
-                    color: #4CAF50;  
-                    filter: drop-shadow(0 0 3px rgba(76, 175, 80, 0.8));  
-                }  
-                .full-start__button.myshows-movie-later.myshows-active svg {  
-                    color: #2196F3;  
-                    filter: drop-shadow(0 0 3px rgba(33, 150, 243, 0.8));  
-                }  
-                .full-start__button.myshows-movie-remove.myshows-active svg {  
-                    color: #F44336;  
-                    filter: drop-shadow(0 0 3px rgba(244, 67, 54, 0.8));  
-                }  
-
-                /* Дополнительно: медиа-запрос для телефонов по ширине экрана */  
-                @media screen and (max-width: 580px) {
-
-                    /* по умолчанию (фильмы) */
-                    .full-start-new__buttons {
-                        flex-wrap: nowrap;
-                    }
-
-                    /* только если есть сериалы */
-                    .full-start-new__buttons.myshows-btn-series {
-                        flex-wrap: wrap;
-                    }
-
-                    /* разрыв строки */
-                    .full-start-new__buttons.myshows-btn-series::after {
-                        content: '';
-                        flex-basis: 100%;
-                        width: 100%;
-                        order: 1;
-                        margin-bottom: 0.75em;
-                    }
-
-                    /* кнопки сериалов идут вниз */
-                    .full-start-new__buttons.myshows-btn-series .myshows-btn {
-                        order: 2;
-                    }
-                }
-            `;
+            style.textContent = [
+                '.full-start__button[class*="myshows-"] svg { transition: color 0.5s ease, filter 0.5s ease; }',
+                '.full-start__button.myshows-watching.myshows-active svg  { color: #FFC107; filter: drop-shadow(0 0 3px rgba(255,193,7,0.8)); }',
+                '.full-start__button.myshows-scheduled.myshows-active svg { color: #2196F3; filter: drop-shadow(0 0 3px rgba(33,150,243,0.8)); }',
+                '.full-start__button.myshows-thrown.myshows-active svg    { color: #FF9800; filter: drop-shadow(0 0 3px rgba(255,152,0,0.8)); }',
+                '.full-start__button.myshows-cancelled.myshows-active svg { color: #F44336; filter: drop-shadow(0 0 3px rgba(244,67,54,0.8)); }',
+                '.full-start__button.myshows-movie-watched.myshows-active svg { color: #4CAF50; filter: drop-shadow(0 0 3px rgba(76,175,80,0.8)); }',
+                '.full-start__button.myshows-movie-later.myshows-active svg  { color: #2196F3; filter: drop-shadow(0 0 3px rgba(33,150,243,0.8)); }',
+                '.full-start__button.myshows-movie-remove.myshows-active svg { color: #F44336; filter: drop-shadow(0 0 3px rgba(244,67,54,0.8)); }',
+                '@media screen and (max-width: 580px) {',
+                '    .full-start-new__buttons { flex-wrap: nowrap; }',
+                '    .full-start-new__buttons.myshows-btn-series { flex-wrap: wrap; }',
+                '    .full-start-new__buttons.myshows-btn-series::after {',
+                '        content: ""; flex-basis: 100%; width: 100%; order: 1; margin-bottom: 0.75em;',
+                '    }',
+                '    .full-start-new__buttons.myshows-btn-series .myshows-btn { order: 2; }',
+                '}'
+            ].join('\n');
             document.head.appendChild(style);
         }
     }
@@ -5844,7 +5655,8 @@
                 // Проверяем кеш карточек по myshowsId
                 var cachedCard = _getCardFromCache(currentItem.myshowsId);
                 if (cachedCard) {
-                    var cardCopy = Object.assign({}, cachedCard);
+                    var cardCopy = {};
+                    for (var _k in cachedCard) { if (cachedCard.hasOwnProperty(_k)) cardCopy[_k] = cachedCard[_k]; }
                     cardCopy.myshowsId = currentItem.myshowsId;
                     cardCopy.watchStatus = currentItem.watchStatus;
                     data.results.push(cardCopy);
