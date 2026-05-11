@@ -68,7 +68,7 @@
     // === Поддержка профилей ===
     function getProfileId() {
 
-        if (window._np_profiles_started || window.profiles_plugin) {
+        if (window.profiles_plugin) {
             var profileId = Lampa.Storage.get('lampac_profile_id', '');
             if (profileId) return String(profileId);
         }
@@ -2762,15 +2762,16 @@
         });
 
         var cards = document.querySelectorAll('.card');
+        var showNameLower = showName ? showName.toLowerCase() : '';
 
         cards.forEach(function(cardElement) {
             var cardData = cardElement.card_data;
             if (!cardData) return;
 
-            var cardName = cardData.original_title || cardData.original_name ||
-                        cardData.name || cardData.title;
+            var cardName = (cardData.original_title || cardData.original_name ||
+                        cardData.name || cardData.title) || '';
 
-            if (cardName === showName) {
+            if (cardName.toLowerCase() === showNameLower) {
                 Log.info('Found card to update:', cardName);
 
                 // ✅ Обновляем данные в card_data
@@ -2866,14 +2867,6 @@
         });
 
         if (event.type === 'start' && event.component === 'full') {
-            // Сохраняем карточку, в которую зашли
-            var currentCard = event.object && event.object.card;
-            if (currentCard) {
-                Lampa.Storage.set('myshows_current_card', currentCard);
-            }
-        }
-
-        if (event.type === 'start' && event.component === 'full') {
             var currentCard = event.object && event.object.card;
             if (currentCard) {
                 var originalName = currentCard.original_name || currentCard.original_title || currentCard.title;
@@ -2921,9 +2914,10 @@
                         var foundShow = null;
 
                         if (cachedResult && cachedResult.shows) {
+                            var _nameLower = originalName ? originalName.toLowerCase() : '';
                             for (var i = 0; i < cachedResult.shows.length; i++) {
                                 var show = cachedResult.shows[i];
-                                if ((show.original_name || show.name || show.title) === originalName) {
+                                if (((show.original_name || show.name || show.title) || '').toLowerCase() === _nameLower) {
                                     foundShow = show;
                                     break;
                                 }
@@ -2957,8 +2951,9 @@
 
                 loadCacheFromServer('unwatched_serials', 'shows', function(cachedResult) {
                     if (cachedResult && cachedResult.shows) {
+                        var _nl = originalName ? originalName.toLowerCase() : '';
                         var foundShow = cachedResult.shows.find(function(show) {
-                            return (show.original_name || show.name || show.title) === originalName;
+                            return ((show.original_name || show.name || show.title) || '').toLowerCase() === _nl;
                         });
 
                         if (foundShow && foundShow.progress_marker) {
@@ -2982,8 +2977,10 @@
             // Загружаем данные MyShows
             loadCacheFromServer('unwatched_serials', 'shows', function(cachedResult) {
                 if (cachedResult && cachedResult.shows) {
+                    var nameLower = originalName ? originalName.toLowerCase() : '';
                     var foundShow = cachedResult.shows.find(function(show) {
-                        return (show.original_name || show.name || show.title) === originalName;
+                        var showName = (show.original_name || show.name || show.title) || '';
+                        return showName.toLowerCase() === nameLower;
                     });
 
                     if (foundShow && foundShow.progress_marker) {
@@ -3000,6 +2997,7 @@
     // Обновляет статус кнопок и маркеры на полной карточке после возврата с просмотра.
     // Три ветки: IS_NP (статус из БД по tmdb_id), сериал (кэш serial_status), фильм (кэш movie_status).
     function refreshFullCardStatus(isSerial, originalName, currentCard) {
+        if (!originalName) return;
         if (IS_NP && getNpToken() && getNpBaseUrl() && currentCard.id) {
             var mediaType = isSerial ? 'tv' : 'movie';
             var statusUrl = getNpBaseUrl() + '/myshows/status' +
@@ -3027,8 +3025,9 @@
             if (isSerial) {
                 loadCacheFromServer('unwatched_serials', 'shows', function(cachedResult) {
                     if (cachedResult && cachedResult.shows) {
+                        var _nl2 = originalName ? originalName.toLowerCase() : '';
                         var foundShow = cachedResult.shows.find(function(show) {
-                            return (show.original_name || show.name || show.title) === originalName;
+                            return ((show.original_name || show.name || show.title) || '').toLowerCase() === _nl2;
                         });
                         if (foundShow && (foundShow.progress_marker || foundShow.next_episode || foundShow.remaining)) {
                             updateFullCardMarkers(foundShow);
@@ -3462,14 +3461,15 @@
 
     function updateCompletedShowCard(showName) {
         var cards = document.querySelectorAll('.card');
+        var showNameLower = showName ? showName.toLowerCase() : '';
 
         for (var i = 0; i < cards.length; i++) {
             var cardElement = cards[i];
             var cardData = cardElement.card_data || {};
 
-            var cardName = cardData.original_title || cardData.original_name || cardData.name || cardData.title;
+            var cardName = (cardData.original_title || cardData.original_name || cardData.name || cardData.title) || '';
 
-            if (cardName === showName && cardData.progress_marker) {
+            if (cardName.toLowerCase() === showNameLower && cardData.progress_marker) {
                 Log.info('Found matching card for:', showName);
 
                 // ✅ Помечаем карточку как удаляемую
@@ -3563,12 +3563,13 @@
         var section = findMyShowsSection();
         if (!section) return null;
 
+        var showNameLower = showName ? showName.toLowerCase() : '';
         var cards = section.querySelectorAll('.card');
         for (var i = 0; i < cards.length; i++) {
             var cardElement = cards[i];
             var cardData = cardElement.card_data || {};
-            var cardName = getCardName(cardData);
-            if (cardName === showName) {
+            var cardName = getCardName(cardData) || '';
+            if (cardName.toLowerCase() === showNameLower) {
                 return cardElement;
             }
         }
