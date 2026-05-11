@@ -2309,17 +2309,17 @@
 
         Log.info('[DEBUG] Ищем шоу "' + originalName + '" (ID: ' + currentShow.myshowsId + ')');
 
-        var cachedShow = cachedShows.find(function(s) {
-            var cachedName = cleanTitle(s.original_title || s.original_name || s.name || '').toLowerCase();
+        var cachedShow = null;
+        for (var _i = 0; _i < cachedShows.length; _i++) {
+            var _s = cachedShows[_i];
+            var cachedName = cleanTitle(_s.original_title || _s.original_name || _s.name || '').toLowerCase();
             var currentName = cleanedName.toLowerCase();
-            var isMatch = cachedName === currentName;
-
-            if (isMatch) {
-                Log.info('[DEBUG] Найдено в кэше: "' + s.name + '" для "' + originalName + '"');
+            if (cachedName === currentName) {
+                Log.info('[DEBUG] Найдено в кэше: "' + _s.name + '" для "' + originalName + '"');
+                cachedShow = _s;
+                break;
             }
-
-            return isMatch;
-        });
+        }
 
         if (cachedShow && cachedShow.id) {
             Log.info('TMDB пропущен (кеш):', cachedShow.name);
@@ -2409,14 +2409,19 @@
     }
 
     function enrichTMDBShow(foundShow, currentShow, index, status, cachedShows) {
-        var cachedShow = cachedShows
-            ? cachedShows.find(function(s) {
-                if (s.myshowsId && currentShow.myshowsId) return s.myshowsId === currentShow.myshowsId;
-                var name1 = (s.original_title || s.original_name || s.name || '').toLowerCase();
-                var name2 = (currentShow.originalTitle || currentShow.title || '').toLowerCase();
-                return name1 === name2;
-            })
-            : null;
+        var cachedShow = null;
+        if (cachedShows) {
+            for (var _ci = 0; _ci < cachedShows.length; _ci++) {
+                var _cs = cachedShows[_ci];
+                if (_cs.myshowsId && currentShow.myshowsId) {
+                    if (_cs.myshowsId === currentShow.myshowsId) { cachedShow = _cs; break; }
+                } else {
+                    var _n1 = (_cs.original_title || _cs.original_name || _cs.name || '').toLowerCase();
+                    var _n2 = (currentShow.originalTitle || currentShow.title || '').toLowerCase();
+                    if (_n1 === _n2) { cachedShow = _cs; break; }
+                }
+            }
+        }
 
         Log.info('TMDB cachedShow', cachedShow);
 
@@ -2952,9 +2957,12 @@
                 loadCacheFromServer('unwatched_serials', 'shows', function(cachedResult) {
                     if (cachedResult && cachedResult.shows) {
                         var _nl = originalName ? originalName.toLowerCase() : '';
-                        var foundShow = cachedResult.shows.find(function(show) {
-                            return ((show.original_name || show.name || show.title) || '').toLowerCase() === _nl;
-                        });
+                        var foundShow = null;
+                        for (var _fi = 0; _fi < cachedResult.shows.length; _fi++) {
+                            if (((cachedResult.shows[_fi].original_name || cachedResult.shows[_fi].name || cachedResult.shows[_fi].title) || '').toLowerCase() === _nl) {
+                                foundShow = cachedResult.shows[_fi]; break;
+                            }
+                        }
 
                         if (foundShow && foundShow.progress_marker) {
                             // Обновляем UI
@@ -2978,10 +2986,12 @@
             loadCacheFromServer('unwatched_serials', 'shows', function(cachedResult) {
                 if (cachedResult && cachedResult.shows) {
                     var nameLower = originalName ? originalName.toLowerCase() : '';
-                    var foundShow = cachedResult.shows.find(function(show) {
-                        var showName = (show.original_name || show.name || show.title) || '';
-                        return showName.toLowerCase() === nameLower;
-                    });
+                    var foundShow = null;
+                    for (var _fj = 0; _fj < cachedResult.shows.length; _fj++) {
+                        if (((cachedResult.shows[_fj].original_name || cachedResult.shows[_fj].name || cachedResult.shows[_fj].title) || '').toLowerCase() === nameLower) {
+                            foundShow = cachedResult.shows[_fj]; break;
+                        }
+                    }
 
                     if (foundShow && foundShow.progress_marker) {
                         updateFullCardMarkers(foundShow, event.body);
@@ -3026,9 +3036,12 @@
                 loadCacheFromServer('unwatched_serials', 'shows', function(cachedResult) {
                     if (cachedResult && cachedResult.shows) {
                         var _nl2 = originalName ? originalName.toLowerCase() : '';
-                        var foundShow = cachedResult.shows.find(function(show) {
-                            return ((show.original_name || show.name || show.title) || '').toLowerCase() === _nl2;
-                        });
+                        var foundShow = null;
+                        for (var _fk = 0; _fk < cachedResult.shows.length; _fk++) {
+                            if (((cachedResult.shows[_fk].original_name || cachedResult.shows[_fk].name || cachedResult.shows[_fk].title) || '').toLowerCase() === _nl2) {
+                                foundShow = cachedResult.shows[_fk]; break;
+                            }
+                        }
                         if (foundShow && (foundShow.progress_marker || foundShow.next_episode || foundShow.remaining)) {
                             updateFullCardMarkers(foundShow);
                         }
@@ -3049,7 +3062,10 @@
         if (isSerial) {
             loadCacheFromServer('unwatched_serials', 'shows', function(cachedResult) {
                 if (cachedResult && cachedResult.shows) {
-                    var foundShow = cachedResult.shows.find(matchByName);
+                    var foundShow = null;
+                    for (var _u = 0; _u < cachedResult.shows.length; _u++) {
+                        if (matchByName(cachedResult.shows[_u])) { foundShow = cachedResult.shows[_u]; break; }
+                    }
                     if (foundShow && (foundShow.progress_marker || foundShow.next_episode || foundShow.remaining)) {
                         updateFullCardMarkers(foundShow);
                     }
@@ -3057,7 +3073,10 @@
             });
             loadCacheFromServer('serial_status', 'shows', function(cachedResult) {
                 if (cachedResult && cachedResult.shows) {
-                    var foundShow = cachedResult.shows.find(matchByName);
+                    var foundShow = null;
+                    for (var _ss = 0; _ss < cachedResult.shows.length; _ss++) {
+                        if (matchByName(cachedResult.shows[_ss])) { foundShow = cachedResult.shows[_ss]; break; }
+                    }
                     if (foundShow) {
                         updateButtonStates(foundShow.watchStatus, false, true);
                         Lampa.Storage.set('myshows_was_watching', false);
@@ -3067,7 +3086,10 @@
         } else {
             loadCacheFromServer('movie_status', 'movies', function(cachedResult) {
                 if (cachedResult && cachedResult.movies) {
-                    var foundMovie = cachedResult.movies.find(matchByName);
+                    var foundMovie = null;
+                    for (var _ms = 0; _ms < cachedResult.movies.length; _ms++) {
+                        if (matchByName(cachedResult.movies[_ms])) { foundMovie = cachedResult.movies[_ms]; break; }
+                    }
                     if (foundMovie) {
                         updateButtonStates(foundMovie.watchStatus, true, true);
                         Lampa.Storage.set('myshows_was_watching', false);
@@ -4161,9 +4183,10 @@
         loadCacheFromServer('serial_status', 'shows', function(showsData) {
             if (showsData && showsData.shows) {
                 var numericShowId = parseInt(showId);
-                var userShow = showsData.shows.find(function(item) {
-                    return item.id === numericShowId;
-                });
+                var userShow = null;
+                for (var _ui = 0; _ui < showsData.shows.length; _ui++) {
+                    if (showsData.shows[_ui].id === numericShowId) { userShow = showsData.shows[_ui]; break; }
+                }
                 callback(userShow ? userShow.watchStatus : 'remove');
             } else {
                 callback('remove');
@@ -4253,12 +4276,16 @@
         loadCacheFromServer(cacheType, dataKey, function(cachedData) {
             if (cachedData && cachedData[dataKey]) {
                 var items = cachedData[dataKey];
-                var foundItem = items.find(function(item) {
-                    return item.title === title ||
-                        item.titleOriginal === title ||
-                        (item.title && item.title.toLowerCase() === title.toLowerCase()) ||
-                        (item.titleOriginal && item.titleOriginal.toLowerCase() === title.toLowerCase());
-                });
+                var foundItem = null;
+                var _tl = title ? title.toLowerCase() : '';
+                for (var _it = 0; _it < items.length; _it++) {
+                    var _item = items[_it];
+                    if (_item.title === title || _item.titleOriginal === title ||
+                        (_item.title && _item.title.toLowerCase() === _tl) ||
+                        (_item.titleOriginal && _item.titleOriginal.toLowerCase() === _tl)) {
+                        foundItem = _item; break;
+                    }
+                }
 
                 callback(foundItem ? foundItem[statusField] : 'remove');
             } else {
@@ -4668,9 +4695,13 @@
         }
 
         // Ищем первый эпизод с episodeNumber >= 1 (не специальный)
-        var firstRealEpisode = show.episodes.find(function(episode) {
-            return episode.seasonNumber === 1 && episode.episodeNumber >= 1 && !episode.isSpecial;
-        });
+        var firstRealEpisode = null;
+        for (var _ei = 0; _ei < show.episodes.length; _ei++) {
+            var _ep = show.episodes[_ei];
+            if (_ep.seasonNumber === 1 && _ep.episodeNumber >= 1 && !_ep.isSpecial) {
+                firstRealEpisode = _ep; break;
+            }
+        }
 
         if (firstRealEpisode && firstRealEpisode.airDate) {
             var airDate = new Date(firstRealEpisode.airDate);
