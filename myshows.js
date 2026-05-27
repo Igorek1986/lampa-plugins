@@ -109,7 +109,7 @@
 
     // Сохранение кеша с использованием профилей
     function saveCacheToServer(cacheData, path, callback) {
-        Log.info('Save', 'Cache: ', cacheData, 'Path:', path);
+        Log.info('Save', 'Cache: ', cacheData, 'Path:', path, 'IS_NP:', IS_NP);
 
         var NP_PATHS = {
             'unwatched_serials': '/myshows/watching',
@@ -122,6 +122,7 @@
         if (IS_NP && NP_PATHS[path] && getNpToken() && getNpBaseUrl()) {
             var profileId = getProfileId();
             var payload = [];
+            Log.info("Save to NP");
 
             if (path === 'serial_status' || path === 'movie_status') {
                 // fetchShowStatus / fetchStatusMovies: данные содержат myshows_id (в поле id), но не tmdb_id
@@ -622,7 +623,8 @@
                     values: {
                         'alphabet': 'По алфавиту',
                         'progress': 'По прогрессу',
-                        'unwatched_count': 'По количеству непросмотренных'
+                        'unwatched_count': 'По количеству непросмотренных',
+                        'air_date': 'По дате выхода эпизода'
                     },
                     default: 'progress'
                 },
@@ -2296,6 +2298,9 @@
             case 'unwatched_count':
                 shows.sort(sortByUnwatched);
                 break;
+            case 'air_date':
+                shows.sort(sortByAirDate);
+                break;
             default:
                 shows.sort(sortByAlphabet);
         }
@@ -2324,6 +2329,15 @@
         if (unwatchedA !== unwatchedB) {
             return unwatchedA - unwatchedB;
         }
+        return sortByAlphabet(a, b);
+    }
+
+    function sortByAirDate(a, b) {
+        var epA = a.last_episode_to_myshows;
+        var epB = b.last_episode_to_myshows;
+        var timeA = epA ? new Date(epA.air_date_utc || epA.air_date).getTime() : 0;
+        var timeB = epB ? new Date(epB.air_date_utc || epB.air_date).getTime() : 0;
+        if (timeB !== timeA) return timeB - timeA;
         return sortByAlphabet(a, b);
     }
 
@@ -2637,6 +2651,7 @@
 
         var enrichedShow = enrichShowData(fullResponse, myshowsData);
         enrichedShow.myshowsId = currentShow.myshowsId;
+        enrichedShow.last_episode_to_myshows = currentShow.last_episode_to_myshows;
         status.append('tmdb_' + index, enrichedShow);
     }
 
