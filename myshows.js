@@ -634,6 +634,7 @@
                 },
                 onChange: function(value) {
                     setProfileSetting('myshows_sort_order', value);
+                    reorderCardsInMyShowsSection();
                 }
             });
 
@@ -2287,23 +2288,37 @@
         });
     }
 
-    function sortShows(shows, order) {
+    function getShowComparator(order) {
         switch (order) {
-            case 'alphabet':
-                shows.sort(sortByAlphabet);
-                break;
-            case 'progress':
-                shows.sort(sortByProgress);
-                break;
-            case 'unwatched_count':
-                shows.sort(sortByUnwatched);
-                break;
-            case 'air_date':
-                shows.sort(sortByAirDate);
-                break;
-            default:
-                shows.sort(sortByAlphabet);
+            case 'progress':      return sortByProgress;
+            case 'unwatched_count': return sortByUnwatched;
+            case 'air_date':      return sortByAirDate;
+            default:              return sortByAlphabet;
         }
+    }
+
+    function sortShows(shows, order) {
+        shows.sort(getShowComparator(order));
+    }
+
+    function reorderCardsInMyShowsSection() {
+        var section = findMyShowsSection();
+        if (!section) return;
+
+        var cards = section.querySelectorAll('.card');
+        if (cards.length < 2) return;
+
+        var cardsArray = Array.prototype.slice.call(cards);
+        var container = cardsArray[0].parentNode;
+        var comparator = getShowComparator(getProfileSetting('myshows_sort_order', 'progress'));
+
+        cardsArray.sort(function(a, b) {
+            return comparator(a.card_data || {}, b.card_data || {});
+        });
+
+        cardsArray.forEach(function(card) {
+            container.appendChild(card);
+        });
     }
 
     function sortByAlphabet(a, b) {
@@ -2323,12 +2338,10 @@
     }
 
     function sortByUnwatched(a, b) {
-        var unwatchedA = (a.total_count || 0) - (a.watched_count || 0);
-        var unwatchedB = (b.total_count || 0) - (b.watched_count || 0);
+        var unwatchedA = a.remaining !== undefined ? a.remaining : (a.released_count || a.total_count || 0) - (a.watched_count || 0);
+        var unwatchedB = b.remaining !== undefined ? b.remaining : (b.released_count || b.total_count || 0) - (b.watched_count || 0);
 
-        if (unwatchedA !== unwatchedB) {
-            return unwatchedA - unwatchedB;
-        }
+        if (unwatchedB !== unwatchedA) return unwatchedA - unwatchedB;
         return sortByAlphabet(a, b);
     }
 
