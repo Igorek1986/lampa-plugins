@@ -2311,6 +2311,7 @@
         var cardsArray = Array.prototype.slice.call(cards);
         var container = cardsArray[0].parentNode;
         var comparator = getShowComparator(getProfileSetting('myshows_sort_order', 'progress'));
+        var focused = document.activeElement;
 
         cardsArray.sort(function(a, b) {
             return comparator(a.card_data || {}, b.card_data || {});
@@ -2319,6 +2320,8 @@
         cardsArray.forEach(function(card) {
             container.appendChild(card);
         });
+
+        if (focused && focused !== document.body) focused.focus();
     }
 
     function sortByAlphabet(a, b) {
@@ -3674,6 +3677,9 @@
                 // Добавляем в scroll (Scroll.append принимает jQuery)
                 scroll.append(cardElement);
                 Log.info('Card appended to scroll');
+
+                // Переставляем карточки согласно текущей сортировке
+                reorderCardsInMyShowsSection();
 
                 // Сразу добавляем маркер и инициируем загрузку постера
                 addProgressMarkerToCard(cardElement, showData);
