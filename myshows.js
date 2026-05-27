@@ -278,7 +278,7 @@
     }
 
     function getRefreshDelay() {
-        return Lampa.Platform.tv() ? 25000 : 5000;
+        return Lampa.Platform.tv() ? 5000 : 5000;
     }
 
     function initMyShowsCaches() {
@@ -3852,6 +3852,9 @@
 
     // Главная TMDB
     function addMyShowsToTMDB() {
+        if (window._myshows_tmdb_patched) return;
+        window._myshows_tmdb_patched = true;
+
         var originalTMDBMain = Lampa.Api.sources.tmdb.main;
 
         Lampa.Api.sources.tmdb.main = function(params, oncomplite, onerror) {
@@ -3863,6 +3866,9 @@
 
     // Главная CUB
     function addMyShowsToCUB() {
+        if (window._myshows_cub_patched) return;
+        window._myshows_cub_patched = true;
+
         var originalCUBMain = Lampa.Api.sources.cub.main;
 
         Lampa.Api.sources.cub.main = function(params, oncomplite, onerror) {
@@ -5781,6 +5787,21 @@
                         }
                     });
                 }
+
+                // На медленных платформах (WebOS, старый Android) visible стреляет
+                // раньше, чем Lampa записывает card_data на DOM-элемент.
+                // Повторяем применение меток после небольшой задержки.
+                var shows = event.data && event.data.results;
+                if (shows && shows.length) {
+                    setTimeout(function() {
+                        shows.forEach(function(show) {
+                            var name = getCardName(show);
+                            if (name && (show.progress_marker || show.remaining || show.next_episode)) {
+                                updateAllMyShowsCards(name, show.progress_marker, show.next_episode, show.remaining);
+                            }
+                        });
+                    }, 500);
+                }
             }
         }
     });
@@ -5935,15 +5956,17 @@
 
     // Функция инициализации
     function initMyShowsPlugin() {
-        // Сначала проверяем среду
+        // Патчим источники данных сразу — до любых async-операций,
+        // иначе Lampa успевает вызвать tmdb.main/cub.main до нашего патча
+        addMyShowsToTMDB();
+        addMyShowsToCUB();
+        patchActivityForMyShows();
+
+        // Определяем среду асинхронно (нужно для выбора пути кэша)
         checkLampacEnvironment(function(isLampac) {
             IS_LAMPAC = isLampac;
             IS_NP = !!getNpToken() && !!getNpBaseUrl() && !!getProfileSetting('myshows_use_np', false);
             Log.info('✅ Среда:', IS_LAMPAC ? 'Lampac' : (IS_NP ? 'NP FastAPI' : 'Обычная Lampa'));
-
-            addMyShowsToTMDB();
-            addMyShowsToCUB();
-            patchActivityForMyShows();
             // Небольшая задержка для стабильности
             setTimeout(function() {
                 // Инициализируем все компоненты
