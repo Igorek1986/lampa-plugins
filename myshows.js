@@ -624,7 +624,10 @@
                         'alphabet': 'По алфавиту',
                         'progress': 'По прогрессу',
                         'unwatched_count': 'По количеству непросмотренных',
-                        'air_date': 'По дате выхода эпизода'
+                        'air_date': 'По дате последнего эпизода ↓',
+                        'air_date_asc': 'По дате последнего эпизода ↑',
+                        'first_unwatched_date': 'По дате первого непросмотренного ↓',
+                        'first_unwatched_date_asc': 'По дате первого непросмотренного ↑'
                     },
                     default: 'progress'
                 },
@@ -634,7 +637,19 @@
                 },
                 onChange: function(value) {
                     setProfileSetting('myshows_sort_order', value);
-                    reorderCardsInMyShowsSection();
+                    cachedShuffledItems = {};
+                    setTimeout(function() {
+                        var activity = Lampa.Activity.active();
+                        if (activity) {
+                            Lampa.Activity.replace({
+                                url:       activity.url,
+                                title:     activity.title,
+                                component: activity.component,
+                                source:    activity.source,
+                                page:      activity.page || 1
+                            });
+                        }
+                    }, 200);
                 }
             });
 
@@ -1376,9 +1391,11 @@
             for (var showId in showsData) {
                 var showData = showsData[showId];
 
-                // Первый элемент unwatchedEpisodes - это последний вышедший эпизод
-                var lastEpisode = showData.episodes[0];
+                // episodes отсортированы по убыванию: [0] = последний вышедший, [last] = первый непросмотренный
+                var lastEpisode  = showData.episodes[0];
+                var firstEpisode = showData.episodes[showData.episodes.length - 1];
                 var last_episode_to_myshows = null;
+                var first_episode_to_myshows = null;
 
                 if (lastEpisode) {
                     last_episode_to_myshows = {
@@ -1389,12 +1406,22 @@
                     };
                 }
 
+                if (firstEpisode) {
+                    first_episode_to_myshows = {
+                        season_number: firstEpisode.seasonNumber,
+                        episode_number: firstEpisode.episodeNumber,
+                        air_date: firstEpisode.airDate,
+                        air_date_utc: firstEpisode.airDateUTC
+                    };
+                }
+
                 var key = (showData.show.titleOriginal || showData.show.title).toLowerCase();
                 myshowsIndex[key] = {
                     myshowsId: showData.show.id,
                     unwatchedCount: showData.unwatchedCount,
                     unwatchedEpisodes: showData.episodes,
-                    last_episode_to_myshows: last_episode_to_myshows
+                    last_episode_to_myshows: last_episode_to_myshows,
+                    first_episode_to_myshows: first_episode_to_myshows
                 };
 
                 shows.push({
@@ -1404,7 +1431,8 @@
                     year: showData.show.year,
                     unwatchedCount: showData.unwatchedCount,
                     unwatchedEpisodes: showData.episodes,
-                    last_episode_to_myshows: last_episode_to_myshows
+                    last_episode_to_myshows: last_episode_to_myshows,
+                    first_episode_to_myshows: first_episode_to_myshows
                 });
             }
 
@@ -1423,7 +1451,8 @@
                         if (myshowsIndex[key]) {
                             tmdbShow.myshowsId = myshowsIndex[key].myshowsId;
                             tmdbShow.unwatchedCount = myshowsIndex[key].unwatchedCount;
-                            tmdbShow.last_episode_to_myshows = myshowsIndex[key].last_episode_to_myshows;
+                            tmdbShow.last_episode_to_myshows  = myshowsIndex[key].last_episode_to_myshows;
+                            tmdbShow.first_episode_to_myshows = myshowsIndex[key].first_episode_to_myshows;
                         }
                     }
 
@@ -2102,14 +2131,13 @@
                 }
             });
         } else if (IS_LAMPAC) {
-            // Используем кеширование только в Lampac
             loadCacheFromServer('unwatched_serials', 'shows', function(cachedResult) {
-                Log.info('Cache result:', cachedResult);
-                if (cachedResult) {
+                if (cachedResult && cachedResult.shows && cachedResult.shows.length) {
+                    var sortOrder = getProfileSetting('myshows_sort_order', 'progress');
+                    sortShows(cachedResult.shows, sortOrder);
                     callback(cachedResult);
                 } else {
                     fetchFromMyShowsAPI(function(freshResult) {
-                        Log.info('API result (no cache):', freshResult);
                         callback(freshResult);
                     });
                 }
@@ -2290,14 +2318,18 @@
 
     function getShowComparator(order) {
         switch (order) {
-            case 'progress':      return sortByProgress;
-            case 'unwatched_count': return sortByUnwatched;
-            case 'air_date':      return sortByAirDate;
-            default:              return sortByAlphabet;
+            case 'progress':                 return sortByProgress;
+            case 'unwatched_count':          return sortByUnwatched;
+            case 'air_date':                 return sortByAirDate;
+            case 'air_date_asc':             return sortByAirDateAsc;
+            case 'first_unwatched_date':     return sortByFirstUnwatchedDate;
+            case 'first_unwatched_date_asc': return sortByFirstUnwatchedDateAsc;
+            default:                         return sortByAlphabet;
         }
     }
 
     function sortShows(shows, order) {
+        Log.info('[sortShows] order=' + order + ' count=' + (shows ? shows.length : 0));
         shows.sort(getShowComparator(order));
     }
 
@@ -2313,6 +2345,10 @@
         var comparator = getShowComparator(getProfileSetting('myshows_sort_order', 'progress'));
         var focused = document.activeElement;
 
+        var nonCards = Array.prototype.filter.call(container.children, function(el) {
+            return !el.classList.contains('card');
+        });
+
         cardsArray.sort(function(a, b) {
             return comparator(a.card_data || {}, b.card_data || {});
         });
@@ -2321,7 +2357,14 @@
             container.appendChild(card);
         });
 
+        nonCards.forEach(function(el) {
+            container.appendChild(el);
+        });
+
         if (focused && focused !== document.body) focused.focus();
+
+        var scroll = section.querySelector('.scroll');
+        if (scroll) scroll.dispatchEvent(new Event('scroll'));
     }
 
     function sortByAlphabet(a, b) {
@@ -2354,6 +2397,33 @@
         var timeA = epA ? new Date(epA.air_date_utc || epA.air_date).getTime() : 0;
         var timeB = epB ? new Date(epB.air_date_utc || epB.air_date).getTime() : 0;
         if (timeB !== timeA) return timeB - timeA;
+        return sortByAlphabet(a, b);
+    }
+
+    function sortByAirDateAsc(a, b) {
+        var epA = a.last_episode_to_myshows;
+        var epB = b.last_episode_to_myshows;
+        var timeA = epA ? new Date(epA.air_date_utc || epA.air_date).getTime() : 0;
+        var timeB = epB ? new Date(epB.air_date_utc || epB.air_date).getTime() : 0;
+        if (timeA !== timeB) return timeA - timeB;
+        return sortByAlphabet(a, b);
+    }
+
+    function sortByFirstUnwatchedDate(a, b) {
+        var epA = a.first_episode_to_myshows;
+        var epB = b.first_episode_to_myshows;
+        var timeA = epA ? new Date(epA.air_date_utc || epA.air_date).getTime() : 0;
+        var timeB = epB ? new Date(epB.air_date_utc || epB.air_date).getTime() : 0;
+        if (timeB !== timeA) return timeB - timeA;
+        return sortByAlphabet(a, b);
+    }
+
+    function sortByFirstUnwatchedDateAsc(a, b) {
+        var epA = a.first_episode_to_myshows;
+        var epB = b.first_episode_to_myshows;
+        var timeA = epA ? new Date(epA.air_date_utc || epA.air_date).getTime() : 0;
+        var timeB = epB ? new Date(epB.air_date_utc || epB.air_date).getTime() : 0;
+        if (timeA !== timeB) return timeA - timeB;
         return sortByAlphabet(a, b);
     }
 
@@ -2667,7 +2737,8 @@
 
         var enrichedShow = enrichShowData(fullResponse, myshowsData);
         enrichedShow.myshowsId = currentShow.myshowsId;
-        enrichedShow.last_episode_to_myshows = currentShow.last_episode_to_myshows;
+        enrichedShow.last_episode_to_myshows  = currentShow.last_episode_to_myshows;
+        enrichedShow.first_episode_to_myshows = currentShow.first_episode_to_myshows;
         status.append('tmdb_' + index, enrichedShow);
     }
 
@@ -5962,7 +6033,7 @@
         addMyShowsToCUB();
         patchActivityForMyShows();
 
-        // Определяем среду асинхронно (нужно для выбора пути кэша)
+        // Определяем среду через window.lampac_plugin (синхронно)
         checkLampacEnvironment(function(isLampac) {
             IS_LAMPAC = isLampac;
             IS_NP = !!getNpToken() && !!getNpBaseUrl() && !!getProfileSetting('myshows_use_np', false);
@@ -6013,22 +6084,8 @@
         });
     }
 
-    // Проверка Lampac
     function checkLampacEnvironment(callback) {
-
-        // Проверка через /version
-        var xhr = new XMLHttpRequest();
-        xhr.open('GET', '/version', true);
-
-        xhr.onload = function() {
-            callback(xhr.status === 200);
-        };
-
-        xhr.onerror = function() {
-            callback(false);
-        };
-
-        xhr.send();
+        callback(!!window.lampac_plugin);
     }
 
     // Запуск
