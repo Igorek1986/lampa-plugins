@@ -2118,6 +2118,10 @@
                                 s.total_count   = parseInt(parts[1]) || (s.watched_count + (s.unwatched_count || 0));
                             }
                         }
+                        // Сервер хранит unwatched_count, плагин ожидает remaining
+                        if (s.remaining === undefined && s.unwatched_count !== undefined) {
+                            s.remaining = s.unwatched_count;
+                        }
                     });
                     var sortOrder = getProfileSetting('myshows_sort_order', 'progress');
                     sortShows(shows, sortOrder);
@@ -5392,6 +5396,12 @@
                 loadCacheFromServer('unwatched_serials', 'shows', function(response) {
                     if (response && response.results) {
                         var all = response.results;
+                        // Сервер хранит unwatched_count, плагин ожидает remaining
+                        all.forEach(function(s) {
+                            if (s.remaining === undefined && s.unwatched_count !== undefined) {
+                                s.remaining = s.unwatched_count;
+                            }
+                        });
                         var totalPages = Math.ceil(all.length / PAGE_SIZE) || 1;
                         var start = (currentPage - 1) * PAGE_SIZE;
                         oncomplite({
