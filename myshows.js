@@ -23,6 +23,7 @@
     var cancelled_icon = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm5 11H7v-2h10v2z" fill="currentColor"/></svg>';
     var IS_LAMPAC = null;
     var IS_NP = false;
+    var IS_NP_CONNECTED = false;
     var EPISODES_CACHE = {};
 
     function getNpBaseUrl() {
@@ -548,7 +549,7 @@
         }
 
         if (!hasProfileSetting('myshows_use_np')) {
-            setProfileSetting('myshows_use_np', false, false);
+            setProfileSetting('myshows_use_np', 'false', false);
         }
 
         var myshowsViewInMain = getProfileSetting('myshows_view_in_main', true);
@@ -560,7 +561,7 @@
         var loginValue = getProfileSetting('myshows_login', '');
         var passwordValue = getProfileSetting('myshows_password', '');
         var cacheDaysValue = getProfileSetting('myshows_cache_days', DEFAULT_CACHE_DAYS);
-        var useNpValue = getProfileSetting('myshows_use_np', false);
+        var useNpValue = getProfileSetting('myshows_use_np', 'false');
 
         Lampa.Storage.set('myshows_view_in_main', myshowsViewInMain, true);
         Lampa.Storage.set('myshows_button_view', myshowsButtonView, true);
@@ -748,13 +749,13 @@
                 }
             });
 
-            if (getNpToken() && getNpBaseUrl()) {
+            if (IS_NP_CONNECTED) {
                 Lampa.SettingsApi.addParam({
                     component: 'myshows',
                     param: {
                         name: 'myshows_use_np',
                         type: 'trigger',
-                        default: getProfileSetting('myshows_use_np', false)
+                        default: getProfileSetting('myshows_use_np', 'false')
                     },
                     field: {
                         name: 'Использовать NP сервер',
@@ -961,7 +962,7 @@
         initSettings();
 
         // Обновляем IS_NP для нового профиля
-        IS_NP = !!getNpToken() && !!getNpBaseUrl() && !!getProfileSetting('myshows_use_np', false);
+        IS_NP = !!getNpToken() && !!getNpBaseUrl() && !!getProfileSetting('myshows_use_np', 'false');
         Log.info('IS_NP after profile change:', IS_NP);
 
         // Очищаем кешированные данные
@@ -1066,6 +1067,9 @@
 
             var passwordInput = settingsPanel.querySelector('input[data-name="myshows_password"]');
             if (passwordInput) passwordInput.value = getProfileSetting('myshows_password', '');
+
+            var useNpInput = settingsPanel.querySelector('input[data-name="myshows_use_np"]');
+            if (useNpInput) useNpInput.value = getProfileSetting('myshows_use_np', 'false');
         }
         }, 100);
     }
@@ -6046,13 +6050,14 @@
         // Определяем среду через window.lampac_plugin (синхронно)
         checkLampacEnvironment(function(isLampac) {
             IS_LAMPAC = isLampac;
-            IS_NP = !!getNpToken() && !!getNpBaseUrl() && !!getProfileSetting('myshows_use_np', false);
+            IS_NP = !!getNpToken() && !!getNpBaseUrl() && !!getProfileSetting('myshows_use_np', 'false');
             Log.info('✅ Среда:', IS_LAMPAC ? 'Lampac' : (IS_NP ? 'NP FastAPI' : 'Обычная Lampa'));
-            // Небольшая задержка для стабильности
-            setTimeout(function() {
-                // Инициализируем все компоненты
-                initCurrentProfile();
-                initSettings();
+            checkNpConnection(function() {
+                // Небольшая задержка для стабильности
+                setTimeout(function() {
+                    // Инициализируем все компоненты
+                    initCurrentProfile();
+                    initSettings();
                 if (window.__NMSync) {
                     var MYSHOWS_SYNC_KEYS = ['myshows_view_in_main', 'myshows_button_view',
                         'myshows_sort_order', 'myshows_add_threshold', 'myshows_min_progress',
@@ -6091,11 +6096,39 @@
                 addMyShowsButtonStyles();
                 init();
             }, 50);
+            });
         });
     }
 
     function checkLampacEnvironment(callback) {
         callback(!!window.lampac_plugin);
+    }
+
+    function checkNpConnection(callback) {
+        var token = getNpToken();
+        var baseUrl = getNpBaseUrl();
+        if (!token || !baseUrl) {
+            IS_NP_CONNECTED = false;
+            callback();
+            return;
+        }
+        var url = baseUrl + '/device/ping?token=' + encodeURIComponent(token);
+        var xhr = new XMLHttpRequest();
+        xhr.open('GET', url, true);
+        xhr.timeout = 3000;
+        xhr.onload = function() {
+            IS_NP_CONNECTED = xhr.status === 200;
+            callback();
+        };
+        xhr.onerror = function() {
+            IS_NP_CONNECTED = false;
+            callback();
+        };
+        xhr.ontimeout = function() {
+            IS_NP_CONNECTED = false;
+            callback();
+        };
+        xhr.send();
     }
 
     // Запуск
