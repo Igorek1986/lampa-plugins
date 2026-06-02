@@ -22,8 +22,7 @@
     var remove_icon = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" fill="currentColor"/></svg>';
     var cancelled_icon = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm5 11H7v-2h10v2z" fill="currentColor"/></svg>';
     var IS_LAMPAC = null;
-    var IS_NP = false;
-    var IS_NP_CONNECTED = false;
+    function isNpConnected() { return !!window.IS_NP; }
     var EPISODES_CACHE = {};
 
     function getNpBaseUrl() {
@@ -85,9 +84,20 @@
         return null;
     }
 
-    function findShowInCache(cacheType, arrayKey, name, callback) {
+    function findShowInCache(cacheType, arrayKey, nameOrId, callback) {
         loadCacheFromServer(cacheType, arrayKey, function(result) {
-            callback(findByName(result && result[arrayKey], name));
+            var arr = result && result[arrayKey];
+            if (!arr) { callback(null); return; }
+            // Сначала пробуем найти по myshowsId (передан ID или имя)
+            var found = null;
+            for (var i = 0; i < arr.length; i++) {
+                if (arr[i].myshowsId && String(arr[i].myshowsId) === String(nameOrId)) {
+                    found = arr[i];
+                    break;
+                }
+            }
+            if (!found) found = findByName(arr, nameOrId);
+            callback(found);
         });
     }
 
@@ -108,9 +118,26 @@
         return '';
     }
 
+    // Активное хранилище кеша: 'np' | 'lampac' | 'local'.
+    // NP включается только если пользователь включил myshows_use_np и стартовый
+    // пинг подтвердил доступность NP-сервера с валидным токеном (isNpConnected()).
+    // Перезапуск Lampa с невалидным токеном → пинг вернёт isNpConnected()=false → fallback.
+    function getStorageMode() {
+        var useNp = getProfileSetting('myshows_use_np', false);
+        var npEnabled = (useNp === true || useNp === 'true');
+        if (npEnabled && isNpConnected()) return 'np';
+        if (IS_LAMPAC) return 'lampac';
+        return 'local';
+    }
+
+    function useNpServer() {
+        return getStorageMode() === 'np';
+    }
+
     // Сохранение кеша с использованием профилей
     function saveCacheToServer(cacheData, path, callback) {
-        Log.info('Save', 'Cache: ', cacheData, 'Path:', path, 'IS_NP:', IS_NP);
+        var mode = getStorageMode();
+        Log.info('Save', 'Cache: ', cacheData, 'Path:', path, 'Mode:', mode);
 
         var NP_PATHS = {
             'unwatched_serials': '/myshows/watching',
@@ -120,7 +147,7 @@
             'serial_status':     '/myshows/serial_status',
             'movie_status':      '/myshows/movie_status'
         };
-        if (IS_NP && NP_PATHS[path] && getNpToken() && getNpBaseUrl()) {
+        if (mode === 'np') {
             var profileId = getProfileId();
             var payload = [];
             Log.info("Save to NP");
@@ -190,8 +217,8 @@
                 Log.info('Android 🧩 Fixed URI via window.location.origin:', uri);
             }
 
-            if (!IS_LAMPAC) {
-                Lampa.Storage.set('myshows_' + path + profileId, cacheData)
+            if (mode === 'local') {
+                setProfileSetting('myshows_' + path, cacheData, false);
             } else {
                 var network = new Lampa.Reguest();
                 network.native(uri, function(response) {
@@ -216,12 +243,34 @@
         }
     }
 
+    var _SERVER_CACHE_VERSION = 2; // bump при изменениях логики myshowsId-маппинга
+    var _SERVER_CACHE_VER_KEY = 'myshows_server_cache_ver';
+    var _SERVER_CACHE_PATHS   = ['unwatched_serials', 'serial_status', 'movie_status', 'watchlist', 'watched', 'cancelled'];
+
+    function _checkServerCacheVersion() {
+        var stored = parseInt(Lampa.Storage.get(_SERVER_CACHE_VER_KEY) || '0');
+        if (stored === _SERVER_CACHE_VERSION) return true;
+        _SERVER_CACHE_PATHS.forEach(function(p) {
+            setProfileSetting('myshows_' + p, null, false);
+        });
+        Lampa.Storage.set(_SERVER_CACHE_VER_KEY, _SERVER_CACHE_VERSION);
+        Lampa.Storage.set('myshows_tmdb_cards', {});
+        Log.info('Server cache cleared (version bump: ' + stored + ' → ' + _SERVER_CACHE_VERSION + ')');
+        return false;
+    }
+
     // Загрузка кеша
     function loadCacheFromServer(path, propertyName, callback, options) {
 
+        var mode = getStorageMode();
         var profileId = getProfileId();
 
         if (!getProfileSetting('myshows_token')) {
+            callback(null);
+            return;
+        }
+
+        if (!_checkServerCacheVersion()) {
             callback(null);
             return;
         }
@@ -232,7 +281,7 @@
             'watched':           '/myshows/watched',
             'cancelled':         '/myshows/cancelled'
         };
-        if (IS_NP && NP_LOAD_PATHS[path] && getNpToken() && getNpBaseUrl()) {
+        if (mode === 'np') {
             var page = (options && options.page) ? options.page : 1;
             var npUrl = getNpBaseUrl() + NP_LOAD_PATHS[path] +
                 '?token=' + encodeURIComponent(getNpToken()) +
@@ -253,9 +302,8 @@
             return;
         }
 
-        if (!IS_LAMPAC) {
-            var result = Lampa.Storage.get('myshows_' + path + profileId);
-            callback(result);
+        if (mode === 'local') {
+            callback(getProfileSetting('myshows_' + path, null));
             return;
         } else {
             var uri = accountUrl('/storage/get?path=myshows/' + path + '&pathfile=' + profileId);
@@ -299,7 +347,7 @@
                 return;
             }
         });
-        if (IS_NP && getNpToken() && getNpBaseUrl()) {
+        if (useNpServer()) {
             // Синхронизируем все категории в фоне.
             // watching хранится в отдельной таблице — не конфликтует с watched.
             var npSyncDelay = updateDelay + 2000;
@@ -749,30 +797,8 @@
                 }
             });
 
-            if (IS_NP_CONNECTED) {
-                Lampa.SettingsApi.addParam({
-                    component: 'myshows',
-                    param: {
-                        name: 'myshows_use_np',
-                        type: 'trigger',
-                        default: getProfileSetting('myshows_use_np', 'false')
-                    },
-                    field: {
-                        name: 'Использовать NP сервер',
-                        description: 'Хранить данные о непросмотренных на NP-сервере для быстрой загрузки'
-                    },
-                    onChange: function(value) {
-                        setProfileSetting('myshows_use_np', value);
-                        IS_NP = !!value;
-                        if (IS_NP) {
-                            var cached = cachedShuffledItems['unwatched_raw'];
-                            if (cached && cached.length) {
-                                saveCacheToServer({ shows: cached }, 'unwatched_serials', function() {});
-                            }
-                        }
-                    }
-                });
-            }
+            if (isNpConnected()) addNpSettingsParam();
+
         }
 
         Lampa.SettingsApi.addParam({
@@ -958,12 +984,10 @@
 
         Log.info('🔄 Profile changed to:', newProfileId);
 
-        // Пересоздаем настройки для нового профиля
+        // Пересоздаём настройки для нового профиля.
+        // isNpConnected() — доступность NP-сервера (глобальные token/base_url), от профиля не зависит,
+        // пинговать заново не нужно. От профиля зависит только myshows_use_np.
         initSettings();
-
-        // Обновляем IS_NP для нового профиля
-        IS_NP = !!getNpToken() && !!getNpBaseUrl() && !!getProfileSetting('myshows_use_np', 'false');
-        Log.info('IS_NP after profile change:', IS_NP);
 
         // Очищаем кешированные данные
         cachedShuffledItems = {};
@@ -1108,7 +1132,7 @@
         });
 
         // 1. Пробуем найти по IMDB
-        getShowIdByImdbId(imdbId, originalTitle || title, alternativeTitles, function(imdbResult) {
+        getShowIdByImdbId(imdbId, originalTitle || title, year, alternativeTitles, function(imdbResult) {
             if (imdbResult) {
                 Log.info('Found by IMDB ID:', imdbResult);
                 return callback(imdbResult);
@@ -1262,7 +1286,7 @@
 
     // Установить статус для сериала ("Смотрю, Буду смотреть, Перестал смотреть, Не смотрю" на MyShows
     function npSetStatus(myshowsId, tmdbId, mediaType, npCacheType) {
-        if (!IS_NP || !getNpToken() || !getNpBaseUrl()) return;
+        if (!useNpServer()) return;
         var net = new Lampa.Reguest();
         net.native(
             getNpBaseUrl() + '/myshows/set_status?token=' + encodeURIComponent(getNpToken()) +
@@ -1312,7 +1336,7 @@
                         addToHistory(cardData);
                     }
 
-                    // IS_NP: сразу обновляем одну запись в базе
+                    // isNpConnected(): сразу обновляем одну запись в базе
                     var tvMap = { watching: 'watching', finished: 'watching', later: 'watchlist', cancelled: 'cancelled', remove: 'remove' };
                     npSetStatus(showId, cardData.id, 'tv', tvMap[status] || 'remove');
                 }
@@ -1419,8 +1443,7 @@
                     };
                 }
 
-                var key = (showData.show.titleOriginal || showData.show.title).toLowerCase();
-                myshowsIndex[key] = {
+                myshowsIndex[showData.show.id] = {
                     myshowsId: showData.show.id,
                     unwatchedCount: showData.unwatchedCount,
                     unwatchedEpisodes: showData.episodes,
@@ -1449,14 +1472,10 @@
 
                     for (var i = 0; i < result.shows.length; i++) {
                         var tmdbShow = result.shows[i];
-                        var key = (tmdbShow.original_title || tmdbShow.original_name ||
-                                tmdbShow.title || tmdbShow.name).toLowerCase();
-
-                        if (myshowsIndex[key]) {
-                            tmdbShow.myshowsId = myshowsIndex[key].myshowsId;
-                            tmdbShow.unwatchedCount = myshowsIndex[key].unwatchedCount;
-                            tmdbShow.last_episode_to_myshows  = myshowsIndex[key].last_episode_to_myshows;
-                            tmdbShow.first_episode_to_myshows = myshowsIndex[key].first_episode_to_myshows;
+                        if (tmdbShow.myshowsId && myshowsIndex[tmdbShow.myshowsId]) {
+                            tmdbShow.unwatchedCount = myshowsIndex[tmdbShow.myshowsId].unwatchedCount;
+                            tmdbShow.last_episode_to_myshows  = myshowsIndex[tmdbShow.myshowsId].last_episode_to_myshows;
+                            tmdbShow.first_episode_to_myshows = myshowsIndex[tmdbShow.myshowsId].first_episode_to_myshows;
                         }
                     }
 
@@ -1500,7 +1519,7 @@
                         addToHistory(movieData);
                     }
 
-                    // IS_NP: сразу обновляем одну запись в базе
+                    // isNpConnected(): сразу обновляем одну запись в базе
                     var movieMap = { finished: 'watched', later: 'watchlist', remove: 'remove' };
                     npSetStatus(movieId, movieData.id, 'movie', movieMap[status] || 'remove');
                 }
@@ -1510,7 +1529,7 @@
         });
     }
 
-    function getShowIdByImdbId(id, expectedTitle, alternativeTitles, callback) {
+    function getShowIdByImdbId(id, expectedTitle, expectedYear, alternativeTitles, callback) {
         if (!id) {
             callback(null);
             return;
@@ -1546,6 +1565,15 @@
                         Log.warn('IMDB mismatch: expected "' + expectedTitle + '" got "' + (found.titleOriginal || found.title) + '" — skip');
                         callback(null);
                         return;
+                    }
+                    // Дополнительно проверяем год — защита от однофамильцев (например, два "Знахарь")
+                    if (expectedYear && found.year) {
+                        var yearDiff = Math.abs(parseInt(found.year) - parseInt(expectedYear));
+                        if (yearDiff > 1) {
+                            Log.warn('IMDB year mismatch: expected ' + expectedYear + ' got ' + found.year + ' for "' + (found.titleOriginal || found.title) + '" — skip');
+                            callback(null);
+                            return;
+                        }
                     }
                 }
                 callback(found.id);
@@ -1588,7 +1616,7 @@
                 var titleMatch = item.titleOriginal &&
                     normalizeForComparison(cleanTitle(item.titleOriginal).toLowerCase()) ===
                     normalizeForComparison(cleanTitle(title).toLowerCase());
-                var yearMatch = item.year == year;
+                var yearMatch = !year || !item.year || Math.abs(parseInt(item.year) - parseInt(year)) <= 1;
                 if (titleMatch && yearMatch) {
                     candidates.push(item);
                 }
@@ -2105,7 +2133,7 @@
     function getUnwatchedShowsWithDetails(callback, show) {
         Log.info('getUnwatchedShowsWithDetails called');
 
-        if (IS_NP) {
+        if (isNpConnected()) {
             if (!getProfileSetting('myshows_token') || !getNpToken()) {
                 callback({ shows: [] });
                 return;
@@ -2113,7 +2141,7 @@
             loadCacheFromServer('unwatched_serials', 'shows', function(cachedResult) {
                 var shows = cachedResult && cachedResult.shows;
                 if (shows && shows.length > 0) {
-                    // В IS_NP картах нет watched_count/total_count — парсим из progress_marker ("3/12")
+                    // В isNpConnected() картах нет watched_count/total_count — парсим из progress_marker ("3/12")
                     shows.forEach(function(s) {
                         if (s.progress_marker && !s.watched_count) {
                             var parts = String(s.progress_marker).split('/');
@@ -2151,7 +2179,7 @@
                 }
             });
         } else {
-            // Без NP/Lampac — проверяем localStorage кеш, как в IS_NP ветке
+            // Без NP/Lampac — проверяем localStorage кеш, как в isNpConnected() ветке
             loadCacheFromServer('unwatched_serials', 'shows', function(cachedResult) {
                 var shows = cachedResult && cachedResult.shows;
                 if (shows && shows.length > 0) {
@@ -2180,61 +2208,64 @@
     }
 
     function updateUIIfNeeded(oldShows, newShows) {
-        var oldShowsMap = {};
-        var newShowsMap = {};
+        // Помошник сравнения: сначала myshowsId (если есть у обоих), потом название
+        function showsMatch(a, b) {
+            if (a.myshowsId && b.myshowsId) return a.myshowsId === b.myshowsId;
+            var n1 = (a.original_name || a.name || a.title || '').toLowerCase();
+            var n2 = (b.original_name || b.name || b.title || '').toLowerCase();
+            return n1 && n2 && n1 === n2;
+        }
 
-        oldShows.forEach(function(show) {
-            var key = show.original_name || show.name || show.title;
-            oldShowsMap[key] = show;
-        });
-
-        newShows.forEach(function(show) {
-            var key = show.original_name || show.name || show.title;
-            newShowsMap[key] = show;
-        });
+        function findInArray(show, arr) {
+            for (var i = 0; i < arr.length; i++) {
+                if (showsMatch(show, arr[i])) return arr[i];
+            }
+            return null;
+        }
 
         // Добавляем новые сериалы
-        for (var newKey in newShowsMap) {
-            if (!oldShowsMap[newKey]) {
-                Log.info('Adding new show:', newKey);
+        newShows.forEach(function(newShow) {
+            if (!findInArray(newShow, oldShows)) {
+                var showName = newShow.original_name || newShow.name || newShow.title || '';
+                Log.info('Adding new show:', showName, '(myshowsId:', newShow.myshowsId, ')');
 
                 // ✅ Проверяем, есть ли карточка в DOM
-                var existingCard = findCardInMyShowsSection(newKey);
+                var existingCard = findCardInMyShowsSection(showName, newShow.myshowsId);
                 if (!existingCard) {
-                    insertNewCardIntoMyShowsSection(newShowsMap[newKey]);
+                    insertNewCardIntoMyShowsSection(newShow);
                 } else {
-                    Log.info('Card already exists in DOM:', newKey);
+                    Log.info('Card already exists in DOM:', showName);
                     // Обновляем данные существующей карточки
                     existingCard.card_data = existingCard.card_data || {};
-                    existingCard.card_data.progress_marker = newShowsMap[newKey].progress_marker;
-                    existingCard.card_data.next_episode = newShowsMap[newKey].next_episode;
-                    existingCard.card_data.remaining = newShowsMap[newKey].remaining;
+                    existingCard.card_data.progress_marker = newShow.progress_marker;
+                    existingCard.card_data.next_episode = newShow.next_episode;
+                    existingCard.card_data.remaining = newShow.remaining;
                     addProgressMarkerToCard(existingCard, existingCard.card_data);
                 }
             }
-        }
+        });
 
         // Удаляем завершенные сериалы
-        for (var oldKey in oldShowsMap) {
-            if (!newShowsMap[oldKey]) {
-                Log.info('Removing completed show:', oldKey);
-                updateCompletedShowCard(oldKey);
+        oldShows.forEach(function(oldShow) {
+            if (!findInArray(oldShow, newShows)) {
+                var showName = oldShow.original_name || oldShow.name || oldShow.title || '';
+                Log.info('Removing completed show:', showName, '(myshowsId:', oldShow.myshowsId, ')');
+                updateCompletedShowCard(showName, oldShow.myshowsId);
             }
-        }
+        });
 
         // Обновляем прогресс существующих
-        for (var key in newShowsMap) {
-            if (oldShowsMap[key]) {
-                var oldShow = oldShowsMap[key];
-                var newShow = newShowsMap[key];
-
+        newShows.forEach(function(newShow) {
+            var oldShow = findInArray(newShow, oldShows);
+            if (oldShow) {
                 if (oldShow.progress_marker !== newShow.progress_marker ||
                     oldShow.next_episode !== newShow.next_episode) {
-                    Log.info('Updating show:', key);
-                    updateAllMyShowsCards(key, newShow.progress_marker, newShow.next_episode, newShow.remaining);
+                    var showName = newShow.original_name || newShow.name || newShow.title || '';
+                    Log.info('Updating show:', showName, '(myshowsId:', newShow.myshowsId, ')');
+                    updateAllMyShowsCards(showName, newShow.myshowsId, newShow.progress_marker, newShow.next_episode, newShow.remaining);
                 }
             }
-        }
+        });
     }
 
     function enrichShowData(fullResponse, myshowsData) {
@@ -2451,16 +2482,29 @@
                 Log.info('[DEBUG] Найдено в кэше по myshowsId: "' + _s.name + '" для "' + originalName + '"');
                 break;
             }
-            var _fields = [_s.original_title, _s.original_name, _s.name, _s.title];
-            for (var _f = 0; _f < _fields.length; _f++) {
-                if (_fields[_f] && cleanTitle(_fields[_f]).toLowerCase() === currentNameLower) {
-                    cachedShow = _s;
+            // Поиск по названию — только если myshowsId совпадает или отсутствует
+            if (!cachedShow) {
+                var _fields = [_s.original_title, _s.original_name, _s.name, _s.title];
+                for (var _f = 0; _f < _fields.length; _f++) {
+                    if (_fields[_f] && cleanTitle(_fields[_f]).toLowerCase() === currentNameLower) {
+                        // Если у обоих есть myshowsId и они разные — это разные сериалы с одинаковым названием (Знахарь 2017 vs Знахарь 2025)
+                        if (currentShow.myshowsId && _s.myshowsId && _s.myshowsId !== currentShow.myshowsId) {
+                            Log.info('[DEBUG] Пропущен кэш по названию (разные myshowsId): ' + currentShow.myshowsId + ' vs ' + _s.myshowsId + ' для "' + originalName + '"');
+                            continue;
+                        }
+                        // Проверка года ±1
+                        if (currentShow.year && _s.year && Math.abs(parseInt(_s.year) - parseInt(currentShow.year)) > 1) {
+                            Log.info('[DEBUG] Пропущен кэш по названию (год не совпадает): ' + _s.year + ' vs ' + currentShow.year + ' для "' + originalName + '"');
+                            continue;
+                        }
+                        cachedShow = _s;
+                        break;
+                    }
+                }
+                if (cachedShow) {
+                    Log.info('[DEBUG] Найдено в кэше по названию: "' + _s.name + '" для "' + originalName + '"');
                     break;
                 }
-            }
-            if (cachedShow) {
-                Log.info('[DEBUG] Найдено в кэше по названию: "' + _s.name + '" для "' + originalName + '"');
-                break;
             }
         }
 
@@ -2556,7 +2600,17 @@
                 } else {
                     var _n1 = (_cs.original_title || _cs.original_name || _cs.name || '').toLowerCase();
                     var _n2 = (currentShow.originalTitle || currentShow.title || '').toLowerCase();
-                    if (_n1 === _n2) { cachedShow = _cs; break; }
+                    if (_n1 === _n2) {
+                        // Проверка года ±1 — защита от однофамильцев (myshowsId отсутствует у одного из них)
+                        if (currentShow.year && _cs) {
+                            var _csYear = parseInt(_cs.year) || parseInt(String(_cs.release_date || _cs.first_air_date || '').substring(0, 4)) || 0;
+                            if (_csYear && Math.abs(_csYear - parseInt(currentShow.year)) > 1) {
+                                Log.info('Пропущен кэш enrichTMDBShow (год не совпадает): ' + _csYear + ' vs ' + currentShow.year);
+                                continue;
+                            }
+                        }
+                        cachedShow = _cs; break;
+                    }
                 }
             }
         }
@@ -2745,6 +2799,7 @@
 
         var enrichedShow = enrichShowData(fullResponse, myshowsData);
         enrichedShow.myshowsId = currentShow.myshowsId;
+        enrichedShow.unwatchedCount = currentShow.unwatchedCount;
         enrichedShow.last_episode_to_myshows  = currentShow.last_episode_to_myshows;
         enrichedShow.first_episode_to_myshows = currentShow.first_episode_to_myshows;
         status.append('tmdb_' + index, enrichedShow);
@@ -2897,9 +2952,10 @@
         }, 400);
     }
 
-    function updateAllMyShowsCards(showName, newProgressMarker, newNextEpisode, newRemainingMarker) {
+    function updateAllMyShowsCards(showName, showMyshowsId, newProgressMarker, newNextEpisode, newRemainingMarker) {
         Log.info('updateAllMyShowsCards called:', {
             showName: showName,
+            myshowsId: showMyshowsId,
             progress: newProgressMarker,
             remaining: newRemainingMarker,
             nextEpisode: newNextEpisode,
@@ -2915,8 +2971,16 @@
 
             var cardName = getCardName(cardData) || '';
 
-            if (cardName.toLowerCase() === showNameLower) {
-                Log.info('Found card to update:', cardName);
+            // Совпадение: сначала myshowsId (если есть у обоих), потом название
+            var match;
+            if (showMyshowsId && cardData.myshowsId) {
+                match = cardData.myshowsId === showMyshowsId;
+            } else {
+                match = cardName.toLowerCase() === showNameLower;
+            }
+
+            if (match) {
+                Log.info('Found card to update:', cardName, '(myshowsId:', cardData.myshowsId, ')');
 
                 // ✅ Обновляем данные в card_data
                 if (newProgressMarker) {
@@ -3050,14 +3114,16 @@
             if (lastCard && wasWatching) {
                 // Был просмотр - выполняем полную логику с таймаутом
                 var originalName = lastCard.original_name || lastCard.original_title || lastCard.title;
+                var lastMyshowsId = lastCard.myshowsId;
                 Lampa.Storage.set('myshows_was_watching', false);
 
                 setTimeout(function() {
-                    findShowInCache('unwatched_serials', 'shows', originalName, function(foundShow) {
+                    var needle = lastMyshowsId || originalName;
+                    findShowInCache('unwatched_serials', 'shows', needle, function(foundShow) {
                         if (foundShow) {
-                            var existingCard = findCardInMyShowsSection(originalName);
+                            var existingCard = findCardInMyShowsSection(originalName, foundShow.myshowsId);
                             if (existingCard && foundShow.progress_marker) {
-                                updateAllMyShowsCards(originalName, foundShow.progress_marker, foundShow.next_episode, foundShow.remaining);
+                                updateAllMyShowsCards(originalName, foundShow.myshowsId, foundShow.progress_marker, foundShow.next_episode, foundShow.remaining);
                             } else if (!existingCard) {
                                 insertNewCardIntoMyShowsSection(foundShow);
                             }
@@ -3069,10 +3135,11 @@
             } else if (currentCard) {
                 // Просто навигация - обновляем сразу без таймаута
                 var originalName = currentCard.original_name || currentCard.original_title || currentCard.title;
+                var currentMyshowsId = currentCard.myshowsId;
 
-                findShowInCache('unwatched_serials', 'shows', originalName, function(foundShow) {
+                findShowInCache('unwatched_serials', 'shows', currentMyshowsId || originalName, function(foundShow) {
                     if (foundShow && foundShow.progress_marker) {
-                        updateAllMyShowsCards(originalName, foundShow.progress_marker, foundShow.next_episode, foundShow.remaining);
+                        updateAllMyShowsCards(originalName, foundShow.myshowsId, foundShow.progress_marker, foundShow.next_episode, foundShow.remaining);
                     }
                 });
             }
@@ -3099,10 +3166,10 @@
     // showData: { progress_marker, next_episode, remaining }
     // bodyElement: опциональный jQuery-элемент; если не передан — ищет постер сам.
     // Обновляет статус кнопок и маркеры на полной карточке после возврата с просмотра.
-    // Три ветки: IS_NP (статус из БД по tmdb_id), сериал (кэш serial_status), фильм (кэш movie_status).
+    // Три ветки: isNpConnected() (статус из БД по tmdb_id), сериал (кэш serial_status), фильм (кэш movie_status).
     function refreshFullCardStatus(isSerial, originalName, currentCard) {
         if (!originalName) return;
-        if (IS_NP && getNpToken() && getNpBaseUrl() && currentCard.id) {
+        if (useNpServer() && currentCard.id) {
             var mediaType = isSerial ? 'tv' : 'movie';
             var statusUrl = getNpBaseUrl() + '/myshows/status' +
                 '?token=' + encodeURIComponent(getNpToken()) +
@@ -3540,7 +3607,7 @@
         update();
     }
 
-    function updateCompletedShowCard(showName) {
+    function updateCompletedShowCard(showName, showMyshowsId) {
         var cards = document.querySelectorAll('.card');
         var showNameLower = showName ? showName.toLowerCase() : '';
 
@@ -3548,10 +3615,17 @@
             var cardElement = cards[i];
             var cardData = cardElement.card_data || {};
 
-            var cardName = getCardName(cardData) || '';
+            // Совпадение: сначала myshowsId (если есть у обоих), потом название
+            var match;
+            if (showMyshowsId && cardData.myshowsId) {
+                match = cardData.myshowsId === showMyshowsId;
+            } else {
+                var cardName = getCardName(cardData) || '';
+                match = cardName.toLowerCase() === showNameLower;
+            }
 
-            if (cardName.toLowerCase() === showNameLower && cardData.progress_marker) {
-                Log.info('Found matching card for:', showName);
+            if (match && cardData.progress_marker) {
+                Log.info('Found matching card for:', showName, '(myshowsId:', showMyshowsId, ')');
 
                 // ✅ Помечаем карточку как удаляемую
                 cardElement.dataset.removing = 'true';
@@ -3640,7 +3714,7 @@
         return cardData.original_title || cardData.original_name || cardData.name || cardData.title;
     }
 
-    function findCardInMyShowsSection(showName) {
+    function findCardInMyShowsSection(showName, showMyshowsId) {
         var section = findMyShowsSection();
         if (!section) return null;
 
@@ -3649,9 +3723,12 @@
         for (var i = 0; i < cards.length; i++) {
             var cardElement = cards[i];
             var cardData = cardElement.card_data || {};
-            var cardName = getCardName(cardData) || '';
-            if (cardName.toLowerCase() === showNameLower) {
-                return cardElement;
+            // Совпадение: сначала myshowsId (если есть у обоих), потом название
+            if (showMyshowsId && cardData.myshowsId) {
+                if (cardData.myshowsId === showMyshowsId) return cardElement;
+            } else {
+                var cardName = getCardName(cardData) || '';
+                if (cardName.toLowerCase() === showNameLower) return cardElement;
             }
         }
         return null;
@@ -4994,8 +5071,8 @@
             var title = identifiers.title;
             var originalTitle = identifiers.originalName;
 
-            // IS_NP: статус берём напрямую из БД по tmdb_id — без localStorage и без MyShows API
-            if (IS_NP && getNpToken() && getNpBaseUrl() && identifiers.tmdbId) {
+            // isNpConnected(): статус берём напрямую из БД по tmdb_id — без localStorage и без MyShows API
+            if (useNpServer() && identifiers.tmdbId) {
                 if (getProfileSetting('myshows_button_view', true) && getProfileSetting('myshows_token', false)) {
                     var mediaType = isTV ? 'tv' : 'movie';
                     var profileId = getProfileId();
@@ -5088,7 +5165,7 @@
             var currentPage = object.page || 1;
             var PAGE_SIZE_W = 20;
 
-            if (IS_NP && getNpToken() && getNpBaseUrl()) {
+            if (useNpServer()) {
                 if (object.forceRefresh) {
                     _doFetchWatchlist();
                     return;
@@ -5175,7 +5252,7 @@
                     Log.info('myshowsWatchlist: page ' + currentPage + '/' + totalPages + ', sending ' + itemsForPage.length + ' items');
                     Log.info('API myshowsWatchlist: allItems:', allItems);
 
-                    if (IS_NP && getNpToken() && getNpBaseUrl()) {
+                    if (useNpServer()) {
                         getTMDBDetailsSimple(allItems, function(allEnriched) {
                             saveCacheToServer({results: allEnriched.results}, 'watchlist', function() {});
                             var enrichedTotal = allEnriched.results.length;
@@ -5204,7 +5281,7 @@
             var PAGE_SIZE = 20;
             var currentPage = object.page || 1;
 
-            if (IS_NP && getNpToken() && getNpBaseUrl()) {
+            if (useNpServer()) {
                 if (object.forceRefresh) {
                     _doFetchWatched();
                     return;
@@ -5282,7 +5359,7 @@
                         'myshowsWatched: page ' + currentPage + '/' + totalPages + ', sending ' + itemsForPage.length + ' items'
                     );
 
-                    if (IS_NP && getNpToken() && getNpBaseUrl()) {
+                    if (useNpServer()) {
                         getTMDBDetailsSimple(allItems, function(allEnriched) {
                             saveCacheToServer({results: allEnriched.results}, 'watched', function() {});
                             var enrichedTotal = allEnriched.results.length;
@@ -5311,7 +5388,7 @@
             var PAGE_SIZE = 20;
             var currentPage = object.page || 1;
 
-            if (IS_NP && getNpToken() && getNpBaseUrl()) {
+            if (useNpServer()) {
                 if (object.forceRefresh) {
                     _doFetchCancelled();
                     return;
@@ -5365,7 +5442,7 @@
                 var end = start + PAGE_SIZE;
                 var itemsForPage = allItems.slice(start, end);
 
-                if (IS_NP && getNpToken() && getNpBaseUrl()) {
+                if (useNpServer()) {
                     getTMDBDetailsSimple(allItems, function(allEnriched) {
                         saveCacheToServer({results: allEnriched.results}, 'cancelled', function() {});
                         var enrichedTotal = allEnriched.results.length;
@@ -5395,7 +5472,7 @@
             var currentPage = object.page || 1;
             var cacheKey = 'unwatched_raw';
 
-            if (IS_NP && getNpToken() && getNpBaseUrl()) {
+            if (useNpServer()) {
                 // Сервер отдаёт все карточки сразу — пагинируем на клиенте
                 loadCacheFromServer('unwatched_serials', 'shows', function(response) {
                     if (response && response.results) {
@@ -5882,7 +5959,7 @@
                         shows.forEach(function(show) {
                             var name = getCardName(show);
                             if (name && (show.progress_marker || show.remaining || show.next_episode)) {
-                                updateAllMyShowsCards(name, show.progress_marker, show.next_episode, show.remaining);
+                                updateAllMyShowsCards(name, show.myshowsId, show.progress_marker, show.next_episode, show.remaining);
                             }
                         });
                     }, 500);
@@ -6050,43 +6127,16 @@
         // Определяем среду через window.lampac_plugin (синхронно)
         checkLampacEnvironment(function(isLampac) {
             IS_LAMPAC = isLampac;
-            IS_NP = !!getNpToken() && !!getNpBaseUrl() && !!getProfileSetting('myshows_use_np', 'false');
-            Log.info('✅ Среда:', IS_LAMPAC ? 'Lampac' : (IS_NP ? 'NP FastAPI' : 'Обычная Lampa'));
-            checkNpConnection(function() {
-                // Небольшая задержка для стабильности
-                setTimeout(function() {
-                    // Инициализируем все компоненты
-                    initCurrentProfile();
-                    initSettings();
-                if (window.__NMSync) {
-                    var MYSHOWS_SYNC_KEYS = ['myshows_view_in_main', 'myshows_button_view',
-                        'myshows_sort_order', 'myshows_add_threshold', 'myshows_min_progress',
-                        'myshows_token', 'myshows_login', 'myshows_password',
-                        'myshows_cache_days', 'myshows_use_np'];
-                    window.__NMSync.register('myshows', MYSHOWS_SENSITIVE_KEYS, _applyMyShowsSetting, function (serverKeys) {
-                        // Если страница загрузилась после выхода — переочищаем чувствительные ключи
-                        // (на случай если какой-то PATCH не дошёл до сервера)
-                        try {
-                            if (sessionStorage.getItem('myshows_just_logged_out')) {
-                                sessionStorage.removeItem('myshows_just_logged_out');
-                                setProfileSetting('myshows_token', '', false);
-                                setProfileSetting('myshows_login', '', false);
-                                setProfileSetting('myshows_password', '', false);
-                                window.__NMSync.patch('myshows', getProfileKey('myshows_token'), '');
-                                window.__NMSync.patch('myshows', getProfileKey('myshows_login'), '');
-                                window.__NMSync.patch('myshows', getProfileKey('myshows_password'), '');
-                                return;
-                            }
-                        } catch(e) {}
-                        // Досылаем на сервер ключи которые есть локально но отсутствуют на сервере
-                        MYSHOWS_SYNC_KEYS.forEach(function (key) {
-                            var profileKey = getProfileKey(key);
-                            if (serverKeys.indexOf(profileKey) < 0 && hasProfileSetting(key)) {
-                                setProfileSetting(key, getProfileSetting(key));
-                            }
-                        });
-                    });
-                }
+            if (IS_LAMPAC) Log.info('✅ Среда: Lampac');
+            // initCurrentProfile синхронно — не зависит от пинга
+            initCurrentProfile();
+            // np.js устанавливает np_connected через /device/ping — ждём завершения
+            setTimeout(function() {
+                initSettings();
+                registerNMSync();
+            }, 2000);
+            // Остальные компоненты не зависят от пинга — с небольшой задержкой для стабильности
+            setTimeout(function() {
                 initMyShowsCaches();
                 addMyShowsComponents();
                 addMyShowsMenuItems();
@@ -6096,7 +6146,6 @@
                 addMyShowsButtonStyles();
                 init();
             }, 50);
-            });
         });
     }
 
@@ -6104,31 +6153,57 @@
         callback(!!window.lampac_plugin);
     }
 
-    function checkNpConnection(callback) {
-        var token = getNpToken();
-        var baseUrl = getNpBaseUrl();
-        if (!token || !baseUrl) {
-            IS_NP_CONNECTED = false;
-            callback();
-            return;
-        }
-        var url = baseUrl + '/device/ping?token=' + encodeURIComponent(token);
-        var xhr = new XMLHttpRequest();
-        xhr.open('GET', url, true);
-        xhr.timeout = 3000;
-        xhr.onload = function() {
-            IS_NP_CONNECTED = xhr.status === 200;
-            callback();
-        };
-        xhr.onerror = function() {
-            IS_NP_CONNECTED = false;
-            callback();
-        };
-        xhr.ontimeout = function() {
-            IS_NP_CONNECTED = false;
-            callback();
-        };
-        xhr.send();
+
+    function registerNMSync() {
+        if (!window.__NMSync) return;
+        var MYSHOWS_SYNC_KEYS = ['myshows_view_in_main', 'myshows_button_view',
+            'myshows_sort_order', 'myshows_add_threshold', 'myshows_min_progress',
+            'myshows_token', 'myshows_login', 'myshows_password',
+            'myshows_cache_days', 'myshows_use_np'];
+        window.__NMSync.register('myshows', MYSHOWS_SENSITIVE_KEYS, _applyMyShowsSetting, function (serverKeys) {
+            try {
+                if (sessionStorage.getItem('myshows_just_logged_out')) {
+                    sessionStorage.removeItem('myshows_just_logged_out');
+                    setProfileSetting('myshows_token', '', false);
+                    setProfileSetting('myshows_login', '', false);
+                    setProfileSetting('myshows_password', '', false);
+                    window.__NMSync.patch('myshows', getProfileKey('myshows_token'), '');
+                    window.__NMSync.patch('myshows', getProfileKey('myshows_login'), '');
+                    window.__NMSync.patch('myshows', getProfileKey('myshows_password'), '');
+                    return;
+                }
+            } catch(e) {}
+            MYSHOWS_SYNC_KEYS.forEach(function (key) {
+                var profileKey = getProfileKey(key);
+                if (serverKeys.indexOf(profileKey) < 0 && hasProfileSetting(key)) {
+                    setProfileSetting(key, getProfileSetting(key));
+                }
+            });
+        });
+    }
+
+    function addNpSettingsParam() {
+        Lampa.SettingsApi.addParam({
+            component: 'myshows',
+            param: {
+                name: 'myshows_use_np',
+                type: 'trigger',
+                default: getProfileSetting('myshows_use_np', 'false')
+            },
+            field: {
+                name: 'Использовать NP сервер',
+                description: 'Хранить данные о непросмотренных на NP-сервере для быстрой загрузки'
+            },
+            onChange: function(value) {
+                setProfileSetting('myshows_use_np', value);
+                if (value) {
+                    var cached = cachedShuffledItems['unwatched_raw'];
+                    if (cached && cached.length) {
+                        saveCacheToServer({ shows: cached }, 'unwatched_serials', function() {});
+                    }
+                }
+            }
+        });
     }
 
     // Запуск
