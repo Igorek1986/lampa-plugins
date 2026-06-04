@@ -204,9 +204,11 @@
             'watched':           '/myshows/watched',
             'cancelled':         '/myshows/cancelled',
             'serial_status':     '/myshows/serial_status',
-            'movie_status':      '/myshows/movie_status'
+            'movie_status':      '/myshows/movie_status',
         };
         if (mode === 'np') {
+            // timetable в NP не кэшируем — сервер считает на лету (см. fetchUpcoming)
+            if (!NP_PATHS[path]) { if (callback) callback(true); return; }
             var payload = [];
             Log.info("Save to NP");
 
@@ -277,6 +279,7 @@
             if (mode === 'local') {
                 // Пишем в ключ профиля-источника (не sync — это кэш, не настройка)
                 Lampa.Storage.set(profileKeyFor('myshows_' + path, profileId), cacheData);
+                if (callback) callback(true);
             } else {
                 var network = new Lampa.Reguest();
                 network.native(uri, function(response) {
@@ -328,7 +331,7 @@
             return;
         }
 
-        if (!_checkServerCacheVersion()) {
+        if (path !== 'timetable' && !_checkServerCacheVersion()) {
             callback(null);
             return;
         }
@@ -337,9 +340,11 @@
             'unwatched_serials': '/myshows/watching',
             'watchlist':         '/myshows/watchlist',
             'watched':           '/myshows/watched',
-            'cancelled':         '/myshows/cancelled'
+            'cancelled':         '/myshows/cancelled',
         };
         if (mode === 'np') {
+            // timetable в NP читается напрямую POST'ом (см. fetchUpcoming) — blob-кэша нет
+            if (!NP_LOAD_PATHS[path]) { callback(null); return; }
             var page = (options && options.page) ? options.page : 1;
             var npUrl = getNpBaseUrl() + NP_LOAD_PATHS[path] +
                 '?token=' + encodeURIComponent(getNpToken()) +
@@ -389,6 +394,8 @@
     }
 
     function initMyShowsCaches() {
+        _msttT0 = Date.now();
+        Log.info('[MS-TT] initMyShowsCaches start');
         var updateDelay = getRefreshDelay();
         // Захватываем токен профиля — если профиль сменится, отложенный рефреш
         // не должен вставлять карточки предыдущего профиля.
@@ -401,7 +408,9 @@
                 // Есть кеш — обновляем в фоне через задержку
                 setTimeout(function() {
                     if (renderToken !== _profileRenderToken) return;
+                    Log.info('[MS-TT] fetchFromMyShowsAPI start, t=', Date.now() - _msttT0, 'ms');
                     fetchFromMyShowsAPI(function(freshResult) {
+                        Log.info('[MS-TT] fetchFromMyShowsAPI done, t=', Date.now() - _msttT0, 'ms');
                         if (renderToken !== _profileRenderToken) return;
                         if (freshResult && freshResult.shows && cachedResult.shows) {
                             freshResult.shows.forEach(function(s) { if (s) s._renderToken = renderToken; });
@@ -410,6 +419,18 @@
                     });
                 }, updateDelay);
                 return;
+            }
+            // Кэша нет (первый логин/новый профиль): тянем сразу, если есть токен.
+            // Иначе непросмотренные подгрузятся только на Главной, и Расписание
+            // (через _onUnwatchedSaved) не наполнится, пока её не откроешь.
+            if (getProfileSetting('myshows_token', '')) {
+                Log.info('[MS-TT] no cache → cold fetchFromMyShowsAPI, t=', Date.now() - _msttT0, 'ms');
+                fetchFromMyShowsAPI(function(freshResult) {
+                    if (renderToken !== _profileRenderToken) return;
+                    if (freshResult && freshResult.shows) {
+                        freshResult.shows.forEach(function(s) { if (s) s._renderToken = renderToken; });
+                    }
+                });
             }
         });
         if (useNpServer()) {
@@ -767,6 +788,22 @@
                 },
                 onChange: function(value) {
                     setProfileSetting('myshows_view_in_main', value);
+                }
+            });
+
+            Lampa.SettingsApi.addParam({
+                component: 'myshows',
+                param: {
+                    name: 'myshows_calendar',
+                    type: 'trigger',
+                    default: getProfileSetting('myshows_calendar', true)
+                },
+                field: {
+                    name: 'Календарь MyShows',
+                    description: 'Показывать даты выхода серий из MyShows в разделе «Календарь»'
+                },
+                onChange: function(value) {
+                    setProfileSetting('myshows_calendar', value);
                 }
             });
 
@@ -1367,7 +1404,7 @@
         makeMyShowsJSONRPCRequest('shows.GetById', {
             showId: parseInt(showId), withEpisodes: true
         }, function(success, data) {
-            callback(data.result.episodes);
+            callback((data && data.result && data.result.episodes) || []);
         });
     }
 
@@ -1464,6 +1501,7 @@
                 if (success && data && data.result) {
                     // Сбрасываем кеш
                     cachedShuffledItems = {};
+                    invalidateTimetableCache();
 
                     // Обновляем кэш при успешном изменении статуса
                     fetchShowStatus(function(data) {})
@@ -1621,7 +1659,11 @@
                     }
 
                     // Кэш — всегда в профиль-источник
-                    saveCacheToServer({ shows: result.shows }, 'unwatched_serials', function() {}, startProfile);
+                    Log.info('[MS-TT] saveCacheToServer unwatched_serials called, shows:', result.shows.length, 't=', Date.now() - _msttT0, 'ms');
+                    saveCacheToServer({ shows: result.shows }, 'unwatched_serials', function(ok) {
+                        Log.info('[MS-TT] saveCacheToServer callback ok:', ok, '_onUnwatchedSaved:', !!_onUnwatchedSaved, 't=', Date.now() - _msttT0, 'ms');
+                        _fireUnwatchedSaved(result.shows);
+                    }, startProfile);
 
                     // In-memory карта прогресса — только если профиль не сменился
                     if (sameProfile) _populateProgressMap(result.shows);
@@ -2193,6 +2235,7 @@
 
             setMyShowsStatus(card, 'watching', function(success) {
                 cachedShuffledItems = {};
+                if (success) invalidateTimetableCache();
                 // Обновляем кеш только если НЕ достигнут minProgress
                 if (success && percent < minProgress) {
                     fetchFromMyShowsAPI(function(data) {});
@@ -6186,6 +6229,531 @@
         }
     });
 
+    // ── MyShows Timetable ─────────────────────────────────────────────────────
+
+    var _onUnwatchedSaved = null;
+    var _msttT0 = Date.now();
+
+    function _fireUnwatchedSaved(shows) {
+        Log.info('[MS-TT] _fireUnwatchedSaved called, _onUnwatchedSaved:', !!_onUnwatchedSaved, 't=', Date.now() - _msttT0, 'ms');
+        if (_onUnwatchedSaved) { _onUnwatchedSaved(shows); _onUnwatchedSaved = null; }
+    }
+
+    // Тот же ключ, что использует saveCacheToServer/loadCacheFromServer для path='timetable'
+    // (профильный суффикс добавляется автоматически).
+    var _MS_TT_CACHE_KEY = 'myshows_timetable';
+
+    function invalidateTimetableCache() {
+        try { setProfileSetting(_MS_TT_CACHE_KEY, null, false); } catch(e) {}
+    }
+
+    function initMyShowsTimetable() {
+        Log.info('[MS-TT] initMyShowsTimetable called');
+        Log.info('[MS-TT] Lampa.TimeTable:', !!Lampa.TimeTable);
+        Log.info('[MS-TT] Lampa.Component:', !!Lampa.Component);
+        Log.info('[MS-TT] Lampa.Scroll:', !!Lampa.Scroll);
+        Log.info('[MS-TT] Lampa.Api.sources.tmdb:', !!(Lampa.Api && Lampa.Api.sources && Lampa.Api.sources.tmdb));
+        if (!Lampa.TimeTable || !Lampa.Component) return;
+
+        function pad(n) { return n < 10 ? '0' + n : '' + n; }
+
+        function toDateStr(d) {
+            return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+        }
+
+        function parseDate(s) {
+            if (Lampa.Utils && Lampa.Utils.parseToDate) return Lampa.Utils.parseToDate(s);
+            var p = s.split('-'); return new Date(+p[0], +p[1] - 1, +p[2]);
+        }
+
+        function hsl(str) {
+            if (Lampa.Utils && Lampa.Utils.stringToHslColor) return Lampa.Utils.stringToHslColor(str, 50, 50);
+            var h = 0;
+            for (var i = 0; i < str.length; i++) h = str.charCodeAt(i) + ((h << 5) - h);
+            return 'hsl(' + (((h % 360) + 360) % 360) + ',50%,50%)';
+        }
+
+        function dayLabel(date) {
+            if (Lampa.Utils && Lampa.Utils.parseTime) {
+                var t = Lampa.Utils.parseTime(date.getTime());
+                var W = ['week_7','week_1','week_2','week_3','week_4','week_5','week_6']
+                    .map(function(k) { return Lampa.Lang.translate(k); });
+                return t.short + ' — ' + W[date.getDay()];
+            }
+            return date.toLocaleDateString('ru-RU', { day: '2-digit', month: 'short', weekday: 'short' });
+        }
+
+        function tmdbImg(path) { return 'https://image.tmdb.org/t/p/w200' + path; }
+
+        function cardImg(card, ep) {
+            if (card._ms)              return card._ms_img || '';
+            if (ep && ep.still_path)   return tmdbImg(ep.still_path);
+            if (card.poster_path)      return tmdbImg(card.poster_path);
+            return '';
+        }
+
+        // Читаем кэш (только lampac/local)
+        function readUpcomingCache(callback) {
+            loadCacheFromServer('timetable', 'shows', function(result) {
+                callback(result && result.shows ? result : null);
+            });
+        }
+
+        // Сохраняем кэш (только lampac/local)
+        function writeUpcomingCache(data) {
+            saveCacheToServer({ shows: data }, 'timetable', function() {});
+        }
+
+
+        // Строим table-items из закэшированных данных + msMap
+        function buildItemsFromCache(cached, msMap) {
+            if (!cached || !cached.shows) return [];
+            var items = [];
+            cached.shows.forEach(function(entry) {
+                var card = msMap[String(entry.msId)];
+                if (!card || !entry.episodes || !entry.episodes.length) return;
+                items.push({
+                    tableEntry: { id: card.id, episodes: entry.episodes, next: null },
+                    card: {
+                        id:            card.id,
+                        name:          card.name          || card.original_name || '',
+                        original_name: card.original_name || card.name          || '',
+                        poster_path:   card.poster_path   || null,
+                        source:        'tmdb'
+                    }
+                });
+            });
+            return items;
+        }
+
+        // Полное обновление: перечитываем unwatched_serials свежо → API → кэш → callback
+        function refreshUpcoming(msMap, callback) {
+            // Перезагружаем msMap чтобы увидеть сериалы добавленные в этом сеансе
+            loadCacheFromServer('unwatched_serials', 'shows', function(fresh) {
+                var freshShows = (fresh && fresh.shows) || [];
+                if (freshShows.length) {
+                    msMap = {};
+                    freshShows.forEach(function(s) { if (s.myshowsId) msMap[String(s.myshowsId)] = s; });
+                }
+                _doRefreshUpcoming(msMap, callback);
+            }, getProfileId());
+        }
+
+        function _doRefreshUpcoming(msMap, callback) {
+            var today = new Date();
+            today.setHours(0, 0, 0, 0);
+
+            makeMyShowsJSONRPCRequest('lists.EpisodesUnwatched', {}, function(ok, resp) {
+                if (!ok || !resp || !resp.result) { if (callback) callback(null); return; }
+
+                var seen = {};
+                var showIds = [];
+
+                // Сериалы из EpisodesUnwatched (есть непросмотренные серии)
+                resp.result.forEach(function(item) {
+                    var ep     = item.episodes && item.episodes[0];
+                    var showId = String(ep && ep.showId || '');
+                    if (showId && msMap[showId] && !seen[showId]) {
+                        seen[showId] = true;
+                        showIds.push(showId);
+                    }
+                });
+
+                // Дополнительно — все сериалы из msMap (могут не иметь непросмотренных)
+                Object.keys(msMap).forEach(function(showId) {
+                    if (!seen[showId]) {
+                        seen[showId] = true;
+                        showIds.push(showId);
+                    }
+                });
+
+                if (!showIds.length) {
+                    writeUpcomingCache([]);
+                    if (callback) callback([]);
+                    return;
+                }
+
+                var cacheData = [];
+                var pending   = showIds.length;
+
+                function done() {
+                    if (--pending > 0) return;
+                    writeUpcomingCache(cacheData);
+                    if (callback) callback(buildItemsFromCache({ shows: cacheData }, msMap));
+                }
+
+                showIds.forEach(function(msId) {
+                    var showName = (msMap[msId] || {}).name || (msMap[msId] || {}).original_name || msId;
+                    getEpisodesByShowId(msId, null, function(eps) {
+                        if (eps && eps.length) {
+                            var future = eps.filter(function(ep) {
+                                return ep.airDate && parseDate(ep.airDate.substring(0, 10)) >= today;
+                            });
+                            if (future.length) {
+                                Log.info('[MS-TT]', showName, '- future eps:', future.length, '| next:', future[0].airDate.substring(0, 10));
+                                cacheData.push({
+                                    msId: msId,
+                                    episodes: future.map(function(ep) {
+                                        return {
+                                            air_date:       ep.airDate.substring(0, 10),
+                                            season_number:  ep.seasonNumber  || 0,
+                                            episode_number: ep.episodeNumber || 0,
+                                            name:           ep.title || ''
+                                        };
+                                    })
+                                });
+                            } else {
+                                Log.info('[MS-TT]', showName, '- no future eps (total:', eps.length, ')');
+                            }
+                        }
+                        done();
+                    });
+                });
+            });
+        }
+
+        function fetchUpcoming(msMap, onCache, onRefresh) {
+            // Показываем кэш сразу (для всех режимов)
+            readUpcomingCache(function(cached) {
+                onCache(buildItemsFromCache(cached, msMap));
+            });
+
+            if (!getProfileSetting('myshows_token', '')) return;
+
+            // Режим определяем сразу — к моменту открытия Расписания np.js уже установил
+            // режим (пинг на старте), задержка не нужна: при прогретом кэше фаза 1 уходит
+            // мгновенно.
+            (function() {
+                var mode = getStorageMode();
+                Log.info('[MS-TT] refresh mode:', mode, 'IS_NP:', !!window.IS_NP, 't=', Date.now() - _msttT0, 'ms');
+
+                if (mode === 'np') {
+                    // NP: двухфазно, как с непросмотренными.
+                    //  Фаза 1 (doSync=false): мгновенный read из БД сервера (прогретый кэш).
+                    //  Фаза 2 (doSync=true, через ~5с по _onUnwatchedSaved): сервер заново
+                    //  перетягивает эпизоды из MyShows и возвращает свежие — UI обновляется.
+                    // Локально ничего не кэшируем — источник истины на сервере.
+                    function refreshNpTimetable(shows, doSync) {
+                        var reqList = [], localMap = {};
+                        (shows || []).forEach(function(s) {
+                            if (!s || !s.id) return;
+                            if (s.myshowsId) localMap[String(s.myshowsId)] = s;
+                            reqList.push({ tmdb_id: s.id, myshows_id: s.myshowsId || 0 });
+                        });
+                        Log.info('[MS-TT] np POST timetable, shows:', reqList.length, 'sync:', !!doSync, 't=', Date.now() - _msttT0, 'ms');
+                        if (!reqList.length) { if (onRefresh) onRefresh([]); return; }
+
+                        var ttUrl = getNpBaseUrl() + '/myshows/timetable?token=' + encodeURIComponent(getNpToken()) +
+                            '&profile_id=' + encodeURIComponent(getProfileId()) +
+                            (doSync ? '&sync=1' : '');
+
+                        var xhr = new XMLHttpRequest();
+                        xhr.open('POST', ttUrl, true);
+                        xhr.setRequestHeader('Content-Type', 'application/json');
+                        xhr.timeout = doSync ? 185000 : 20000; // синк может дотягивать эпизоды, read — быстрый
+                        xhr.onload = function() {
+                            var resp = null;
+                            try { resp = JSON.parse(xhr.responseText); } catch(e) {}
+                            if (!resp || !Array.isArray(resp.episodes)) { if (onRefresh) onRefresh([]); return; }
+
+                            var tmdbMap = {};
+                            Object.keys(localMap).forEach(function(msId) {
+                                var c = localMap[msId];
+                                if (c && c.id) tmdbMap[String(c.id)] = c;
+                            });
+                            var grouped = {};
+                            resp.episodes.forEach(function(ep) {
+                                var sid = String(ep.tmdb_show_id);
+                                if (!tmdbMap[sid]) return;
+                                if (!grouped[sid]) grouped[sid] = [];
+                                grouped[sid].push({ air_date: ep.air_date, season_number: ep.season_number || 0, episode_number: ep.episode_number || 0, name: ep.name || '' });
+                            });
+                            var items = [];
+                            Object.keys(grouped).forEach(function(sid) {
+                                var card = tmdbMap[sid];
+                                items.push({
+                                    tableEntry: { id: card.id, episodes: grouped[sid], next: null },
+                                    card: { id: card.id, name: card.name || card.original_name || '', original_name: card.original_name || card.name || '', poster_path: card.poster_path || null, source: 'tmdb' }
+                                });
+                            });
+                            Log.info('[MS-TT] np timetable resp:', resp.episodes.length, 'eps,', items.length, 'shows, sync:', !!doSync, 't=', Date.now() - _msttT0, 'ms');
+                            if (onRefresh) onRefresh(items);
+                        };
+                        xhr.onerror   = function() { if (onRefresh) onRefresh([]); };
+                        xhr.ontimeout = function() { if (onRefresh) onRefresh([]); };
+                        xhr.send(JSON.stringify(reqList));
+                    }
+
+                    // Фаза 1: если непросмотренные уже есть — мгновенный read из кэша сервера.
+                    var currentShows = Object.keys(msMap).map(function(id) { return msMap[id]; });
+                    if (currentShows.length) refreshNpTimetable(currentShows, false);
+
+                    // Фаза 2: после обновления списка непросмотренных (~5с) — синк + обновление.
+                    _onUnwatchedSaved = function(freshShows) {
+                        Log.info('[MS-TT] np _onUnwatchedSaved fired, freshShows:', freshShows.length, 't=', Date.now() - _msttT0, 'ms');
+                        refreshNpTimetable(freshShows, true);
+                    };
+                } else {
+                    // lampac / local: обновляем как только unwatched_serials сохранён
+                    Log.info('[MS-TT] _onUnwatchedSaved registered, t=', Date.now() - _msttT0, 'ms');
+                    _onUnwatchedSaved = function(freshShows) {
+                        Log.info('[MS-TT] _onUnwatchedSaved fired, freshShows:', freshShows.length, 't=', Date.now() - _msttT0, 'ms');
+                        var freshMap = {};
+                        freshShows.forEach(function(s) { if (s && s.myshowsId) freshMap[String(s.myshowsId)] = s; });
+                        refreshUpcoming(freshMap, onRefresh);
+                    };
+                }
+            })();
+        }
+
+        // Полифилл Scroll: пробуем Lampa.Scroll, иначе простой div
+        function makeScroll() {
+            if (Lampa.Scroll) {
+                try { return new Lampa.Scroll({ mask: true, over: true, step: 300 }); } catch(e) {}
+            }
+            var wrap    = $('<div style="overflow-y:auto;height:100%;position:relative"></div>');
+            var content = $('<div></div>');
+            wrap.append(content);
+            return {
+                render:  function() { return wrap; },
+                append:  function(el) { content.append(el); },
+                minus:   function() {},
+                update:  function() {},
+                destroy: function() { wrap.remove(); }
+            };
+        }
+
+        Log.info('[MS-TT] registering timetable component');
+        Lampa.Component.add('timetable', function(object) {
+            var scroll = makeScroll();
+            var html   = $('<div></div>');
+            var body   = $('<div class="timetable"></div>');
+            var self   = this;
+            var last;
+
+            function getEpisodes(episodes, next) {
+                var r = [].concat(episodes || []);
+                if (next && !r.find(function(e) { return e.air_date === next.air_date; })) r.push(next);
+                return r;
+            }
+
+            this.create = function() {
+                Log.info('[MS-TT] component create() called');
+                self.activity.loader(true);
+
+                scroll.minus();
+                scroll.append(body);
+                html.append(scroll.render());
+
+                // toggle сразу, чтобы activity-система перешла к start()
+                self.activity.toggle();
+
+                var lampaCards = [];
+                try {
+                    lampaCards = (Lampa.Account.Permit.sync
+                        ? Lampa.Account.Bookmarks.all()
+                        : Lampa.Favorite.full().card) || [];
+                } catch(e) {}
+
+                var cardsMap      = {};
+                var existingNames = {};
+                lampaCards.forEach(function(c) {
+                    cardsMap[c.id] = c;
+                    existingNames[(c.original_name || c.name || '').toLowerCase()] = true;
+                });
+
+                var lampaTable = Lampa.TimeTable.all() || [];
+
+                // Календарь MyShows выключен в настройках — показываем только данные Lampa
+                if (!getProfileSetting('myshows_calendar', true)) {
+                    self._fill(lampaTable, cardsMap);
+                    return self.render();
+                }
+
+                // Строим msMap для fetchUpcoming
+                loadCacheFromServer('unwatched_serials', 'shows', function(cachedResult) {
+                    var shows = (cachedResult && cachedResult.shows) || [];
+                    var msMap = {};
+                    shows.forEach(function(s) {
+                        // Сервер (/myshows/watching) отдаёт myshows_id, MyShows-API — myshowsId
+                        var mid = s.myshowsId || s.myshows_id;
+                        if (!mid) return;
+                        s.myshowsId = mid; // нормализуем для downstream (refreshNpTimetable)
+                        msMap[String(mid)] = s;
+                    });
+
+                    // Дедупликация только по TMDB id в lampaTable — если у Lampa уже есть данные
+                    var lampaTableIds = {};
+                    lampaTable.forEach(function(e) { lampaTableIds[e.id] = true; });
+
+                    function applyItems(msItems) {
+                        Log.info('[MS-TT] applyItems:', msItems.length, 'items');
+                        var msTable = [];
+                        msItems.forEach(function(item) {
+                            if (lampaTableIds[item.tableEntry.id]) {
+                                Log.info('[MS-TT] skip (in lampaTable):', item.card.name);
+                                return;
+                            }
+                            cardsMap[item.tableEntry.id] = item.card;
+                            msTable.push(item.tableEntry);
+                        });
+                        Log.info('[MS-TT] msTable:', msTable.length, 'total:', lampaTable.length + msTable.length);
+                        self._fill(lampaTable.concat(msTable), cardsMap);
+                    }
+
+                    fetchUpcoming(msMap, applyItems, applyItems);
+                }, getProfileId());
+
+                return self.render();
+            };
+
+            this._fill = function(table, cardsMap) {
+                self.activity.loader(false);
+                body.empty();
+
+                if (!table.length) {
+                    body.append('<div style="padding:2em;text-align:center;color:#aaa">' + Lampa.Lang.translate('timetable_empty') + '</div>');
+                    return;
+                }
+
+                var today = new Date();
+                today.setHours(0, 0, 0, 0);
+                var days = 30;
+                var cur  = new Date(today);
+                for (var i = 0; i < days; i++) {
+                    self._day(new Date(cur), table, cardsMap);
+                    cur.setDate(cur.getDate() + 1);
+                }
+            };
+
+            this._day = function(date, table, cardsMap) {
+                var airDate = toDateStr(date);
+                var epis    = [];
+
+                table.forEach(function(elem) {
+                    var card = cardsMap[elem.id];
+                    if (!card) return;
+                    getEpisodes(elem.episodes, elem.next).forEach(function(ep) {
+                        if (ep.air_date === airDate) epis.push({ episode: ep, card: card });
+                    });
+                });
+
+                var item = $([
+                    '<div class="timetable__item selector">',
+                    '<div class="timetable__inner">',
+                    '<div class="timetable__date"></div>',
+                    '<div class="timetable__body"></div>',
+                    '</div></div>'
+                ].join(''));
+
+                item.find('.timetable__date').text(dayLabel(date));
+
+                if (epis.length) {
+                    // В календаре показываем только НАЗВАНИЕ СЕРИАЛА (не эпизода).
+                    // Несколько серий одного сериала в один день — одна строка.
+                    var seen = {}, uniq = [];
+                    epis.forEach(function(e) {
+                        var key = e.card.id;
+                        if (seen[key]) return;
+                        seen[key] = true;
+                        uniq.push(e);
+                    });
+
+                    if (uniq.length === 1) {
+                        var img0 = cardImg(uniq[0].card, uniq[0].episode);
+                        var prev = $('<div class="timetable__preview"><img><div>' + (uniq[0].card.name || Lampa.Lang.translate('noname')) + '</div></div>');
+                        if (img0) prev.find('img').attr('src', img0).on('error', function() { $(this).remove(); });
+                        else prev.find('img').remove();
+                        item.find('.timetable__body').append(prev);
+                    } else {
+                        uniq.slice(0, 3).forEach(function(e) {
+                            item.find('.timetable__body').append(
+                                '<div><span style="background-color:' + hsl(e.card.name) + '"></span>' + e.card.name + '</div>'
+                            );
+                        });
+                        if (uniq.length > 3) item.find('.timetable__body').append('<div>+' + (uniq.length - 3) + '</div>');
+                    }
+
+                    item.addClass('timetable__item--any');
+                }
+
+                item
+                    .on('hover:focus', function() { last = this; try { scroll.update($(this)); } catch(e) {} })
+                    .on('hover:hover', function() { last = this; try { Navigator.focused(last); } catch(e) {} })
+                    .on('hover:enter', function() { last = this; self._modal(airDate, epis); });
+
+                body.append(item);
+            };
+
+            this._modal = function(airDate, epis) {
+                var modal = $('<div></div>');
+                epis.forEach(function(elem) {
+                    var timeStr = Lampa.Utils && Lampa.Utils.parseTime ? Lampa.Utils.parseTime(airDate).full : airDate;
+                    var noty = Lampa.Template.get('notice_card', {
+                        time:  timeStr,
+                        title: elem.card.name,
+                        descr: Lampa.Lang.translate('card_new_episode')
+                    });
+                    var foot = $('<div class="notice__footer"></div>');
+                    foot.append('<div>S&nbsp;&mdash;&nbsp;<b>' + elem.episode.season_number + '</b></div>');
+                    foot.append('<div>E&nbsp;&mdash;&nbsp;<b>' + elem.episode.episode_number + '</b></div>');
+                    noty.find('.notice__descr').append(foot);
+
+                    var img = cardImg(elem.card, null);
+                    if (img) {
+                        noty.find('img').attr('src', img)
+                            .on('load',  function() { noty.addClass('image--loaded'); })
+                            .on('error', function() { $(this).remove(); });
+                    }
+
+                    noty.on('hover:enter', function() {
+                        Lampa.Modal.close();
+                        if (!elem.card._ms) {
+                            Lampa.Activity.push({
+                                url: '', component: 'full',
+                                id: elem.card.id, method: 'tv',
+                                card: elem.card, source: elem.card.source
+                            });
+                        }
+                    });
+                    modal.append(noty);
+                });
+
+                Lampa.Modal.open({
+                    title: Lampa.Lang.translate('menu_tv'),
+                    size: 'medium',
+                    html: modal,
+                    onBack: function() { Lampa.Modal.close(); Lampa.Controller.toggle('content'); }
+                });
+            };
+
+            this.start = function() {
+                Lampa.Controller.add('content', {
+                    link: self,
+                    toggle: function() {
+                        try { Lampa.Controller.collectionSet(scroll.render()); } catch(e) {}
+                        try { Lampa.Controller.collectionFocus(last || false, scroll.render()); } catch(e) {}
+                        if (Lampa.Background) Lampa.Background.change('https://image.tmdb.org/t/p/w200/oXPYD4c3bLtfAS2FzwjZh7NWqo4.jpg');
+                    },
+                    left:  function() { if (Navigator.canmove('left')) Navigator.move('left'); else Lampa.Controller.toggle('menu'); },
+                    right: function() { Navigator.move('right'); },
+                    up:    function() { if (Navigator.canmove('up')) Navigator.move('up'); else Lampa.Controller.toggle('head'); },
+                    down:  function() { if (Navigator.canmove('down')) Navigator.move('down'); },
+                    back:  self.back
+                });
+                Lampa.Controller.toggle('content');
+            };
+
+            this.back    = function() { Lampa.Activity.backward(); };
+            this.pause   = function() {};
+            this.stop    = function() {};
+            this.render  = function() { return html; };
+            this.destroy = function() { try { scroll.destroy(); } catch(e) {} html.remove(); };
+        });
+    }
+
+    // ── End MyShows Timetable ─────────────────────────────────────────────────
+
     function init() {
         if (typeof Lampa === 'undefined' || !Lampa.Storage) {
             setTimeout(init, 100);
@@ -6362,6 +6930,7 @@
                 initTimelineListener();
                 addProgressMarkerStyles();
                 addMyShowsButtonStyles();
+                initMyShowsTimetable();
                 init();
             }, 50);
         });
@@ -6374,7 +6943,7 @@
 
     function registerNMSync() {
         if (!window.__NMSync) return;
-        var MYSHOWS_SYNC_KEYS = ['myshows_view_in_main', 'myshows_button_view',
+        var MYSHOWS_SYNC_KEYS = ['myshows_view_in_main', 'myshows_calendar', 'myshows_button_view',
             'myshows_sort_order', 'myshows_add_threshold', 'myshows_min_progress',
             'myshows_token', 'myshows_login', 'myshows_password',
             'myshows_cache_days', 'myshows_use_np'];

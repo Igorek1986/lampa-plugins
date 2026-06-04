@@ -10,6 +10,45 @@
     return params.get('base_url') || 'https://numparser.igorek1986.ru';
     })();
     var ICON = '<svg version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" x="0px" y="0px" viewBox="0 0 512 512" style="enable-background:new 0 0 512 512;" xml:space="preserve"><g><g><path fill="currentColor" d="M482.909,67.2H29.091C13.05,67.2,0,80.25,0,96.291v319.418C0,431.75,13.05,444.8,29.091,444.8h453.818c16.041,0,29.091-13.05,29.091-29.091V96.291C512,80.25,498.95,67.2,482.909,67.2z M477.091,409.891H34.909V102.109h442.182V409.891z"/></g></g><g><g><rect fill="currentColor" x="126.836" y="84.655" width="34.909" height="342.109"/></g></g><g><g><rect fill="currentColor" x="350.255" y="84.655" width="34.909" height="342.109"/></g></g><g><g><rect fill="currentColor" x="367.709" y="184.145" width="126.836" height="34.909"/></g></g><g><g><rect fill="currentColor" x="17.455" y="184.145" width="126.836" height="34.909"/></g></g><g><g><rect fill="currentColor" x="367.709" y="292.364" width="126.836" height="34.909"/></g></g><g><g><rect fill="currentColor" x="17.455" y="292.364" width="126.836" height="34.909"/></g></g></svg>';
+    // Actor pool — loaded once at startup, used in collections_block shuffle
+    var actorPool = [];
+    (function() {
+        var req = new Lampa.Reguest();
+        req.silent(BASE_URL + '/api/categories', function(cats) {
+            actorPool = (cats || []).filter(function(c) {
+                return c.id && (c.id.indexOf('actor_') === 0 || c.id.indexOf('director_') === 0);
+            }).map(function(c) { return { key: c.id, title: c.name }; });
+        }, function() {});
+    })();
+
+    var GENRE_POOL = [
+        { key: 'genre_comedy',      title: 'Комедии' },
+        { key: 'genre_action',      title: 'Боевики' },
+        { key: 'genre_thriller',    title: 'Триллеры' },
+        { key: 'genre_crime',       title: 'Криминал' },
+        { key: 'genre_horror',      title: 'Ужасы' },
+        { key: 'genre_romance',     title: 'Мелодрамы' },
+        { key: 'genre_adventure',   title: 'Приключения' },
+        { key: 'genre_scifi',       title: 'Фантастика' },
+        { key: 'genre_fantasy',     title: 'Фэнтези' },
+        { key: 'genre_detective',   title: 'Детективы' },
+        { key: 'genre_history',     title: 'Историческое' },
+        { key: 'genre_war',         title: 'Военное' },
+        { key: 'genre_documentary', title: 'Документальные' },
+        { key: 'genre_western',     title: 'Вестерны' },
+        { key: 'genre_random',      title: 'Случайное' },
+        { key: 'tracker_new',       title: 'Последние поступления' }
+    ];
+
+    function shuffleArray(arr) {
+        var a = arr.slice();
+        for (var i = a.length - 1; i > 0; i--) {
+            var j = Math.floor(Math.random() * (i + 1));
+            var tmp = a[i]; a[i] = a[j]; a[j] = tmp;
+        }
+        return a;
+    }
+
     var DEFAULT_MIN_PROGRESS = 90;
     var MIN_PROGRESS = Lampa.Storage.get('numparser_min_progress', DEFAULT_MIN_PROGRESS);
     var newProgress = MIN_PROGRESS;
@@ -43,30 +82,35 @@
     function getAllCategories() {
         var currentYear = new Date().getFullYear();
         var list = [
+            // ── Фиксированные строки ───────────────────────────────────────────
+            { key: 'myshows_unwatched',      title: 'Непросмотренные (MyShows)' },
             { key: 'np_popular',             title: 'Популярно в NP' },
-            { key: 'myshows_unwatched', title: 'Непросмотренные (MyShows)' },
-            { key: 'lampac_movies_ru_new',      title: 'Новые русские фильмы' },
-            { key: 'lampac_movies_new',         title: 'Новые фильмы' },
-            { key: 'lampac_all_tv_shows',       title: 'Сериалы' },
-            { key: 'lampac_all_tv_shows_ru',    title: 'Русские сериалы' },
-            { key: 'continues', title: "Продолжить просмотр NUMParser"},
-            { key: 'continues_movie', title: "Продолжить просмотр (Фильмы)"},
-            { key: 'continues_tv', title: "Продолжить просмотр (Сериалы)"},
-            { key: 'continues_anime', title: "Продолжить просмотр (Аниме)"},
-            { key: 'episodes',           title: 'Ближайшие выходы эпизодов' },
-            { key: 'recent',             title: "Недавние выходы эпизодов"},
-            { key: 'lampac_movies_4k_new',      title: 'В высоком качестве (новые)' },
-            { key: 'legends_id',         title: 'Топ фильмы' },
-            { key: 'lampac_movies_4k',          title: 'В высоком качестве' },
-            { key: 'lampac_movies',             title: 'Фильмы' },
-            { key: 'lampac_movies_ru',          title: 'Русские фильмы' },
-            { key: 'lampac_all_cartoon_movies', title: 'Мультфильмы' },
-            { key: 'lampac_all_cartoon_series', title: 'Мультсериалы' },
-            { key: 'lampac_all_anime',           title: 'Аниме' },
-            { key: 'anime_id',           title: 'Аниме' }
+            { key: 'movies_ru_new',          title: 'Новые русские фильмы' },
+            { key: 'movies_new',             title: 'Новые фильмы' },
+            { key: 'tv_shows_ru',            title: 'Русские сериалы' },
+            { key: 'tv_shows',               title: 'Сериалы' },
+            // ── Подборки (жанровый блок, рандомно перемешивается) ──────────────
+            { key: 'collections_block',      title: 'Подборки' },
+            // ── Продолжить просмотр ────────────────────────────────────────────
+            { key: 'continues',              title: 'Продолжить просмотр NUMParser' },
+            { key: 'continues_movie',        title: 'Продолжить просмотр (Фильмы)' },
+            { key: 'continues_tv',           title: 'Продолжить просмотр (Сериалы)' },
+            { key: 'continues_anime',        title: 'Продолжить просмотр (Аниме)' },
+            { key: 'episodes',               title: 'Ближайшие выходы эпизодов' },
+            { key: 'recent',                 title: 'Недавние выходы эпизодов' },
+            // ── Качество / Легенды ─────────────────────────────────────────────
+            { key: 'movies_4k_new',          title: 'В высоком качестве (новые)' },
+            { key: 'legends_id',             title: 'Топ фильмы' },
+            { key: 'movies_4k',              title: 'В высоком качестве' },
+            { key: 'movies',                 title: 'Фильмы' },
+            { key: 'movies_ru',              title: 'Русские фильмы' },
+            // ── После подборок ─────────────────────────────────────────────────
+            { key: 'cartoon_movies',         title: 'Мультфильмы' },
+            { key: 'cartoon_series',         title: 'Мультсериалы' },
+            { key: 'anime',                  title: 'Аниме' }
         ];
 
-        // Добавляем годы в ОБРАТНОМ порядке: от нового к старому
+        // Годы в обратном порядке от нового к старому
         for (var y = currentYear; y >= 1980; y--) {
             list.push({ key: 'year_' + y, title: 'Фильмы ' + y + ' года' });
         }
@@ -122,10 +166,14 @@
                     if (item.last_air_date) dataItem.last_air_date = item.last_air_date;
                     if (item.last_episode_to_air) dataItem.last_episode_to_air = item.last_episode_to_air;
                     if (item.seasons) dataItem.seasons = item.seasons;
+                    if (item.certification_ru) dataItem.certification_ru = item.certification_ru;
+                    if (item.certification_us) dataItem.certification_us = item.certification_us;
                     if (item.progress_marker) dataItem.progress_marker = item.progress_marker;
                     if (item.watched_count !== undefined) dataItem.watched_count = item.watched_count;
                     if (item.total_count !== undefined) dataItem.total_count = item.total_count;
                     if (item.released_count !== undefined) dataItem.released_count = item.released_count;
+                    if (item.remaining !== undefined) dataItem.remaining = item.remaining;
+                    if (item.next_episode) dataItem.next_episode = item.next_episode;
                     if (item.last_episode_to_myshows !== undefined) dataItem.last_episode_to_myshows = item.last_episode_to_myshows;
 
                     dataItem.promo_title = dataItem.title || dataItem.name || dataItem.original_title || dataItem.original_name;
@@ -170,17 +218,25 @@
             }
 
             var url = BASE_URL + '/' + category + '?page=' + page + '&language=' + Lampa.Storage.get('tmdb_lang', 'ru');
+            if (Lampa.Storage.get('numparser_hide_unrated')) {
+                url += '&hide_unrated=1';
+            }
+            var childAge = getChildAge();
+            if (childAge > 0) url += '&child_age=' + childAge;
             if (token) {
                 url += '&token=' + encodeURIComponent(token);
                 var profileId = getProfileId();
                 if (profileId) url += '&profile_id=' + encodeURIComponent(profileId);
                 var minProgress = getProfileSetting('numparser_min_progress', DEFAULT_MIN_PROGRESS);
-                url += '&min_progress=' + encodeURIComponent(minProgress);
+                if (Lampa.Storage.get('numparser_hide_watched')) {
+                    url += '&hide_watched=1&percent=' + encodeURIComponent(minProgress);
+                }
             }
 
             self.get(url, params, function (json) {
+                var results = json.results || [];
                 onComplete({
-                    results: json.results || [],
+                    results: results,
                     page: json.page || page,
                     total_pages: json.total_pages || 1,
                     total_results: json.total_results || 0
@@ -190,8 +246,43 @@
 
         self.full = function (params, onSuccess, onError) {
             var card = params.card;
+            var certRu = card && card.certification_ru;
             params.method = !!(card.number_of_seasons || card.seasons || card.last_episode_to_air || card.first_air_date) ? 'tv' : 'movie';
-            Lampa.Api.sources.tmdb.full(params, onSuccess, onError);
+            Lampa.Api.sources.tmdb.full(params, function (data) {
+                if (data && data.movie && certRu && !data.movie.restrict) {
+                    var match = certRu.match(/^(\d+)/);
+                    if (match) data.movie.restrict = match[1];
+                }
+                onSuccess(data);
+            }, onError);
+        }
+
+        var KEY_RENAMES = {
+            'lampac_movies': 'movies', 'lampac_movies_new': 'movies_new',
+            'lampac_movies_ru': 'movies_ru', 'lampac_movies_ru_new': 'movies_ru_new',
+            'lampac_movies_4k': 'movies_4k', 'lampac_movies_4k_new': 'movies_4k_new',
+            'lampac_legends_id': 'legends_id', 'lampac_np_popular': 'np_popular',
+            'lampac_continues': 'continues', 'lampac_continues_movie': 'continues_movie',
+            'lampac_continues_tv': 'continues_tv', 'lampac_continues_anime': 'continues_anime',
+            'all_tv_shows': 'tv_shows', 'all_tv_shows_ru': 'tv_shows_ru',
+            'all_cartoon_movies': 'cartoon_movies', 'all_cartoon_series': 'cartoon_series',
+            'all_anime': 'anime', 'anime_id': 'anime'
+        };
+
+        function migrateLampacPrefix(settingKey) {
+            var arr = getProfileSetting(settingKey, []);
+            var changed = false;
+            var seen = {};
+            var result = [];
+            for (var i = 0; i < arr.length; i++) {
+                var key = arr[i];
+                if (KEY_RENAMES[key]) { key = KEY_RENAMES[key]; changed = true; }
+                else if (key.indexOf('lampac_') === 0) { key = key.slice(7); changed = true; }
+                if (!seen[key]) { seen[key] = true; result.push(key); }
+                else { changed = true; } // дубликат после переименования — отбрасываем
+            }
+            if (changed) setProfileSetting(settingKey, result);
+            return result;
         }
 
         self.category = function (params, onSuccess, onError) {
@@ -199,7 +290,8 @@
             var partsData = [];
 
             var allCategories = getAllCategories();
-            var menuOrder = getProfileSetting('numparser_menu_sort', []);
+            var menuOrder = migrateLampacPrefix('numparser_menu_sort');
+            var menuHide = migrateLampacPrefix('numparser_menu_hide');
 
             // Инициализация при первом запуске
             if (!Array.isArray(menuOrder) || menuOrder.length === 0) {
@@ -209,8 +301,6 @@
                 }
                 setProfileSetting('numparser_menu_sort', menuOrder);
             }
-
-            var menuHide = getProfileSetting('numparser_menu_hide', []);
 
             // Формируем actualOrder: сначала то, что в menuOrder и существует, потом новые
             var actualOrder = [];
@@ -230,17 +320,31 @@
                 }
             }
 
-            // Шаг 2: добавляем новые категории, которых нет в actualOrder
+            // Шаг 2: добавляем новые категории в их правильную позицию
+            // (вставляем сразу после ближайшего предшественника из allCategories)
             for (var j = 0; j < allCategories.length; j++) {
                 var cat = allCategories[j];
                 var exists = false;
                 for (var i = 0; i < actualOrder.length; i++) {
-                    if (actualOrder[i] === cat.key) {
-                        exists = true;
-                        break;
-                    }
+                    if (actualOrder[i] === cat.key) { exists = true; break; }
                 }
-                if (!exists) {
+                if (exists) continue;
+
+                // Ищем ближайший предшествующий ключ из allCategories, который уже есть в actualOrder
+                var insertAfter = -1;
+                for (var k = j - 1; k >= 0; k--) {
+                    for (var m = 0; m < actualOrder.length; m++) {
+                        if (actualOrder[m] === allCategories[k].key) {
+                            insertAfter = m;
+                            break;
+                        }
+                    }
+                    if (insertAfter >= 0) break;
+                }
+
+                if (insertAfter >= 0) {
+                    actualOrder.splice(insertAfter + 1, 0, cat.key);
+                } else {
                     actualOrder.push(cat.key);
                 }
             }
@@ -268,6 +372,19 @@
                     }
                 }
                 if (!cat) continue;
+
+                // collections_block — жанровые подборки + актёры, всё перемешано
+                if (key === 'collections_block') {
+                    var combined = shuffleArray(GENRE_POOL.concat(actorPool));
+                    for (var gi = 0; gi < combined.length; gi++) {
+                        (function(g) {
+                            partsData.push(function(callback) {
+                                makeRequest(g.key, g.title, callback);
+                            });
+                        })(combined[gi]);
+                    }
+                    continue;
+                }
 
                 // MyShows — особый случай
                 if (key === 'myshows_unwatched') {
@@ -416,12 +533,19 @@
                     token = Lampa.Storage.get('numparser_api_key', '');
                 }
                 var url = BASE_URL + '/' + category + '?page=' + page + '&language=' + Lampa.Storage.get('tmdb_lang', 'ru');
+                if (Lampa.Storage.get('numparser_hide_unrated')) {
+                    url += '&hide_unrated=1';
+                }
+                var childAge = getChildAge();
+                if (childAge > 0) url += '&child_age=' + childAge;
                 if (token) {
                     url += '&token=' + encodeURIComponent(token);
                     var profileId = getProfileId();
                     if (profileId) url += '&profile_id=' + encodeURIComponent(profileId);
                     var minProgress = getProfileSetting('numparser_min_progress', DEFAULT_MIN_PROGRESS);
-                    url += '&min_progress=' + encodeURIComponent(minProgress);
+                    if (!isContinues) {
+                        url += '&hide_watched=1&percent=' + encodeURIComponent(minProgress);
+                    }
                 }
 
                 self.get(url, params, function (json) {
@@ -617,6 +741,16 @@
         }
     }
 
+    function getChildAge() {
+        try {
+            var account = Lampa.Storage.get('account');
+            if (account && account.profile && account.profile.child == 1 && account.profile.age > 0) {
+                return parseInt(account.profile.age, 10);
+            }
+        } catch (e) {}
+        return 0;
+    }
+
     function getProfileName() {
 
         var npName = Lampa.Storage.get('np_profile_name', '');
@@ -689,6 +823,12 @@
         if (!hasProfileSetting('numparser_quality_mode')) {
             setProfileSetting('numparser_quality_mode', 'simple', false);
         }
+        if (!hasProfileSetting('numparser_hide_unrated')) {
+            setProfileSetting('numparser_hide_unrated', false, false);
+        }
+        if (!hasProfileSetting('numparser_show_cert')) {
+            setProfileSetting('numparser_show_cert', false, false);
+        }
 
         // Восстанавливаем значения в Lampa.Storage, чтобы UI знал актуальные данные
         Lampa.Storage.set('numparser_hide_watched', getProfileSetting('numparser_hide_watched', "true"), "true");
@@ -697,6 +837,8 @@
         Lampa.Storage.set('numparser_menu_sort', getProfileSetting('numparser_menu_sort', []));
         Lampa.Storage.set('numparser_menu_hide', getProfileSetting('numparser_menu_hide', []));
         Lampa.Storage.set('numparser_quality_mode', getProfileSetting('numparser_quality_mode', 'simple'));
+        Lampa.Storage.set('numparser_hide_unrated', getProfileSetting('numparser_hide_unrated', false));
+        Lampa.Storage.set('numparser_show_cert', getProfileSetting('numparser_show_cert', false));
     }
 
     function openNumparserMenuEditor() {
@@ -777,9 +919,17 @@
         // Кнопки "Включить все / Отключить все" — внутри list чтобы не ломать навигацию Lampa
         var btnEnableAll = $('<div class="menu-edit-list__item menu-edit-list__ctrl selector">Включить все</div>');
         var btnDisableAll = $('<div class="menu-edit-list__item menu-edit-list__ctrl selector">Отключить все</div>');
+        var btnReset = $('<div class="menu-edit-list__item menu-edit-list__ctrl selector">Сбросить порядок</div>');
         btnEnableAll.on('hover:enter', function () { list.find('.dot').attr('opacity', '1'); });
         btnDisableAll.on('hover:enter', function () { list.find('.dot').attr('opacity', '0'); });
-        list.append(btnEnableAll).append(btnDisableAll);
+        btnReset.on('hover:enter', function () {
+            setProfileSetting('numparser_menu_sort', []);
+            setProfileSetting('numparser_menu_hide', []);
+            Lampa.Modal.close();
+            Lampa.Controller.toggle('settings_component');
+            Lampa.Noty.show('Порядок категорий сброшен');
+        });
+        list.append(btnEnableAll).append(btnDisableAll).append(btnReset);
 
         // Единый таймер дебаунса для всех строк списка
         var npScrollTimer;
@@ -925,6 +1075,23 @@
             }
         });
 
+        Lampa.SettingsApi.addParam({
+            component: 'numparser_settings',
+            param: {
+                name: 'numparser_hide_unrated',
+                type: 'trigger',
+                default: false,
+            },
+            field: {
+                name: 'Скрыть без рейтинга',
+                description: 'Скрывать фильмы и сериалы без возрастного рейтинга'
+            },
+            onChange: function (value) {
+                setProfileSetting('numparser_hide_unrated', value === true || value === "true");
+                location.reload();
+            }
+        });
+
         if (NUMPARSER_HIDE_WATCHED) {
 
             // Добавляем настройку прогресса
@@ -975,6 +1142,7 @@
                 },
                 onChange: function (value) {
                     Lampa.Storage.set('numparser_api_key', value);
+                    checkNpConnected();
                 }
             });
 
@@ -1035,6 +1203,22 @@
             },
             onChange: function (value) {
                 setProfileSetting('numparser_quality_mode', value);
+            }
+        });
+
+        Lampa.SettingsApi.addParam({
+            component: 'numparser_settings',
+            param: {
+                name: 'numparser_show_cert',
+                type: 'trigger',
+                default: false
+            },
+            field: {
+                name: 'Возрастной рейтинг на карточках',
+                description: 'Показывать метку 0+, 6+, 12+, 16+, 18+ в правом нижнем углу карточки'
+            },
+            onChange: function (value) {
+                setProfileSetting('numparser_show_cert', value === true || value === 'true');
             }
         });
     }
@@ -1126,6 +1310,7 @@
                     .then(function (data) {
                         if (data.linked && data.token) {
                             Lampa.Storage.set('numparser_api_key', data.token);
+                            window.IS_NP = true;
                             setStatus('Устройство привязано!', '#4ade80');
                             Lampa.Noty.show('NUMParser: устройство привязано');
                             setTimeout(function () {
@@ -1161,14 +1346,15 @@
         s.id = 'num-act-styles';
         s.textContent = [
             '.num-act-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.92);z-index:9999;display:-webkit-box;display:-webkit-flex;display:flex;-webkit-align-items:center;align-items:center;-webkit-justify-content:center;justify-content:center}',
-            '.num-act-box{background:#1e1e2e;border-radius:1.8rem;padding:4rem 6rem;text-align:center;max-width:900px;width:85%;border:2px solid #ffffff15}',
+            '.num-act-box{background:#1e1e2e;border-radius:1.8rem;padding:4rem 6rem;text-align:center;max-width:900px;width:85%;border:2px solid #ffffff15;box-sizing:border-box}',
             '.num-act-title{font-size:2.4rem;font-weight:700;margin-bottom:1.8rem}',
             '.num-act-url{color:#60a5fa;font-size:1.5rem;font-weight:600;margin-bottom:1.2rem;word-break:break-all}',
             '.num-act-hint{color:#aaa;font-size:1.3rem;margin-bottom:.6rem}',
-            '.num-act-code{font-size:5rem;font-weight:800;letter-spacing:1rem;color:#4ade80;font-family:monospace;border:3px solid #4ade80;border-radius:1rem;padding:.8rem 2.5rem;display:inline-block;margin:1.5rem 0}',
+            '.num-act-code{font-size:5rem;font-weight:800;letter-spacing:1rem;color:#4ade80;font-family:monospace;border:3px solid #4ade80;border-radius:1rem;padding:.8rem 2.5rem;display:inline-block;margin:1.5rem 0;max-width:100%;box-sizing:border-box}',
             '.num-act-timer{color:#888;font-size:1.1rem;margin-bottom:1rem}',
             '.num-act-status{font-size:1.3rem;min-height:2rem}',
             '.num-act-close{color:#555;font-size:1rem;margin-top:1.8rem}',
+            '@media(max-width:600px){.num-act-box{padding:2.5rem 1.5rem;width:92%}.num-act-code{font-size:3rem;letter-spacing:.5rem;padding:.6rem 1.2rem}}',
         ].join('');
         document.head.appendChild(s);
     })();
@@ -1235,6 +1421,10 @@
     function onTimelineUpdate(data) {
         if (!data || !data.data || !data.data.hash || !data.data.road) return;
 
+        if (!window.IS_NP) {
+            Log.info('Timecode sync: skip — no connection');
+            return;
+        }
         var token = Lampa.Storage.get('numparser_api_key', '');
         if (!token) {
             Log.info('Timecode sync: skip — no token');
@@ -1359,6 +1549,12 @@
                 var hideWatched = settingsPanel.querySelector('select[data-name="numparser_hide_watched"]');
                 if (hideWatched) hideWatched.value = getProfileSetting('numparser_hide_watched', "true");
 
+                var hideUnrated = settingsPanel.querySelector('select[data-name="numparser_hide_unrated"]');
+                if (hideUnrated) hideUnrated.value = getProfileSetting('numparser_hide_unrated', false);
+
+                var showCert = settingsPanel.querySelector('select[data-name="numparser_show_cert"]');
+                if (showCert) showCert.value = getProfileSetting('numparser_show_cert', false);
+
                 var minProgress = settingsPanel.querySelector('select[data-name="numparser_min_progress"]');
                 if (minProgress) minProgress.value = getProfileSetting('numparser_min_progress', DEFAULT_MIN_PROGRESS).toString();
 
@@ -1388,7 +1584,24 @@
         setupTimecodeSync();
     }
 
+    function checkNpConnected() {
+        var token = Lampa.Storage.get('numparser_api_key', '');
+        var baseUrl = BASE_URL;
+        if (!token || !baseUrl) {
+            window.IS_NP = false;
+            return;
+        }
+        var xhr = new XMLHttpRequest();
+        xhr.open('GET', baseUrl + '/device/ping?token=' + encodeURIComponent(token), true);
+        xhr.timeout = 5000;
+        xhr.onload = function () { window.IS_NP = xhr.status === 200; };
+        xhr.onerror = function () { window.IS_NP = false; };
+        xhr.ontimeout = function () { window.IS_NP = false; };
+        xhr.send();
+    }
+
     function initNUMPlugin() {
+        checkNpConnected();
         startPlugin();
 
         NUMPARSER_HIDE_WATCHED = Lampa.Storage.get('numparser_hide_watched');
@@ -1399,7 +1612,7 @@
             if (window.__NMSync) {
                 var NP_SYNC_KEYS = ['numparser_hide_watched', 'numparser_min_progress',
                     'numparser_source_name', 'numparser_menu_sort', 'numparser_menu_hide',
-                    'numparser_quality_mode'];
+                    'numparser_quality_mode', 'numparser_hide_unrated'];
                 window.__NMSync.register('np', [], _applyNpSetting, function (serverKeys) {
                     // Досылаем на сервер ключи которые есть локально но отсутствуют на сервере
                     NP_SYNC_KEYS.forEach(function (key) {
@@ -1420,6 +1633,95 @@
             if (event.type === 'ready') {
                 initNUMPlugin();
             }
+        });
+    }
+})();
+
+// ─── Метки возрастного рейтинга на карточках ──────────────────────────────────
+(function () {
+    'use strict';
+
+    var US_TO_RU = {
+        'G': '0+', 'TV-G': '0+', 'TV-Y': '0+',
+        'NR': '0+', 'UR': '0+', 'TV-NR': '0+',
+        'PG': '6+', 'TV-Y7': '6+', 'TV-PG': '6+',
+        'PG-13': '12+', 'TV-14': '12+',
+        'R': '16+',
+        'NC-17': '18+', 'TV-MA': '18+'
+    };
+
+    var CERT_COLORS = {
+        '0+': '#4caf50',
+        '6+': '#8bc34a',
+        '12+': '#ff9800',
+        '16+': '#f44336',
+        '18+': '#b71c1c'
+    };
+
+    var style = document.createElement('style');
+    style.textContent = [
+        '.np-cert-badge {',
+        '    position: absolute; right: 0.4em; bottom: 3em;',
+        '    padding: 0.4em 0.4em;',
+        '    font-size: 0.8em; font-weight: bold;',
+        '    border-radius: 0.3em;',
+        '    z-index: 2; color: #fff;',
+        '    line-height: 1.2;',
+        '    text-transform: uppercase;',
+        '    text-shadow: 0 1px 2px rgba(0,0,0,0.4);',
+        '}',
+    ].join('\n');
+    document.head.appendChild(style);
+
+    function getCert(data) {
+        if (!data) return '';
+        var ru = data.certification_ru || '';
+        if (ru) return ru;
+        var us = data.certification_us || '';
+        return US_TO_RU[us] || '';
+    }
+
+    function addCertToCard(card, data) {
+        var _v = Lampa.Storage.get('numparser_show_cert');
+        if (_v !== true && _v !== 'true') return;
+        var el = card && card.get ? card.get(0) : (card && card[0] ? card[0] : card);
+        var cardView = el && el.querySelector && el.querySelector('.card__view');
+        var cert = getCert(data);
+        if (!el) return;
+        if (!cardView) return;
+        if (cardView.querySelector('.np-cert-badge')) return;
+        if (!cert) return;
+
+        var badge = document.createElement('div');
+        badge.className = 'np-cert-badge';
+        badge.textContent = cert;
+        badge.style.background = CERT_COLORS[cert] || '#555';
+        cardView.appendChild(badge);
+    }
+
+    function init() {
+        try {
+            var cardMap = Lampa.Maker && Lampa.Maker.map('Card');
+            if (cardMap && cardMap.Card) {
+                var origVisible = cardMap.Card.onVisible;
+                cardMap.Card.onVisible = function () {
+                    if (origVisible) origVisible.call(this);
+                    addCertToCard(this.html, this.data);
+                };
+                var origUpdate = cardMap.Card.onUpdate;
+                cardMap.Card.onUpdate = function () {
+                    if (origUpdate) origUpdate.call(this);
+                    addCertToCard(this.html, this.data);
+                };
+            }
+        } catch (e) { console.log('[np-cert] hook error', e); }
+    }
+
+    if (window.appready) {
+        init();
+    } else {
+        Lampa.Listener.follow('app', function (e) {
+            if (e.type === 'ready') init();
         });
     }
 })();
