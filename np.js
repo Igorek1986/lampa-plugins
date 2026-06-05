@@ -1364,6 +1364,23 @@
     var _timecodeInterceptorActive = false;
     var _lastSentTimecodes = {};  // { "cardId::hash": { percent, sentAt } }
     var SYNC_THROTTLE_MS = 15000; // не чаще раза в 15 сек на одну (card+hash) пару
+    var _viewSent = {};           // { "cardId:YYYY-MM-DD": true } — дедуп play-событий на день
+
+    // Play-событие для «Популярного» на сервере. Шлётся независимо от активации/токена
+    // (по uid профиля или lampa_uid). Дедуп — один раз на карточку в сутки.
+    function recordView(cardId, percent) {
+        if (percent < 30 || !BASE_URL) return;
+        var today = new Date().toISOString().slice(0, 10);
+        var key = cardId + ':' + today;
+        if (_viewSent[key]) return;
+        _viewSent[key] = true;
+        var uid = getProfileId() || Lampa.Storage.field('lampa_uid');
+        if (!uid) return;
+        fetch(BASE_URL + '/api/view?card_id=' + encodeURIComponent(cardId) +
+              '&percent=' + percent +
+              '&uid=' + encodeURIComponent(uid), { method: 'POST' })
+            .catch(function () {});
+    }
 
     function getCurrentCard() {
         var card = (Lampa.Activity && Lampa.Activity.active && Lampa.Activity.active() && (
@@ -1421,16 +1438,6 @@
     function onTimelineUpdate(data) {
         if (!data || !data.data || !data.data.hash || !data.data.road) return;
 
-        if (!window.IS_NP) {
-            Log.info('Timecode sync: skip — no connection');
-            return;
-        }
-        var token = Lampa.Storage.get('numparser_api_key', '');
-        if (!token) {
-            Log.info('Timecode sync: skip — no token');
-            return;
-        }
-
         var card = getCurrentCard();
         if (!card || !card.id) {
             Log.info('Timecode sync: skip — no card');
@@ -1445,6 +1452,22 @@
 
         var mt     = card.media_type || (card.isMovie ? 'movie' : 'tv');
         var cardId = String(card.id) + '_' + mt;
+
+        // Play-событие для «Популярного» — шлём независимо от активации/токена/соединения
+        // (IS_NP=true только после активации, а просмотры нужно учитывать и без неё).
+        recordView(cardId, percent);
+
+        // Синхронизация таймкодов — только при активном NP-соединении и токене.
+        if (!window.IS_NP) {
+            Log.info('Timecode sync: skip — no connection');
+            return;
+        }
+        var token = Lampa.Storage.get('numparser_api_key', '');
+        if (!token) {
+            Log.info('Timecode sync: skip — no token');
+            return;
+        }
+
         var key    = cardId + '::' + hash;
         var now    = Date.now();
         var last   = _lastSentTimecodes[key];
