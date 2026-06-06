@@ -205,9 +205,9 @@
             'cancelled':         '/myshows/cancelled',
             'serial_status':     '/myshows/serial_status',
             'movie_status':      '/myshows/movie_status',
+            'timetable_extra':   '/myshows/profile_shows',
         };
         if (mode === 'np') {
-            // timetable в NP не кэшируем — сервер считает на лету (см. fetchUpcoming)
             if (!NP_PATHS[path]) { if (callback) callback(true); return; }
             var payload = [];
             Log.info("Save to NP");
@@ -341,9 +341,9 @@
             'watchlist':         '/myshows/watchlist',
             'watched':           '/myshows/watched',
             'cancelled':         '/myshows/cancelled',
+            'timetable_extra':   '/myshows/profile_shows',
         };
         if (mode === 'np') {
-            // timetable в NP читается напрямую POST'ом (см. fetchUpcoming) — blob-кэша нет
             if (!NP_LOAD_PATHS[path]) { callback(null); return; }
             var page = (options && options.page) ? options.page : 1;
             var npUrl = getNpBaseUrl() + NP_LOAD_PATHS[path] +
@@ -390,7 +390,7 @@
     }
 
     function getRefreshDelay() {
-        return Lampa.Platform.tv() ? 5000 : 5000;
+        return Lampa.Platform.tv() ? 10000 : 5000;
     }
 
     function initMyShowsCaches() {
@@ -6414,11 +6414,17 @@
 
         function fetchUpcoming(msMap, onCache, onRefresh) {
             // Показываем кэш сразу (для всех режимов)
-            readUpcomingCache(function(cached) {
-                onCache(buildItemsFromCache(cached, msMap));
-            });
+            if (onCache) {
+                readUpcomingCache(function(cached) {
+                    var items = buildItemsFromCache(cached, msMap);
+                    if (items.length > 0) onCache(items);
+                });
+            }
 
-            if (!getProfileSetting('myshows_token', '')) return;
+            if (!getProfileSetting('myshows_token', '')) {
+                if (!onCache && onRefresh) onRefresh([]);
+                return;
+            }
 
             // Режим определяем сразу — к моменту открытия Расписания np.js уже установил
             // режим (пинг на старте), задержка не нужна: при прогретом кэше фаза 1 уходит
@@ -6570,38 +6576,110 @@
                     return self.render();
                 }
 
-                // Строим msMap для fetchUpcoming
-                loadCacheFromServer('unwatched_serials', 'shows', function(cachedResult) {
-                    var shows = (cachedResult && cachedResult.shows) || [];
-                    var msMap = {};
-                    shows.forEach(function(s) {
-                        // Сервер (/myshows/watching) отдаёт myshows_id, MyShows-API — myshowsId
+                // Строим msMap для fetchUpcoming из timetable_extra (полный список watching/finished).
+                // Если кэша нет — fallback на unwatched_serials + profile.Shows.
+                var lampaTableIds = {};
+                lampaTable.forEach(function(e) { lampaTableIds[e.id] = true; });
+
+                function applyItems(msItems) {
+                    Log.info('[MS-TT] applyItems:', msItems.length, 'items');
+                    var msTable = [];
+                    msItems.forEach(function(item) {
+                        if (lampaTableIds[item.tableEntry.id]) {
+                            Log.info('[MS-TT] skip (in lampaTable):', item.card.name);
+                            return;
+                        }
+                        cardsMap[item.tableEntry.id] = item.card;
+                        msTable.push(item.tableEntry);
+                    });
+                    Log.info('[MS-TT] msTable:', msTable.length, 'total:', lampaTable.length + msTable.length);
+                    self._fill(lampaTable.concat(msTable), cardsMap);
+                }
+
+                // Строим msMap из массива карточек (формат timetable_extra)
+                function buildMsMap(shows) {
+                    var map = {};
+                    (shows || []).forEach(function(s) {
                         var mid = s.myshowsId || s.myshows_id;
                         if (!mid) return;
-                        s.myshowsId = mid; // нормализуем для downstream (refreshNpTimetable)
-                        msMap[String(mid)] = s;
+                        s.myshowsId = mid;
+                        map[String(mid)] = s;
                     });
+                    return map;
+                }
 
-                    // Дедупликация только по TMDB id в lampaTable — если у Lampa уже есть данные
-                    var lampaTableIds = {};
-                    lampaTable.forEach(function(e) { lampaTableIds[e.id] = true; });
+                // Обновляем timetable_extra: загружаем profile.Shows, обогащаем TMDB,
+                // сохраняем в кэш, вызываем onDone(msMap).
+                function refreshTimetableExtra(baseMap, onDone) {
+                    if (!getProfileSetting('myshows_token', '')) { onDone(baseMap); return; }
+                    makeMyShowsJSONRPCRequest('profile.Shows', {}, function(success, data) {
+                        if (!success || !data || !data.result) { onDone(baseMap); return; }
 
-                    function applyItems(msItems) {
-                        Log.info('[MS-TT] applyItems:', msItems.length, 'items');
-                        var msTable = [];
-                        msItems.forEach(function(item) {
-                            if (lampaTableIds[item.tableEntry.id]) {
-                                Log.info('[MS-TT] skip (in lampaTable):', item.card.name);
-                                return;
-                            }
-                            cardsMap[item.tableEntry.id] = item.card;
-                            msTable.push(item.tableEntry);
+                        var msMap = {};
+                        // Сначала кладём base (unwatched_serials) — у них есть unwatchedEpisodes
+                        Object.keys(baseMap).forEach(function(k) { msMap[k] = baseMap[k]; });
+
+                        var toEnrich = [];
+                        data.result.forEach(function(item) {
+                            var ws = item.watchStatus;
+                            if (ws !== 'watching' && ws !== 'finished') return;
+                            var mid = String(item.show.id);
+                            if (msMap[mid]) return; // уже есть из unwatched_serials
+                            toEnrich.push({
+                                myshowsId:     item.show.id,
+                                title:         item.show.title,
+                                originalTitle: item.show.titleOriginal,
+                                year:          item.show.year,
+                                type:          'tv'
+                            });
                         });
-                        Log.info('[MS-TT] msTable:', msTable.length, 'total:', lampaTable.length + msTable.length);
-                        self._fill(lampaTable.concat(msTable), cardsMap);
-                    }
 
-                    fetchUpcoming(msMap, applyItems, applyItems);
+                        function saveAndDone(map) {
+                            var allCards = Object.keys(map).map(function(k) { return map[k]; });
+                            saveCacheToServer({ shows: allCards }, 'timetable_extra', function() {}, getProfileId());
+                            Log.info('[MS-TT] timetable_extra saved:', allCards.length, 'shows');
+                            onDone(map);
+                        }
+
+                        if (!toEnrich.length) { saveAndDone(msMap); return; }
+
+                        getTMDBDetailsSimple(toEnrich, function(result) {
+                            (result.results || []).forEach(function(card) {
+                                if (!card.myshowsId || !card.id) return;
+                                msMap[String(card.myshowsId)] = card;
+                            });
+                            Log.info('[MS-TT] profile.Shows enriched:', toEnrich.length, 'missing, total:', Object.keys(msMap).length);
+                            saveAndDone(msMap);
+                        });
+                    });
+                }
+
+                // Фаза 1: пробуем timetable_extra (полный кэш, cross-device)
+                loadCacheFromServer('timetable_extra', 'shows', function(extraResult) {
+                    var extraShows = extraResult && extraResult.shows;
+                    if (extraShows && extraShows.length > 0) {
+                        // Кэш есть — показываем сразу
+                        var msMap = buildMsMap(extraShows);
+                        Log.info('[MS-TT] timetable_extra hit:', extraShows.length, 'shows');
+                        fetchUpcoming(msMap, applyItems, applyItems);
+                        // Фаза 2: обновляем в фоне из unwatched_serials + profile.Shows
+                        loadCacheFromServer('unwatched_serials', 'shows', function(uwResult) {
+                            var baseMap = buildMsMap(uwResult && uwResult.shows);
+                            refreshTimetableExtra(baseMap, function(freshMap) {
+                                Log.info('[MS-TT] timetable_extra bg refresh done:', Object.keys(freshMap).length);
+                                fetchUpcoming(freshMap, null, applyItems);
+                            });
+                        }, getProfileId());
+                    } else {
+                        // Холодный старт: ждём полного msMap из unwatched_serials + profile.Shows
+                        loadCacheFromServer('unwatched_serials', 'shows', function(uwResult) {
+                            var baseMap = buildMsMap(uwResult && uwResult.shows);
+                            refreshTimetableExtra(baseMap, function(fullMap) {
+                                Log.info('[MS-TT] timetable_extra cold built:', Object.keys(fullMap).length);
+                                fetchUpcoming(fullMap, null, applyItems);
+                            });
+                        }, getProfileId());
+                    }
                 }, getProfileId());
 
                 return self.render();
