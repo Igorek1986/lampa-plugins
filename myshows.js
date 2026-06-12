@@ -3302,12 +3302,55 @@
         updateDigit();
     }
 
+    // ── Метка следующей серии в окнах «Торренты»/«Онлайн» ────────────────────
+    // Оба окна строятся на шаблоне Explorer: слева панель .explorer-card,
+    // в .explorer-card__head-body — год, рейтинг, возраст. Если открытый сериал
+    // есть в непросмотренных — дописываем туда метку «Далее: SxxExx».
+    function addNextEpisodeToExplorer(movie) {
+        if (!movie || !movie.id) return;
+        var showNext = getProfileSetting('myshows_badge_next', true);
+        if (!(showNext === true || showNext === 'true')) return;
+        var isSerial = movie.number_of_seasons > 0 || movie.seasons || movie.first_air_date || movie.original_name;
+        if (!isSerial) return;
+
+        findShowInCache('unwatched_serials', 'shows', movie.original_name || movie.name || movie.title, function(foundShow) {
+            if (!foundShow || !foundShow.next_episode) return;
+
+            // Explorer может ещё не отрендериться — несколько попыток; активность
+            // могла смениться, пока грузился кэш — сверяем tmdb id
+            var attempts = 0;
+            (function tryInsert() {
+                var act = Lampa.Activity.active && Lampa.Activity.active();
+                if (!act || !act.movie || String(act.movie.id) !== String(movie.id)) return;
+                var cardEl = document.querySelector('.activity--active .explorer-card');
+                if (!cardEl) {
+                    if (++attempts < 10) setTimeout(tryInsert, 300);
+                    return;
+                }
+                var old = cardEl.querySelector('.myshows-explorer-next');
+                if (old) old.remove();
+                var el = document.createElement('div');
+                el.className = 'myshows-explorer-next';
+                el.textContent = 'Следующая серия: ' + foundShow.next_episode;
+                // Между explorer-card__head и explorer-card__body
+                var body = cardEl.querySelector('.explorer-card__body');
+                if (body) cardEl.insertBefore(el, body);
+                else cardEl.appendChild(el);
+            })();
+        }, movie);
+    }
+
     Lampa.Listener.follow('activity', function(event) {
 
         Log.info('Activity event:', {
             type: event.type,
             component: event.component
         });
+
+        // Торренты/Онлайн: у активности есть movie (у full — card)
+        if (event.type === 'start' && event.component !== 'full' && event.object && event.object.movie) {
+            addNextEpisodeToExplorer(event.object.movie);
+        }
 
         if (event.type === 'start' && event.component === 'full') {
             var currentCard = event.object && event.object.card;
@@ -4168,6 +4211,14 @@
             '    font-weight: bold; z-index: 2; box-shadow: 0 2px 8px rgba(0,0,0,0.15);',
             '    letter-spacing: 0.04em; line-height: 1.1;',
             '    background: #2196F3; color: #fff; transition: all 0.3s ease;',
+            '}',
+            /* «Следующая серия: SxxExx» в левой панели Торрентов/Онлайна —
+               между .explorer-card__head и .explorer-card__body, обычным текстом
+               Lampa (как .explorer-card__descr: 1.15em / 300). Отступ сверху
+               уже даёт margin-bottom у .explorer-card__head */
+            '.myshows-explorer-next {',
+            '    margin: 0 0 1em;',
+            '    font-size: 1.15em; font-weight: 300;',
             '}',
             '.full-start-new__poster { position: relative; }',
             '.full-start-new__poster .myshows-progress,',
