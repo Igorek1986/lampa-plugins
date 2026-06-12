@@ -66,6 +66,8 @@
     var BASE_KEY           = 'serial_status_enabled';
     var STYLE_KEY          = 'serial_status_style';
     var GLOBAL_DEFAULT     = true;
+    var SYNC_PLUGIN        = 'serial_status';
+    var SYNC_KEYS          = [BASE_KEY, STYLE_KEY];
 
     function getProfileId() {
         if (window._np_profiles_started || window.profiles_plugin) {
@@ -91,8 +93,41 @@
         return Lampa.Storage.get(getProfileKey(key), defaultValue);
     }
 
-    function setProfileSetting(key, value) {
+    var _syncApplying = false;
+
+    // sync=false — только локально (дефолты при загрузке профиля).
+    // Без флага — пользователь явно изменил, отправляем на NP-сервер.
+    function setProfileSetting(key, value, sync) {
         Lampa.Storage.set(getProfileKey(key), value);
+        if (sync !== false && !_syncApplying && window.__NMSync) {
+            window.__NMSync.patch(SYNC_PLUGIN, getProfileKey(key), value);
+        }
+    }
+
+    // Применить настройку, пришедшую с NP-сервера (без обратной отправки)
+    function _applyStatusSetting(profileKey, value) {
+        if (profileKey.indexOf('_profile_') < 0) return;
+        _syncApplying = true;
+        Lampa.Storage.set(profileKey, value);
+        var base = profileKey.slice(0, profileKey.lastIndexOf('_profile_'));
+        if (getProfileKey(base) === profileKey) {
+            Lampa.Storage.set(base, value, true);
+            if (base === STYLE_KEY) applyStatusStyleAttr();
+        }
+        _syncApplying = false;
+    }
+
+    function registerNMSync() {
+        if (!window.__NMSync) return;
+        window.__NMSync.register(SYNC_PLUGIN, [], _applyStatusSetting, function (serverKeys) {
+            // Досылаем на сервер локальные значения, которых там ещё нет
+            SYNC_KEYS.forEach(function (key) {
+                var profileKey = getProfileKey(key);
+                if (serverKeys.indexOf(profileKey) < 0 && hasProfileSetting(key)) {
+                    setProfileSetting(key, getProfileSetting(key));
+                }
+            });
+        });
     }
 
     function hasProfileSetting(key) {
@@ -101,10 +136,10 @@
 
     function loadProfileSettings() {
         if (!hasProfileSetting(BASE_KEY)) {
-            setProfileSetting(BASE_KEY, GLOBAL_DEFAULT);
+            setProfileSetting(BASE_KEY, GLOBAL_DEFAULT, false);
         }
         if (!hasProfileSetting(STYLE_KEY)) {
-            setProfileSetting(STYLE_KEY, '1');
+            setProfileSetting(STYLE_KEY, '1', false);
         }
         // Восстанавливаем в Lampa.Storage — триггер UI читает именно оттуда
         Lampa.Storage.set(BASE_KEY, getProfileSetting(BASE_KEY, GLOBAL_DEFAULT), true);
@@ -282,6 +317,10 @@
 
         loadProfileSettings();
         initSettings();
+
+        // NP-синхронизация настроек между устройствами. Задержка как в
+        // myshows.js: np.js должен успеть выставить IS_NP через /device/ping
+        setTimeout(registerNMSync, 2000);
 
         // Смена профиля — как в lm.js / myshows.js
         Lampa.Listener.follow('profile', function (e) {
