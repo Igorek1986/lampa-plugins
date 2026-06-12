@@ -1,3 +1,5 @@
+**Русский** · [English](https://igorek1986.github.io/lampa-plugins/docs/en/reset)
+
 🔄 Плагин Reset Settings для Lampa  
 Полный сброс настроек Lampa с сохранением уникального ID устройства!  
 

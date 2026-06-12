@@ -1,3 +1,5 @@
+**Русский** · [English](https://igorek1986.github.io/lampa-plugins/docs/en/status)
+
 🎬 Плагин Status Serials для Lampac  
 Визуальные метки статуса для сериалов и интеграция с [Movies-api](https://github.com/Igorek1986/movies-api)! (TMDB, CUB)  
 

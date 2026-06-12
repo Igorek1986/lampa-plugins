@@ -1,3 +1,5 @@
+**Русский** · [English](https://igorek1986.github.io/lampa-plugins/docs/en/num)
+
 🎬 Плагин NUMParser для Lampa  
 Мощный источник актуального контента с удобной фильтрацией и гибкими настройками!  
 

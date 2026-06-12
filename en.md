@@ -4,10 +4,6 @@
 
 A set of plugins for the [Lampa](http://lampa.mx/) and [Lampac](https://github.com/immisterio/Lampac) media center. Installed via a link — no build step, no dependencies.
 
-> The detailed plugin descriptions are currently available in Russian only.
-
----
-
 ## 📦 Plugin file variants
 
 Each plugin comes in three variants. They are **functionally identical** — only the file contents differ:
@@ -37,7 +33,7 @@ https://igorek1986.github.io/lampa-plugins/np.lite.js
 https://igorek1986.github.io/lampa-plugins/np.min.js
 ```
 
-📚 [Description (RU)](https://igorek1986.github.io/lampa-plugins/docs/num)
+📚 [Description](https://igorek1986.github.io/lampa-plugins/docs/en/num)
 
 ### 2. Status Serials
 Visual serial status badges (airing / ended / paused / TV).
@@ -52,7 +48,7 @@ https://igorek1986.github.io/lampa-plugins/status.lite.js
 https://igorek1986.github.io/lampa-plugins/status.min.js
 ```
 
-📚 [Description (RU)](https://igorek1986.github.io/lampa-plugins/docs/status)
+📚 [Description](https://igorek1986.github.io/lampa-plugins/docs/en/status)
 
 ### 3. MyShows
 Automatic sync of watched series and movies with MyShows.me.
@@ -67,7 +63,7 @@ https://igorek1986.github.io/lampa-plugins/myshows.lite.js
 https://igorek1986.github.io/lampa-plugins/myshows.min.js
 ```
 
-📚 [Description (RU)](https://igorek1986.github.io/lampa-plugins/docs/myshows)
+📚 [Description](https://igorek1986.github.io/lampa-plugins/docs/en/myshows)
 
 ### 4. Reset Settings
 Safe reset of Lampa settings while preserving the unique ID and profile.
@@ -82,7 +78,7 @@ https://igorek1986.github.io/lampa-plugins/reset.lite.js
 https://igorek1986.github.io/lampa-plugins/reset.min.js
 ```
 
-📚 [Description (RU)](https://igorek1986.github.io/lampa-plugins/docs/reset)
+📚 [Description](https://igorek1986.github.io/lampa-plugins/docs/en/reset)
 
 ---
 
