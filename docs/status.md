@@ -1,3 +1,10 @@
+---
+layout: default
+lang: ru
+body_class: prose
+title: Status Serials — Lampa Plugins
+---
+
 **Русский** · [English](https://igorek1986.github.io/lampa-plugins/docs/en/status)
 
 🎬 Плагин Status Serials для Lampac  

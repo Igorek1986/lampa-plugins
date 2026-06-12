@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="{{ page.lang | default: 'ru' }}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ page.title | default: 'Lampa Plugins' }}</title>
+<meta name="description" content="{{ page.description | default: 'Плагины для медиацентра Lampa / Lampac — каталог, трекинг просмотра, статусы сериалов.' }}">
+<link rel="preconnect" href="https://fonts.bunny.net">
+<link href="https://fonts.bunny.net/css?family=inter:400,500,600,700|jetbrains-mono:400,500" rel="stylesheet">
+<style>
+  :root{
+    --canvas:#010102; --surface:#0f1011; --surface-2:#141516; --surface-3:#18191a;
+    --hairline:#23252a; --hairline-strong:#34343a;
+    --ink:#f7f8f8; --ink-muted:#d0d6e0; --ink-subtle:#8a8f98; --ink-tertiary:#62666d;
+    --accent:#5e6ad2; --accent-hover:#828fff; --success:#27a644;
+    --radius:14px; --radius-sm:9px; --maxw:980px;
+    --mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+    --sans:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    margin:0; background:var(--canvas); color:var(--ink);
+    font-family:var(--sans); font-size:16px; line-height:1.55;
+    letter-spacing:-0.05px; -webkit-font-smoothing:antialiased;
+    text-rendering:optimizeLegibility;
+  }
+  body::before{
+    content:""; position:fixed; inset:0; pointer-events:none; z-index:0;
+    background:
+      radial-gradient(800px 420px at 50% -120px, rgba(94,106,210,.22), transparent 70%),
+      radial-gradient(600px 300px at 90% 0, rgba(94,106,210,.08), transparent 70%);
+  }
+  a{color:inherit; text-decoration:none}
+  .wrap{position:relative; z-index:1; max-width:var(--maxw); margin:0 auto; padding:0 22px}
+
+  /* Topbar */
+  .topbar{
+    position:sticky; top:0; z-index:20;
+    backdrop-filter:saturate(160%) blur(12px);
+    background:rgba(1,1,2,.66); border-bottom:1px solid var(--hairline);
+  }
+  .topbar__in{max-width:var(--maxw); margin:0 auto; padding:13px 22px;
+    display:flex; align-items:center; justify-content:space-between; gap:16px}
+  .brand{display:inline-flex; align-items:center; gap:10px; font-weight:600;
+    letter-spacing:-0.3px; color:var(--ink)}
+  .brand .dot{width:12px; height:12px; border-radius:4px;
+    background:linear-gradient(135deg,var(--accent),var(--accent-hover));
+    box-shadow:0 0 16px rgba(94,106,210,.65)}
+  .lang{display:inline-flex; gap:4px; padding:3px; border:1px solid var(--hairline);
+    border-radius:999px; background:var(--surface)}
+  .lang a{font-size:13px; font-weight:500; color:var(--ink-subtle);
+    padding:5px 13px; border-radius:999px; transition:.15s}
+  .lang a:hover{color:var(--ink)}
+  .lang a.active{background:var(--accent); color:#fff}
+
+  /* Hero */
+  .hero{padding:74px 0 30px; text-align:center}
+  .eyebrow{font-size:13px; font-weight:500; letter-spacing:.04em; text-transform:uppercase;
+    color:var(--accent-hover); margin:0 0 18px}
+  .hero h1{font-size:clamp(40px,7vw,68px); font-weight:600; line-height:1.04;
+    letter-spacing:-2px; margin:0 auto; max-width:14ch}
+  .hero h1 .accent{background:linear-gradient(120deg,var(--accent-hover),#a6adff);
+    -webkit-background-clip:text; background-clip:text; color:transparent}
+  .hero p{color:var(--ink-subtle); font-size:clamp(16px,2.4vw,19px);
+    max-width:50ch; margin:22px auto 0}
+  .hero__actions{display:flex; gap:12px; justify-content:center; flex-wrap:wrap; margin-top:30px}
+
+  .btn{display:inline-flex; align-items:center; gap:7px; font-family:var(--sans);
+    font-size:14px; font-weight:500; padding:10px 18px; border-radius:var(--radius-sm);
+    border:1px solid var(--hairline-strong); color:var(--ink); cursor:pointer;
+    transition:.16s; background:transparent; letter-spacing:-0.1px}
+  .btn:hover{border-color:var(--ink-subtle); transform:translateY(-1px)}
+  .btn--primary{background:var(--accent); border-color:var(--accent); color:#fff}
+  .btn--primary:hover{background:var(--accent-hover); border-color:var(--accent-hover)}
+
+  /* Sections */
+  .section{padding:34px 0}
+  .section__head{margin:0 0 20px}
+  .section__head h2{font-size:clamp(24px,4vw,32px); font-weight:600;
+    letter-spacing:-0.8px; margin:0}
+  .section__head p{color:var(--ink-subtle); margin:8px 0 0; max-width:62ch}
+
+  /* Variants table */
+  .variants{border:1px solid var(--hairline); border-radius:var(--radius);
+    overflow:hidden; background:var(--surface)}
+  .variants .row{display:grid; grid-template-columns:120px 200px 1fr; gap:16px;
+    padding:15px 20px; border-top:1px solid var(--hairline); align-items:center}
+  .variants .row:first-child{border-top:none; background:var(--surface-2);
+    font-size:12.5px; text-transform:uppercase; letter-spacing:.05em; color:var(--ink-tertiary)}
+  .variants .v-name{font-weight:600}
+  .variants code{font-family:var(--mono); font-size:13px; color:var(--ink-muted)}
+  .variants .row span:last-child{color:var(--ink-subtle); font-size:14.5px}
+  .pill{display:inline-block; font-size:11px; font-weight:600; padding:2px 9px;
+    border-radius:999px; vertical-align:middle}
+  .pill--reg{background:rgba(138,143,152,.16); color:var(--ink-muted)}
+  .pill--lite{background:rgba(94,106,210,.18); color:var(--accent-hover)}
+  .pill--min{background:rgba(39,166,68,.16); color:#5fd47e}
+
+  /* Plugin cards */
+  .grid{display:grid; grid-template-columns:1fr 1fr; gap:16px}
+  .card{background:var(--surface); border:1px solid var(--hairline);
+    border-radius:var(--radius); padding:22px; transition:.18s; position:relative}
+  .card:hover{border-color:var(--hairline-strong); transform:translateY(-2px)}
+  .card__head{display:flex; align-items:center; justify-content:space-between; gap:12px}
+  .card__title{font-size:20px; font-weight:600; letter-spacing:-0.4px; margin:0}
+  .card__desc{color:var(--ink-subtle); font-size:14.5px; margin:9px 0 18px; min-height:42px}
+  .urls{display:flex; flex-direction:column; gap:8px}
+  .url{display:flex; align-items:center; gap:10px; background:var(--canvas);
+    border:1px solid var(--hairline); border-radius:var(--radius-sm); padding:8px 8px 8px 12px}
+  .url .tag{font-size:10.5px; font-weight:600; letter-spacing:.04em; text-transform:uppercase;
+    color:var(--ink-tertiary); width:38px; flex:none}
+  .url code{font-family:var(--mono); font-size:12.5px; color:var(--ink-muted);
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; direction:rtl; text-align:left}
+  .copy{font-family:var(--sans); font-size:12px; font-weight:500; color:var(--ink-subtle);
+    background:var(--surface-3); border:1px solid var(--hairline); border-radius:7px;
+    padding:6px 11px; cursor:pointer; transition:.14s; flex:none}
+  .copy:hover{color:var(--ink); border-color:var(--hairline-strong)}
+  .copy.copied{color:var(--success); border-color:rgba(39,166,68,.4)}
+
+  /* Prose (docs pages) */
+  .prose{padding:38px 0 10px; max-width:760px}
+  .prose img{max-width:100%; height:auto; border-radius:var(--radius);
+    border:1px solid var(--hairline); margin:10px 0; display:block}
+  .prose h1,.prose h2,.prose h3{letter-spacing:-0.6px; line-height:1.25; margin:1.6em 0 .5em}
+  .prose h1{font-size:30px} .prose h2{font-size:24px} .prose h3{font-size:20px}
+  .prose p{margin:.7em 0; color:var(--ink-muted)}
+  .prose strong{color:var(--ink)}
+  .prose a{color:var(--accent-hover); text-decoration:underline; text-underline-offset:2px}
+  .prose ul{padding-left:1.2em; color:var(--ink-muted)}
+  .prose li{margin:.25em 0}
+  .prose code{font-family:var(--mono); font-size:.9em; background:var(--surface-2);
+    border:1px solid var(--hairline); border-radius:6px; padding:1px 6px; color:var(--ink-muted)}
+
+  /* Footer */
+  .footer{border-top:1px solid var(--hairline); margin-top:60px; padding:30px 0 50px}
+  .footer__in{display:flex; flex-wrap:wrap; gap:16px; align-items:center;
+    justify-content:space-between; color:var(--ink-subtle); font-size:14px}
+  .footer a{color:var(--ink-subtle); transition:.15s}
+  .footer a:hover{color:var(--ink)}
+  .footer .links{display:flex; gap:20px; flex-wrap:wrap}
+  .heart{color:var(--accent-hover)}
+
+  @media(max-width:720px){
+    .grid{grid-template-columns:1fr}
+    .variants .row{grid-template-columns:1fr; gap:5px; padding:14px 16px}
+    .variants .row:first-child{display:none}
+    .url code{direction:ltr}
+  }
+</style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar__in">
+      <a class="brand" href="https://igorek1986.github.io/lampa-plugins/">
+        <span class="dot"></span> Lampa Plugins
+      </a>
+      <nav class="lang">
+        <a href="https://igorek1986.github.io/lampa-plugins/" class="{% if page.lang != 'en' %}active{% endif %}">RU</a>
+        <a href="https://igorek1986.github.io/lampa-plugins/en" class="{% if page.lang == 'en' %}active{% endif %}">EN</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="wrap {{ page.body_class }}">
+    {{ content }}
+  </main>
+
+  <footer class="footer">
+    <div class="wrap footer__in">
+      <span>© Igorek1986 · Lampa / Lampac plugins</span>
+      <span class="links">
+        <a href="https://github.com/Igorek1986/lampa-plugins">GitHub</a>
+        <a href="https://yoomoney.ru/fundraise/1DVU3GIL23V.251112"><span class="heart">♥</span> {% if page.lang == 'en' %}Donate{% else %}Поддержать{% endif %}</a>
+      </span>
+    </div>
+  </footer>
+
+  <script>
+    document.addEventListener('click', function(e){
+      var b = e.target.closest('.copy'); if(!b) return;
+      var text = b.getAttribute('data-copy');
+      var done = function(){
+        var prev = b.textContent;
+        b.classList.add('copied'); b.textContent = b.getAttribute('data-ok') || '✓ Copied';
+        setTimeout(function(){ b.classList.remove('copied'); b.textContent = prev; }, 1300);
+      };
+      if(navigator.clipboard && navigator.clipboard.writeText){
+        navigator.clipboard.writeText(text).then(done, done);
+      } else {
+        var ta=document.createElement('textarea'); ta.value=text; document.body.appendChild(ta);
+        ta.select(); try{document.execCommand('copy');}catch(_){} document.body.removeChild(ta); done();
+      }
+    });
+  </script>
+</body>
+</html>

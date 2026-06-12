@@ -1,3 +1,10 @@
+---
+layout: default
+lang: en
+body_class: prose
+title: Reset Settings — Lampa Plugins
+---
+
 [Русский](https://igorek1986.github.io/lampa-plugins/docs/reset) · **English**
 
 🔄 Reset Settings plugin for Lampa  

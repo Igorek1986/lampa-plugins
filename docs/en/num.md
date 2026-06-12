@@ -1,3 +1,10 @@
+---
+layout: default
+lang: en
+body_class: prose
+title: NUMParser — Lampa Plugins
+---
+
 [Русский](https://igorek1986.github.io/lampa-plugins/docs/num) · **English**
 
 🎬 NUMParser plugin for Lampa  

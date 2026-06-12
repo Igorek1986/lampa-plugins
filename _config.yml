@@ -1,0 +1,12 @@
+title: Lampa Plugins
+description: Плагины для медиацентра Lampa / Lampac
+lang: ru
+
+# Keep build output lean — these are not part of the site
+exclude:
+  - README.md
+  - CLAUDE.md
+  - module/
+  - example_myshows_proxy/
+  - dev/
+  - "*.min.js.map"

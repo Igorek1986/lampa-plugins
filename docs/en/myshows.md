@@ -1,3 +1,10 @@
+---
+layout: default
+lang: en
+body_class: prose
+title: MyShows — Lampa Plugins
+---
+
 [Русский](https://igorek1986.github.io/lampa-plugins/docs/myshows) · **English**
 
 📺 MyShows plugin for [Lampac](https://github.com/immisterio/Lampac) and [Lampa](http://lampa.mx/)  
