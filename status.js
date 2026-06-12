@@ -43,11 +43,28 @@
         '.card__status[data-status="airing"]  { background: #2196F3; color: #fff; }',
         '.card__status[data-status="paused"]  { background: #FFC107; color: #222; }',
         '.card__status[data-status="canceled"]{ background: #FFC107; color: #222; }',
+        /* ── Вариант 2 (настройка «Расположение меток»): «Сериал» — левый
+           верхний угол, статус — правый верхний, не цветные.
+           Радиус карточки Lampa = 1em; при font-size 0.9em это 1.11em:
+           внешний угол повторяет угол карточки, противоположный — такой же. */
+        'body[data-status-badge-style="2"] .card__type {',
+        '    top: 0; left: 0;',
+        '    border-radius: 1.11em 0;',
+        '    box-shadow: none;',
+        '    background: rgba(0,0,0,0.5); color: #fff;',
+        '}',
+        'body[data-status-badge-style="2"] .card__status {',
+        '    top: 0; left: auto; right: 0;',
+        '    border-radius: 0 1.11em;',
+        '    box-shadow: none;',
+        '    background: rgba(0,0,0,0.5); color: #fff;',
+        '}',
     ].join('\n');
     document.head.appendChild(style);
 
     var SETTINGS_COMPONENT = 'serial_status_settings';
     var BASE_KEY           = 'serial_status_enabled';
+    var STYLE_KEY          = 'serial_status_style';
     var GLOBAL_DEFAULT     = true;
 
     function getProfileId() {
@@ -86,8 +103,22 @@
         if (!hasProfileSetting(BASE_KEY)) {
             setProfileSetting(BASE_KEY, GLOBAL_DEFAULT);
         }
+        if (!hasProfileSetting(STYLE_KEY)) {
+            setProfileSetting(STYLE_KEY, '1');
+        }
         // Восстанавливаем в Lampa.Storage — триггер UI читает именно оттуда
         Lampa.Storage.set(BASE_KEY, getProfileSetting(BASE_KEY, GLOBAL_DEFAULT), true);
+        Lampa.Storage.set(STYLE_KEY, getProfileSetting(STYLE_KEY, '1'), true);
+
+        applyStatusStyleAttr();
+    }
+
+    // Вариант расположения меток: '1' — классический (столбиком слева),
+    // '2' — по верхним углам, не цветные. Переключение через атрибут на <body>.
+    function applyStatusStyleAttr() {
+        var v = getProfileSetting(STYLE_KEY, '1').toString();
+        if (v === '2') document.body.setAttribute('data-status-badge-style', v);
+        else document.body.removeAttribute('data-status-badge-style');
     }
 
     function isPluginEnabled() {
@@ -120,6 +151,7 @@
         // Удаляем старые метки
         var old = cardView.querySelectorAll('.card__type, .card__status');
         for (var i = 0; i < old.length; i++) old[i].remove();
+        cardView.classList.remove('view--has-status');
 
         // Метка «Сериал»
         var typeElem = document.createElement('div');
@@ -163,6 +195,9 @@
         }
 
         cardView.appendChild(el);
+        // Маркер для других плагинов: правый верхний угол занят статусом
+        // (myshows в варианте 2 опускает счётчик остатка под него)
+        cardView.classList.add('view--has-status');
     }
 
     function fetchSeriesStatus(seriesId, callback) {
@@ -205,6 +240,24 @@
                 log('Setting changed, profile: ' + getProfileId());
             },
         });
+
+        Lampa.SettingsApi.addParam({
+            component: SETTINGS_COMPONENT,
+            param: {
+                name:    STYLE_KEY,
+                type:    'select',
+                values:  { '1': 'Вариант 1', '2': 'Вариант 2' },
+                default: '1',
+            },
+            field: {
+                name:        'Расположение меток',
+                description: 'Вариант 2: «Сериал» слева вверху, статус справа вверху, без цвета',
+            },
+            onChange: function (value) {
+                setProfileSetting(STYLE_KEY, value.toString());
+                applyStatusStyleAttr();
+            },
+        });
     }
 
     function onProfileChanged() {
@@ -215,9 +268,12 @@
             var panel = document.querySelector('[data-component="' + SETTINGS_COMPONENT + '"]');
             if (!panel) return;
             var toggle = panel.querySelector('[data-name="' + BASE_KEY + '"]');
-            if (!toggle) return;
-            var val = getProfileSetting(BASE_KEY, GLOBAL_DEFAULT);
-            toggle.classList.toggle('selector--active', !!val);
+            if (toggle) {
+                var val = getProfileSetting(BASE_KEY, GLOBAL_DEFAULT);
+                toggle.classList.toggle('selector--active', !!val);
+            }
+            var styleSelect = panel.querySelector('select[data-name="' + STYLE_KEY + '"]');
+            if (styleSelect) styleSelect.value = getProfileSetting(STYLE_KEY, '1').toString();
         }, 100);
     }
 
@@ -227,7 +283,7 @@
         loadProfileSettings();
         initSettings();
 
-        // Смена профиля — как в np.js / myshows.js
+        // Смена профиля — как в lm.js / myshows.js
         Lampa.Listener.follow('profile', function (e) {
             if (e.type === 'changed') onProfileChanged();
         });
