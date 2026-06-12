@@ -1,37 +1,64 @@
-# Lampa Plugins Repository
+# Репозиторий плагинов для Lampa / Lampac
 
-## Available Plugins
+**Русский** · [English](https://igorek1986.github.io/lampa-plugins/en)
 
-### 1. **NUM Plugin**  
+Набор плагинов для медиацентра [Lampa](http://lampa.mx/) и [Lampac](https://github.com/immisterio/Lampac). Устанавливаются по ссылке, без сборки и установки зависимостей.
 
-#### Installation:
-```bash
+---
+
+## 📦 Варианты файлов плагинов
+
+Каждый плагин доступен в трёх вариантах. Функционально они **полностью идентичны** — отличается только содержимое файла:
+
+| Вариант | Пример файла | Что внутри |
+|---------|--------------|------------|
+| **Обычный** | `np.js` | Полный исходный код с комментариями и отладочными логами |
+| **Lite** | `np.lite.js` | То же самое, но **без комментариев и логов** |
+| **Min** | `np.min.js` | То же, что Lite, **дополнительно минифицирован** (минимальный размер файла) |
+
+Можно использовать любой вариант — поведение одинаковое. Для слабых устройств и медленного интернета рекомендуется `.min`. Чтобы получить нужный вариант, замените `.js` в ссылке на `.lite.js` или `.min.js`.
+
+---
+
+## Плагины
+
+### 1. NUMParser
+Мощный источник актуального контента с удобной фильтрацией и гибкими настройками.
+
+```
 https://igorek1986.github.io/lampa-plugins/np.js
 ```
 
-#### 📚 [Description](https://igorek1986.github.io/lampa-plugins/docs/num)
+📚 [Описание](https://igorek1986.github.io/lampa-plugins/docs/num)
 
+### 2. Status Serials
+Визуальные метки статуса сериалов (в эфире / завершён / пауза / TV).
 
-### 2. **Status serials**
-```bash
+```
 https://igorek1986.github.io/lampa-plugins/status.js
 ```
 
-#### 📚 [Description](https://igorek1986.github.io/lampa-plugins/docs/status)
+📚 [Описание](https://igorek1986.github.io/lampa-plugins/docs/status)
 
-### 3. **Reset settings**
-```bash
-https://igorek1986.github.io/lampa-plugins/reset.js
+### 3. MyShows
+Автоматическая синхронизация просмотра сериалов и фильмов с MyShows.me.
+
 ```
-
-#### 📚 [Description](https://igorek1986.github.io/lampa-plugins/docs/reset)
-
-### 4. **MyShows**
-```bash
 https://igorek1986.github.io/lampa-plugins/myshows.js
 ```
 
-#### 📚 [Description](https://igorek1986.github.io/lampa-plugins/docs/myshows)
+📚 [Описание](https://igorek1986.github.io/lampa-plugins/docs/myshows)
 
+### 4. Reset Settings
+Безопасный сброс настроек Lampa с сохранением уникального ID и профиля.
 
-### **Сказать спасибо** [Юmoney](https://yoomoney.ru/fundraise/1DVU3GIL23V.251112)
+```
+https://igorek1986.github.io/lampa-plugins/reset.js
+```
+
+📚 [Описание](https://igorek1986.github.io/lampa-plugins/docs/reset)
+
+---
+
+### 💛 Сказать спасибо
+[ЮMoney](https://yoomoney.ru/fundraise/1DVU3GIL23V.251112)
