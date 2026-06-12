@@ -7194,11 +7194,13 @@
             // Вариант меток применяем сразу, не дожидаясь initSettings (он через
             // 2с после пинга) — иначе при старте мигает первый вариант
             applyBadgeStyleAttr();
+            // __NMSync сам дожидается результата /device/ping — без задержки
+            registerNMSync();
             // np.js устанавливает np_connected через /device/ping — ждём завершения
+            // (initSettings по isNpConnected() решает, показывать ли NP-пункт)
             setTimeout(function() {
                 initBadgesSubComponent();
                 initSettings();
-                registerNMSync();
             }, 2000);
             // Остальные компоненты не зависят от пинга — с небольшой задержкой для стабильности
             setTimeout(function() {
