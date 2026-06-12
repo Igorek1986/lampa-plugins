@@ -23,7 +23,7 @@
     margin:0; background:var(--canvas); color:var(--ink);
     font-family:var(--sans); font-size:16px; line-height:1.55;
     letter-spacing:-0.05px; -webkit-font-smoothing:antialiased;
-    text-rendering:optimizeLegibility;
+    text-rendering:optimizeLegibility; overflow-x:hidden;
   }
   body::before{
     content:""; position:fixed; inset:0; pointer-events:none; z-index:0;
@@ -98,9 +98,9 @@
   .pill--min{background:rgba(39,166,68,.16); color:#5fd47e}
 
   /* Plugin cards */
-  .grid{display:grid; grid-template-columns:1fr 1fr; gap:16px}
+  .grid{display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px}
   .card{background:var(--surface); border:1px solid var(--hairline);
-    border-radius:var(--radius); padding:22px; transition:.18s; position:relative}
+    border-radius:var(--radius); padding:22px; transition:.18s; position:relative; min-width:0}
   .card:hover{border-color:var(--hairline-strong); transform:translateY(-2px)}
   .card__head{display:flex; align-items:center; justify-content:space-between; gap:12px}
   .card__title{font-size:20px; font-weight:600; letter-spacing:-0.4px; margin:0}
@@ -111,7 +111,7 @@
   .url .tag{font-size:10.5px; font-weight:600; letter-spacing:.04em; text-transform:uppercase;
     color:var(--ink-tertiary); width:38px; flex:none}
   .url code{font-family:var(--mono); font-size:12.5px; color:var(--ink-muted);
-    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; direction:rtl; text-align:left}
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; min-width:0; direction:rtl; text-align:left}
   .copy{font-family:var(--sans); font-size:12px; font-weight:500; color:var(--ink-subtle);
     background:var(--surface-3); border:1px solid var(--hairline); border-radius:7px;
     padding:6px 11px; cursor:pointer; transition:.14s; flex:none}
@@ -141,11 +141,30 @@
   .footer .links{display:flex; gap:20px; flex-wrap:wrap}
   .heart{color:var(--accent-hover)}
 
+  /* Responsive */
+  @media(max-width:860px){
+    .variants .row{grid-template-columns:96px 1fr; gap:8px 14px}
+    .variants .row span:last-child{grid-column:1 / -1; color:var(--ink-subtle)}
+    .variants .row:first-child{display:none}
+  }
   @media(max-width:720px){
     .grid{grid-template-columns:1fr}
-    .variants .row{grid-template-columns:1fr; gap:5px; padding:14px 16px}
-    .variants .row:first-child{display:none}
-    .url code{direction:ltr}
+  }
+  @media(max-width:560px){
+    .wrap{padding:0 16px}
+    .topbar__in{padding:11px 16px}
+    .hero{padding:50px 0 22px}
+    .hero__actions{flex-direction:column; align-items:stretch}
+    .hero__actions .btn{justify-content:center}
+    .section{padding:26px 0}
+    .card{padding:18px}
+    .card__head{flex-wrap:wrap}
+    .variants .row{grid-template-columns:1fr; gap:5px; padding:13px 15px}
+    .url{flex-wrap:wrap; gap:8px 10px}
+    .url code{direction:ltr; flex:1 1 100%; order:3; font-size:12px}
+    .url .tag{order:1}
+    .url .copy{order:2; margin-left:auto}
+    .footer__in{flex-direction:column; align-items:flex-start; gap:12px}
   }
 </style>
 </head>
