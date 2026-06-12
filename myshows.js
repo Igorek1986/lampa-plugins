@@ -140,6 +140,15 @@
         loadCacheFromServer(cacheType, arrayKey, function(result) {
             var arr = result && result[arrayKey];
             if (!arr) { callback(null); return; }
+            // NP-сервер хранит unwatched_count, плагин ожидает remaining —
+            // та же нормализация, что в getUnwatchedShowsWithDetails
+            if (cacheType === 'unwatched_serials') {
+                arr.forEach(function(s) {
+                    if (s && s.remaining === undefined && s.unwatched_count !== undefined) {
+                        s.remaining = s.unwatched_count;
+                    }
+                });
+            }
             // Если передан объект карточки — матчим строго по нему (id/myshowsId/имя+год),
             // БЕЗ name-only fallback: null означает «этого сериала нет в кэше».
             if (card) { callback(matchShowInArray(arr, card)); return; }
@@ -3274,12 +3283,16 @@
         // Добавляем временный класс для анимации
         container.className = originalClasses + ' digit-animating-active';
 
+        // В варианте 2 фон меток нейтральный — направление показываем цветом
+        // текста (зелёный вверх / оранжевый вниз), фон не трогаем
+        var neutralBg = document.body.getAttribute('data-myshows-badge-style') === '2';
+
         function updateDigit() {
             container.textContent = current + '/' + totalEpisodes;
 
             // Добавляем inline-стили для текущего шага
-            // container.style.color = direction === 'up' ? '#4CAF50' : '#FF9800';
-            container.style.backgroundColor = direction === 'up' ? '#2E7D32' : '#EF6C00';
+            if (neutralBg) container.style.color = direction === 'up' ? '#4CAF50' : '#FF9800';
+            else container.style.backgroundColor = direction === 'up' ? '#2E7D32' : '#EF6C00';
 
             setTimeout(function() {
                 if (direction === 'up' && current < endNum) {
@@ -3291,7 +3304,7 @@
                 } else {
                     // ✅ Завершение: убираем inline-стили и восстанавливаем классы
                     setTimeout(function() {
-                        // container.style.color = '';
+                        container.style.color = '';
                         container.style.backgroundColor = '';
                         container.className = originalClasses;
                     }, 200);
