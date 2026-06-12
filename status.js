@@ -318,9 +318,9 @@
         loadProfileSettings();
         initSettings();
 
-        // NP-синхронизация настроек между устройствами. Задержка как в
-        // myshows.js: np.js должен успеть выставить IS_NP через /device/ping
-        setTimeout(registerNMSync, 2000);
+        // NP-синхронизация настроек между устройствами. __NMSync сам дожидается
+        // результата /device/ping (IS_NP), задержка не нужна
+        registerNMSync();
 
         // Смена профиля — как в lm.js / myshows.js
         Lampa.Listener.follow('profile', function (e) {
