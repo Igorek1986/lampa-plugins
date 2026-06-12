@@ -644,6 +644,7 @@
         var base = profileKey.slice(0, profileKey.lastIndexOf('_profile_'));
         if (getProfileKey(base) === profileKey) {
             Lampa.Storage.set(base, value, true);
+            if (base === 'myshows_badge_style') applyBadgeStyleAttr();
         }
         _syncApplying = false;
     }
@@ -701,6 +702,10 @@
             setProfileSetting('myshows_badge_next', true, false);
         }
 
+        if (!hasProfileSetting('myshows_badge_style')) {
+            setProfileSetting('myshows_badge_style', '1', false);
+        }
+
         Lampa.Storage.set('myshows_view_in_main',  getProfileSetting('myshows_view_in_main',  true), true);
         Lampa.Storage.set('myshows_button_view',   getProfileSetting('myshows_button_view',   true), true);
         Lampa.Storage.set('myshows_sort_order',    getProfileSetting('myshows_sort_order',    'progress'), true);
@@ -715,6 +720,18 @@
         Lampa.Storage.set('myshows_badge_progress',  getProfileSetting('myshows_badge_progress',  true), true);
         Lampa.Storage.set('myshows_badge_remaining', getProfileSetting('myshows_badge_remaining', true), true);
         Lampa.Storage.set('myshows_badge_next',      getProfileSetting('myshows_badge_next',      true), true);
+        Lampa.Storage.set('myshows_badge_style',     getProfileSetting('myshows_badge_style',     '1'), true);
+
+        applyBadgeStyleAttr();
+    }
+
+    // Вариант отображения меток: '1' — классический, '2' — по углам карточки
+    // (как у card_overlay). Переключение через атрибут на <body> — позиции и
+    // скругления перестраивает CSS, JS-логика меток не меняется.
+    function applyBadgeStyleAttr() {
+        var v = getProfileSetting('myshows_badge_style', '1').toString();
+        if (v === '2') document.body.setAttribute('data-myshows-badge-style', v);
+        else document.body.removeAttribute('data-myshows-badge-style');
     }
 
     function hasProfileSetting(key) {
@@ -752,6 +769,24 @@
             field: { name: 'Следующий эпизод', description: 'Номер следующего эпизода для просмотра, например S01E05' },
             onChange: function(value) {
                 setProfileSetting('myshows_badge_next', value === true || value === 'true');
+            }
+        });
+
+        Lampa.SettingsApi.addParam({
+            component: 'myshows_badges',
+            param: {
+                name: 'myshows_badge_style',
+                type: 'select',
+                values: { '1': 'Вариант 1', '2': 'Вариант 2' },
+                default: '1'
+            },
+            field: {
+                name: 'Расположение значков',
+                description: 'Вариант 2: следующий эпизод слева внизу, прогресс справа внизу, остаток серий справа вверху, скругления как у карточки'
+            },
+            onChange: function(value) {
+                setProfileSetting('myshows_badge_style', value.toString());
+                applyBadgeStyleAttr();
             }
         });
     }
@@ -1268,6 +1303,18 @@
             var useNpInput = settingsPanel.querySelector('input[data-name="myshows_use_np"]');
             if (useNpInput) useNpInput.value = getProfileSetting('myshows_use_np', 'false');
 
+        }
+
+        // Панель «Значки на карточках» (сабкомпонент myshows_badges)
+        var badgesPanel = document.querySelector('[data-component="myshows_badges"]');
+        if (badgesPanel) {
+            ['myshows_badge_progress', 'myshows_badge_remaining', 'myshows_badge_next'].forEach(function(key) {
+                var el = badgesPanel.querySelector('select[data-name="' + key + '"]');
+                if (el) el.value = getProfileSetting(key, true).toString();
+            });
+
+            var styleSelect = badgesPanel.querySelector('select[data-name="myshows_badge_style"]');
+            if (styleSelect) styleSelect.value = getProfileSetting('myshows_badge_style', '1').toString();
         }
         }, 100);
     }
@@ -4177,7 +4224,59 @@
             '    50%  { transform: scale(1); }',
             '    100% { transform: scale(1); }',
             '}',
-            '.scale-animation { animation: gentlePulse 0.6s ease; }'
+            '.scale-animation { animation: gentlePulse 0.6s ease; }',
+            /* ── Вариант 2: метки по углам (как card_overlay) ──────────────────
+               Радиус карточки Lampa = 1em; у меток font-size 1.2em, поэтому
+               0.83em внутри метки ≈ 1em карточки. Внешний угол повторяет угол
+               карточки, противоположный по диагонали — такой же. */
+            'body[data-myshows-badge-style="2"] .card .myshows-next-episode,',
+            'body[data-myshows-badge-style="2"] .full-start-new__poster .myshows-next-episode {',
+            '    left: 0; bottom: 0; border-radius: 0 0.83em;',
+            '    background: rgba(0,0,0,0.5); box-shadow: none;',
+            '}',
+            'body[data-myshows-badge-style="2"] .card .myshows-progress,',
+            'body[data-myshows-badge-style="2"] .full-start-new__poster .myshows-progress {',
+            '    left: auto; right: 0; bottom: 0; border-radius: 0.83em 0;',
+            '    background: rgba(0,0,0,0.5); box-shadow: none;',
+            '}',
+            /* glass--style красит прогресс/след. эпизод цветом с блюром — в
+               варианте 2 возвращаем вид как у остатка серий */
+            'body[data-myshows-badge-style="2"].glass--style .card .myshows-progress,',
+            'body[data-myshows-badge-style="2"].glass--style .card .myshows-next-episode {',
+            '    background-color: rgba(0,0,0,0.5);',
+            '    -webkit-backdrop-filter: none; backdrop-filter: none;',
+            '}',
+            'body[data-myshows-badge-style="2"] .card .myshows-remaining,',
+            'body[data-myshows-badge-style="2"] .full-start-new__poster .myshows-remaining {',
+            '    right: 0; top: 0; border-radius: 0 0.83em;',
+            '}',
+            /* Правый верх занят статусом сериала (status.js, вариант 2, класс
+               view--has-status) — счётчик остатка встаёт под него. Высота
+               статуса ≈1.35em карточки = 1.125em при font-size 1.2em + зазор */
+            'body[data-myshows-badge-style="2"][data-status-badge-style="2"] .card .view--has-status .myshows-remaining {',
+            '    top: 1.25em; border-radius: 0.83em 0 0 0.83em;',
+            '}',
+            /* Нативное качество Lampa (left:-0.8em торчит за край) — прижимаем
+               к левому краю, над меткой следующей серии */
+            'body[data-myshows-badge-style="2"] .card .card__quality {',
+            '    left: 0; border-radius: 0 0.75em 0.75em 0;',
+            '}',
+            /* Нативный рейтинг Lampa: справа над прогрессом (шаг 1.5em,
+               как у пары прогресс/след. эпизод в варианте 1) */
+            'body[data-myshows-badge-style="2"] .card .card__vote {',
+            '    right: 0; bottom: 1.5em; left: auto; top: auto;',
+            '    padding: 0.2em 0.4em; font-size: 1.2em; font-weight: bold;',
+            '    background: rgba(0,0,0,0.5); color: #fff;',
+            '    border-radius: 0.83em 0 0 0.83em;',
+            '}',
+            /* Мобильные отступы на постере full — зеркало правил варианта 1:
+               там прогресс и след. эпизод стояли столбиком слева (15em/17em),
+               в варианте 2 они по разным углам — одинаковая высота */
+            'body[data-myshows-badge-style="2"].true--mobile.orientation--portrait .full-start-new__poster .myshows-next-episode { bottom: 15em; }',
+            'body[data-myshows-badge-style="2"].true--mobile.orientation--landscape .full-start-new__poster .myshows-next-episode { bottom: 2.5em; }',
+            '@media screen and (min-width: 580px) and (max-width: 1024px) {',
+            '    body[data-myshows-badge-style="2"].true--mobile .full-start-new__poster .myshows-next-episode { bottom: 2.5em; font-size: 1.1em; }',
+            '}'
         ].join('\n');
         document.head.appendChild(style);
     }
@@ -6687,6 +6786,7 @@
 
             this._fill = function(table, cardsMap) {
                 self.activity.loader(false);
+                var lastDate = last ? $(last).attr('data-air') : '';
                 body.empty();
 
                 if (!table.length) {
@@ -6702,6 +6802,19 @@
                     self._day(new Date(cur), table, cardsMap);
                     cur.setDate(cur.getDate() + 1);
                 }
+
+                // body.empty() выбросил старые элементы — если фокус не стоял
+                // (первое открытие) или указывает на удалённый узел, ставим на
+                // первый день. Перезапуск toggle пересобирает коллекцию
+                // Navigator и реально наводит фокус.
+                if (!last || !document.body.contains(last)) {
+                    last = (lastDate ? body.find('.timetable__item[data-air="' + lastDate + '"]')[0] : null)
+                        || body.find('.timetable__item').first()[0];
+                }
+                try {
+                    var enabled = Lampa.Controller.enabled();
+                    if (enabled && enabled.name === 'content') Lampa.Controller.toggle('content');
+                } catch(e) {}
             };
 
             this._day = function(date, table, cardsMap) {
@@ -6717,7 +6830,7 @@
                 });
 
                 var item = $([
-                    '<div class="timetable__item selector">',
+                    '<div class="timetable__item selector" data-air="' + airDate + '">',
                     '<div class="timetable__inner">',
                     '<div class="timetable__date"></div>',
                     '<div class="timetable__body"></div>',
@@ -6993,6 +7106,9 @@
             if (IS_LAMPAC) Log.info('✅ Среда: Lampac');
             // initCurrentProfile синхронно — не зависит от пинга
             initCurrentProfile();
+            // Вариант меток применяем сразу, не дожидаясь initSettings (он через
+            // 2с после пинга) — иначе при старте мигает первый вариант
+            applyBadgeStyleAttr();
             // np.js устанавливает np_connected через /device/ping — ждём завершения
             setTimeout(function() {
                 initBadgesSubComponent();
@@ -7024,7 +7140,9 @@
         var MYSHOWS_SYNC_KEYS = ['myshows_view_in_main', 'myshows_calendar', 'myshows_button_view',
             'myshows_sort_order', 'myshows_add_threshold', 'myshows_min_progress',
             'myshows_token', 'myshows_login', 'myshows_password',
-            'myshows_cache_days', 'myshows_use_np'];
+            'myshows_cache_days', 'myshows_use_np',
+            'myshows_badge_progress', 'myshows_badge_remaining', 'myshows_badge_next',
+            'myshows_badge_style'];
         window.__NMSync.register('myshows', MYSHOWS_SENSITIVE_KEYS, _applyMyShowsSetting, function (serverKeys) {
             try {
                 if (sessionStorage.getItem('myshows_just_logged_out')) {
