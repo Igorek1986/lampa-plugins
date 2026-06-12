@@ -30,6 +30,12 @@ A powerful source of up-to-date content with convenient filtering and flexible s
 ```
 https://igorek1986.github.io/lampa-plugins/np.js
 ```
+```
+https://igorek1986.github.io/lampa-plugins/np.lite.js
+```
+```
+https://igorek1986.github.io/lampa-plugins/np.min.js
+```
 
 📚 [Description (RU)](https://igorek1986.github.io/lampa-plugins/docs/num)
 
@@ -38,6 +44,12 @@ Visual serial status badges (airing / ended / paused / TV).
 
 ```
 https://igorek1986.github.io/lampa-plugins/status.js
+```
+```
+https://igorek1986.github.io/lampa-plugins/status.lite.js
+```
+```
+https://igorek1986.github.io/lampa-plugins/status.min.js
 ```
 
 📚 [Description (RU)](https://igorek1986.github.io/lampa-plugins/docs/status)
@@ -48,6 +60,12 @@ Automatic sync of watched series and movies with MyShows.me.
 ```
 https://igorek1986.github.io/lampa-plugins/myshows.js
 ```
+```
+https://igorek1986.github.io/lampa-plugins/myshows.lite.js
+```
+```
+https://igorek1986.github.io/lampa-plugins/myshows.min.js
+```
 
 📚 [Description (RU)](https://igorek1986.github.io/lampa-plugins/docs/myshows)
 
@@ -56,6 +74,12 @@ Safe reset of Lampa settings while preserving the unique ID and profile.
 
 ```
 https://igorek1986.github.io/lampa-plugins/reset.js
+```
+```
+https://igorek1986.github.io/lampa-plugins/reset.lite.js
+```
+```
+https://igorek1986.github.io/lampa-plugins/reset.min.js
 ```
 
 📚 [Description (RU)](https://igorek1986.github.io/lampa-plugins/docs/reset)

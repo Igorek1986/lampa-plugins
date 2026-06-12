@@ -28,6 +28,12 @@
 ```
 https://igorek1986.github.io/lampa-plugins/np.js
 ```
+```
+https://igorek1986.github.io/lampa-plugins/np.lite.js
+```
+```
+https://igorek1986.github.io/lampa-plugins/np.min.js
+```
 
 📚 [Описание](https://igorek1986.github.io/lampa-plugins/docs/num)
 
@@ -36,6 +42,12 @@ https://igorek1986.github.io/lampa-plugins/np.js
 
 ```
 https://igorek1986.github.io/lampa-plugins/status.js
+```
+```
+https://igorek1986.github.io/lampa-plugins/status.lite.js
+```
+```
+https://igorek1986.github.io/lampa-plugins/status.min.js
 ```
 
 📚 [Описание](https://igorek1986.github.io/lampa-plugins/docs/status)
@@ -46,6 +58,12 @@ https://igorek1986.github.io/lampa-plugins/status.js
 ```
 https://igorek1986.github.io/lampa-plugins/myshows.js
 ```
+```
+https://igorek1986.github.io/lampa-plugins/myshows.lite.js
+```
+```
+https://igorek1986.github.io/lampa-plugins/myshows.min.js
+```
 
 📚 [Описание](https://igorek1986.github.io/lampa-plugins/docs/myshows)
 
@@ -54,6 +72,12 @@ https://igorek1986.github.io/lampa-plugins/myshows.js
 
 ```
 https://igorek1986.github.io/lampa-plugins/reset.js
+```
+```
+https://igorek1986.github.io/lampa-plugins/reset.lite.js
+```
+```
+https://igorek1986.github.io/lampa-plugins/reset.min.js
 ```
 
 📚 [Описание](https://igorek1986.github.io/lampa-plugins/docs/reset)
