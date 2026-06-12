@@ -3327,7 +3327,7 @@
         if (!isSerial) return;
 
         findShowInCache('unwatched_serials', 'shows', movie.original_name || movie.name || movie.title, function(foundShow) {
-            if (!foundShow || !foundShow.next_episode) return;
+            var nextEpisode = foundShow && foundShow.next_episode;
 
             // Explorer может ещё не отрендериться — несколько попыток; активность
             // могла смениться, пока грузился кэш — сверяем tmdb id
@@ -3337,20 +3337,41 @@
                 if (!act || !act.movie || String(act.movie.id) !== String(movie.id)) return;
                 var cardEl = document.querySelector('.activity--active .explorer-card');
                 if (!cardEl) {
-                    if (++attempts < 10) setTimeout(tryInsert, 300);
+                    if (nextEpisode && ++attempts < 10) setTimeout(tryInsert, 300);
                     return;
                 }
                 var old = cardEl.querySelector('.myshows-explorer-next');
+                // Сериал ушёл из непросмотренных (досмотрели) — убираем метку
+                if (!nextEpisode) {
+                    if (old) old.remove();
+                    return;
+                }
                 if (old) old.remove();
                 var el = document.createElement('div');
                 el.className = 'myshows-explorer-next';
-                el.textContent = 'Следующая серия: ' + foundShow.next_episode;
+                el.textContent = 'Следующая серия: ' + nextEpisode;
                 // Между explorer-card__head и explorer-card__body
                 var body = cardEl.querySelector('.explorer-card__body');
                 if (body) cardEl.insertBefore(el, body);
                 else cardEl.appendChild(el);
             })();
         }, movie);
+    }
+
+    // Обновление метки после просмотра: плеер закрывается ПОВЕРХ Explorer-активности
+    // (Торренты/Онлайн), сама активность не перезапускается и событий не шлёт.
+    // Ловим закрытие плеера; 3с — серверу нужно время отметить серию (та же
+    // задержка, что у refreshFullCardStatus на полной карточке).
+    if (window.Lampa && Lampa.Player && Lampa.Player.listener) {
+        Lampa.Player.listener.follow('destroy', function() {
+            if (!Lampa.Storage.get('myshows_was_watching', false)) return;
+            var act = Lampa.Activity.active && Lampa.Activity.active();
+            if (!act || act.component === 'full' || !act.movie) return;
+            var movie = act.movie;
+            setTimeout(function() {
+                addNextEpisodeToExplorer(movie);
+            }, 3000);
+        });
     }
 
     Lampa.Listener.follow('activity', function(event) {
