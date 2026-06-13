@@ -2381,32 +2381,25 @@
                 var status;
                 if (isSerial) if (cacheType === "watchlist") status = "later"; else if (cacheType === "watching" || cacheType === "cancelled") status = cacheType; else status = "remove"; else if (cacheType === "watched") status = "finished"; else if (cacheType === "watchlist") status = "later"; else status = "remove";
                 updateButtonStates(status, !isSerial, true);
-                Lampa.Storage.set("myshows_was_watching", false);
             }, function() {});
             if (isSerial) findShowInCache("unwatched_serials", "shows", originalName, function(foundShow) {
                 if (!isSameFullCardOpen(currentCard)) return;
-                if (foundShow && (foundShow.progress_marker || foundShow.next_episode || foundShow.remaining)) updateFullCardMarkers(foundShow);
+                if (foundShow && (foundShow.progress_marker || foundShow.next_episode || foundShow.remaining)) updateFullCardMarkers(foundShow); else if (!foundShow) completeFullCardMarkers(currentCard);
             }, currentCard);
             return;
         }
         if (isSerial) {
             findShowInCache("unwatched_serials", "shows", originalName, function(foundShow) {
                 if (!isSameFullCardOpen(currentCard)) return;
-                if (foundShow && (foundShow.progress_marker || foundShow.next_episode || foundShow.remaining)) updateFullCardMarkers(foundShow);
+                if (foundShow && (foundShow.progress_marker || foundShow.next_episode || foundShow.remaining)) updateFullCardMarkers(foundShow); else if (!foundShow) completeFullCardMarkers(currentCard);
             }, currentCard);
             findShowInCache("serial_status", "shows", originalName, function(foundShow) {
                 if (!isSameFullCardOpen(currentCard)) return;
-                if (foundShow) {
-                    updateButtonStates(foundShow.watchStatus, false, true);
-                    Lampa.Storage.set("myshows_was_watching", false);
-                }
+                if (foundShow) updateButtonStates(foundShow.watchStatus, false, true);
             });
         } else findShowInCache("movie_status", "movies", originalName, function(foundMovie) {
             if (!isSameFullCardOpen(currentCard)) return;
-            if (foundMovie) {
-                updateButtonStates(foundMovie.watchStatus, true, true);
-                Lampa.Storage.set("myshows_was_watching", false);
-            }
+            if (foundMovie) updateButtonStates(foundMovie.watchStatus, true, true);
         });
     }
     function updateFullCardMarkers(showData, bodyElement) {
@@ -2440,6 +2433,32 @@
         if (showData.progress_marker && (showProgress === true || showProgress === "true")) if (existingProgress) animateFullCardMarker(existingProgress, showData.progress_marker, "progress"); else addMarker("myshows-progress", showData.progress_marker); else if (existingProgress) existingProgress.remove();
         if (showData.remaining !== void 0 && showData.remaining !== null && (showRemaining === true || showRemaining === "true")) if (existingRemaining) animateFullCardMarker(existingRemaining, showData.remaining.toString(), "remaining"); else addMarker("myshows-remaining", showData.remaining); else if (existingRemaining) existingRemaining.remove();
         if (showData.next_episode && (showNext === true || showNext === "true")) if (existingNext) animateFullCardMarker(existingNext, showData.next_episode, "next"); else addMarker("myshows-next-episode", showData.next_episode); else if (existingNext) existingNext.remove();
+    }
+    function completeFullCardMarkers(currentCard) {
+        if (currentCard && !isSameFullCardOpen(currentCard)) return;
+        var posterElement = $(".full-start-new__poster");
+        if (!posterElement.length) return;
+        var posterDom = posterElement[0];
+        var progress = posterDom.querySelector(".myshows-progress");
+        var remaining = posterDom.querySelector(".myshows-remaining");
+        var next = posterDom.querySelector(".myshows-next-episode");
+        if (!progress && !remaining && !next) return;
+        if (progress) {
+            var parts = (progress.textContent || "").split("/");
+            if (parts.length === 2 && parts[1]) animateFullCardMarker(progress, parts[1] + "/" + parts[1], "progress");
+        }
+        if (remaining) animateFullCardMarker(remaining, "0", "remaining");
+        setTimeout(function() {
+            [ progress, remaining, next ].forEach(function(el) {
+                if (!el || !el.parentNode) return;
+                el.style.transition = "opacity 0.5s ease, transform 0.5s ease";
+                el.style.opacity = "0";
+                el.style.transform = "translateY(10px)";
+                setTimeout(function() {
+                    if (el.parentNode) el.remove();
+                }, 500);
+            });
+        }, 1600);
     }
     function animateFullCardMarker(markerElement, newValue, markerType) {
         var oldValue = markerElement.textContent || "";
@@ -2631,6 +2650,8 @@
                     var newProgressMarker = releasedEpisodes + "/" + releasedEpisodes;
                     cardData.progress_marker = newProgressMarker;
                     updateCardWithAnimation(cardElement, newProgressMarker, "myshows-progress");
+                    cardData.remaining = 0;
+                    updateCardWithAnimation(cardElement, "0", "myshows-remaining");
                     var parentSection = cardElement.closest(".items-line");
                     var allCards = parentSection.querySelectorAll(".card");
                     var currentIndex = [].slice.call(allCards).indexOf(cardElement);

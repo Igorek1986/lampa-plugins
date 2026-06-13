@@ -3515,7 +3515,6 @@
                     else status = 'remove';
                 }
                 updateButtonStates(status, !isSerial, true);
-                Lampa.Storage.set('myshows_was_watching', false);
             }, function() {});
 
             if (isSerial) {
@@ -3523,6 +3522,9 @@
                     if (!isSameFullCardOpen(currentCard)) return;
                     if (foundShow && (foundShow.progress_marker || foundShow.next_episode || foundShow.remaining)) {
                         updateFullCardMarkers(foundShow);
+                    } else if (!foundShow) {
+                        // Сериала больше нет в "непросмотренных" → досмотрен: доводим метки и убираем
+                        completeFullCardMarkers(currentCard);
                     }
                 }, currentCard);
             }
@@ -3534,6 +3536,8 @@
                 if (!isSameFullCardOpen(currentCard)) return;
                 if (foundShow && (foundShow.progress_marker || foundShow.next_episode || foundShow.remaining)) {
                     updateFullCardMarkers(foundShow);
+                } else if (!foundShow) {
+                    completeFullCardMarkers(currentCard);
                 }
             }, currentCard);
             // serial_status/movie_status хранят id=MyShows id и без года — строгий матч
@@ -3542,7 +3546,6 @@
                 if (!isSameFullCardOpen(currentCard)) return;
                 if (foundShow) {
                     updateButtonStates(foundShow.watchStatus, false, true);
-                    Lampa.Storage.set('myshows_was_watching', false);
                 }
             });
         } else {
@@ -3550,7 +3553,6 @@
                 if (!isSameFullCardOpen(currentCard)) return;
                 if (foundMovie) {
                     updateButtonStates(foundMovie.watchStatus, true, true);
-                    Lampa.Storage.set('myshows_was_watching', false);
                 }
             });
         }
@@ -3610,6 +3612,41 @@
         } else if (existingNext) {
             existingNext.remove();
         }
+    }
+
+    // Сериал досмотрен (его больше нет в "непросмотренных"): доводим прогресс до N/N,
+    // остаток до 0, затем плавно убираем все метки с постера полной карточки.
+    function completeFullCardMarkers(currentCard) {
+        if (currentCard && !isSameFullCardOpen(currentCard)) return;
+
+        var posterElement = $('.full-start-new__poster');
+        if (!posterElement.length) return;
+        var posterDom = posterElement[0];
+
+        var progress  = posterDom.querySelector('.myshows-progress');
+        var remaining = posterDom.querySelector('.myshows-remaining');
+        var next      = posterDom.querySelector('.myshows-next-episode');
+
+        if (!progress && !remaining && !next) return; // меток нет — нечего завершать
+
+        if (progress) {
+            var parts = (progress.textContent || '').split('/');
+            if (parts.length === 2 && parts[1]) {
+                animateFullCardMarker(progress, parts[1] + '/' + parts[1], 'progress');
+            }
+        }
+        if (remaining) animateFullCardMarker(remaining, '0', 'remaining');
+
+        // После анимации счётчиков плавно убираем все метки
+        setTimeout(function() {
+            [progress, remaining, next].forEach(function(el) {
+                if (!el || !el.parentNode) return;
+                el.style.transition = 'opacity 0.5s ease, transform 0.5s ease';
+                el.style.opacity = '0';
+                el.style.transform = 'translateY(10px)';
+                setTimeout(function() { if (el.parentNode) el.remove(); }, 500);
+            });
+        }, 1600);
     }
 
     function animateFullCardMarker(markerElement, newValue, markerType) {
@@ -3974,6 +4011,10 @@
 
                     // ✅ ИСПРАВЛЕНО: Передаём класс маркера
                     updateCardWithAnimation(cardElement, newProgressMarker, 'myshows-progress');
+
+                    // Счётчик оставшихся серий доводим до 0
+                    cardData.remaining = 0;
+                    updateCardWithAnimation(cardElement, '0', 'myshows-remaining');
 
                     var parentSection = cardElement.closest('.items-line');
                     var allCards = parentSection.querySelectorAll('.card');
