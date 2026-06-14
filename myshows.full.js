@@ -363,6 +363,16 @@
             npNet.silent(npUrl,
                 function(response) {
                     if (response && response.results) {
+                        // NP-сервер отдаёт myshows_id (snake_case), а весь плагин
+                        // матчит по myshowsId. Без этого надёжный матч по ID не
+                        // срабатывает → дедуп падает на сравнение имён и в "Непросмотренных"
+                        // появляются дубли карточек (см. updateUIIfNeeded / findCardInMyShowsSection).
+                        for (var ri = 0; ri < response.results.length; ri++) {
+                            var item = response.results[ri];
+                            if (item && item.myshowsId === undefined && item.myshows_id !== undefined) {
+                                item.myshowsId = item.myshows_id;
+                            }
+                        }
                         response.shows = response.results;
                         callback(response);
                     } else {

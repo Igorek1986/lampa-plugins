@@ -287,6 +287,10 @@
             var npNet = new Lampa.Reguest;
             npNet.silent(npUrl, function(response) {
                 if (response && response.results) {
+                    for (var ri = 0; ri < response.results.length; ri++) {
+                        var item = response.results[ri];
+                        if (item && item.myshowsId === void 0 && item.myshows_id !== void 0) item.myshowsId = item.myshows_id;
+                    }
                     response.shows = response.results;
                     callback(response);
                 } else callback(null);
