@@ -259,8 +259,14 @@
         Lampa.Storage.set("myshows_tmdb_cards", {});
         return false;
     }
+    function isNpConfigured() {
+        var useNp = getProfileSetting("myshows_use_np", false);
+        var npEnabled = useNp === true || useNp === "true";
+        return npEnabled && !!getProfileSetting("myshows_token") && !!getNpToken() && !!getNpBaseUrl();
+    }
     function loadCacheFromServer(path, propertyName, callback, options) {
         var mode = getStorageMode();
+        if (options && options.forceNp && mode !== "np" && isNpConfigured()) mode = "np";
         var profileId = getProfileId();
         if (!getProfileSetting("myshows_token")) {
             callback(null);
@@ -1643,7 +1649,7 @@
         if (removedCount > 0) Lampa.Storage.set(MAP_KEY, cleaned);
     }
     function getUnwatchedShowsWithDetails(callback, show) {
-        if (isNpConnected()) {
+        if (isNpConnected() || isNpConfigured()) {
             if (!getProfileSetting("myshows_token") || !getNpToken()) {
                 callback({
                     shows: []
@@ -1673,6 +1679,8 @@
                         shows: []
                     });
                 });
+            }, {
+                forceNp: true
             });
         } else if (IS_LAMPAC) loadCacheFromServer("unwatched_serials", "shows", function(cachedResult) {
             if (cachedResult && cachedResult.shows && cachedResult.shows.length) {

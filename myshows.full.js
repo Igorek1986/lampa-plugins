@@ -329,10 +329,26 @@
         return false;
     }
 
+    // NP настроен пользователем и есть все реквизиты для запроса.
+    // Не зависит от пинга (isNpConnected) — нужно для чтения до его завершения.
+    function isNpConfigured() {
+        var useNp = getProfileSetting('myshows_use_np', false);
+        var npEnabled = (useNp === true || useNp === 'true');
+        return npEnabled && !!getProfileSetting('myshows_token') &&
+               !!getNpToken() && !!getNpBaseUrl();
+    }
+
     // Загрузка кеша
     function loadCacheFromServer(path, propertyName, callback, options) {
 
         var mode = getStorageMode();
+        // options.forceNp — читать с NP по настройке, не дожидаясь пинга (isNpConnected).
+        // NP-эндпоинт быстрый и требует только токен+url; при недоступности вернёт
+        // null и сработает обычный fallback. Исправляет медленный холодный старт,
+        // когда страница собирается раньше, чем пинг выставит IS_NP.
+        if (options && options.forceNp && mode !== 'np' && isNpConfigured()) {
+            mode = 'np';
+        }
         var profileId = getProfileId();
 
         if (!getProfileSetting('myshows_token')) {
@@ -2382,7 +2398,10 @@
     function getUnwatchedShowsWithDetails(callback, show) {
         Log.info('getUnwatchedShowsWithDetails called');
 
-        if (isNpConnected()) {
+        // isNpConfigured(): читаем с NP по настройке, не дожидаясь пинга — иначе на
+        // холодном старте страница соберётся раньше IS_NP и уйдёт в медленный
+        // fetchFromMyShowsAPI. forceNp ниже заставляет loadCacheFromServer идти на NP.
+        if (isNpConnected() || isNpConfigured()) {
             if (!getProfileSetting('myshows_token') || !getNpToken()) {
                 callback({ shows: [] });
                 return;
@@ -2390,7 +2409,7 @@
             loadCacheFromServer('unwatched_serials', 'shows', function(cachedResult) {
                 var shows = cachedResult && cachedResult.shows;
                 if (shows && shows.length > 0) {
-                    // В isNpConnected() картах нет watched_count/total_count — парсим из progress_marker ("3/12")
+                    // В NP-картах нет watched_count/total_count — парсим из progress_marker ("3/12")
                     shows.forEach(function(s) {
                         if (s.progress_marker && !s.watched_count) {
                             var parts = String(s.progress_marker).split('/');
@@ -2415,7 +2434,7 @@
                         callback(freshResult || { shows: [] });
                     });
                 }
-            });
+            }, { forceNp: true });
         } else if (IS_LAMPAC) {
             loadCacheFromServer('unwatched_serials', 'shows', function(cachedResult) {
                 if (cachedResult && cachedResult.shows && cachedResult.shows.length) {
