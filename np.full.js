@@ -217,7 +217,10 @@
                 token = Lampa.Storage.get('numparser_api_key', '');
             }
 
-            var url = BASE_URL + '/' + category + '?page=' + page + '&language=' + Lampa.Storage.get('tmdb_lang', 'ru');
+            // category может уже содержать '?seed=...' (раскладка genre_*, зафиксированная
+            // на первой странице) — тогда параметры добавляем через '&', а не '?'.
+            var sep = category.indexOf('?') >= 0 ? '&' : '?';
+            var url = BASE_URL + '/' + category + sep + 'page=' + page + '&language=' + Lampa.Storage.get('tmdb_lang', 'ru');
             if (Lampa.Storage.get('numparser_hide_unrated')) {
                 url += '&hide_unrated=1';
             }
@@ -533,6 +536,14 @@
                     token = Lampa.Storage.get('numparser_api_key', '');
                 }
                 var url = BASE_URL + '/' + category + '?page=' + page + '&language=' + Lampa.Storage.get('tmdb_lang', 'ru');
+                // genre_* — случайная раскладка по индексу: генерим seed на каждый
+                // запрос (рандом при каждом заходе) и пробрасываем его в url линии,
+                // чтобы доскролл/«на весь экран» использовали ту же раскладку без повторов.
+                var seed = '';
+                if (category.indexOf('genre_') === 0) {
+                    seed = Math.random().toFixed(6);
+                    url += '&seed=' + seed;
+                }
                 if (Lampa.Storage.get('numparser_hide_unrated')) {
                     url += '&hide_unrated=1';
                 }
@@ -559,7 +570,7 @@
                     }
 
                     var result = {
-                        url: category,
+                        url: seed ? category + '?seed=' + seed : category,
                         title: title,
                         page: page,
                         total_results: totalResults,

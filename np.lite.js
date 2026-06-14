@@ -253,7 +253,8 @@
             var isContinues = category === "continues" || category.indexOf("continues_") === 0;
             var token = "";
             if (Lampa.Storage.get("numparser_hide_watched") || isContinues) token = Lampa.Storage.get("numparser_api_key", "");
-            var url = BASE_URL + "/" + category + "?page=" + page + "&language=" + Lampa.Storage.get("tmdb_lang", "ru");
+            var sep = category.indexOf("?") >= 0 ? "&" : "?";
+            var url = BASE_URL + "/" + category + sep + "page=" + page + "&language=" + Lampa.Storage.get("tmdb_lang", "ru");
             if (Lampa.Storage.get("numparser_hide_unrated")) url += "&hide_unrated=1";
             var childAge = getChildAge();
             if (childAge > 0) url += "&child_age=" + childAge;
@@ -515,6 +516,11 @@
                 var token = "";
                 if (Lampa.Storage.get("numparser_hide_watched") || isContinues) token = Lampa.Storage.get("numparser_api_key", "");
                 var url = BASE_URL + "/" + category + "?page=" + page + "&language=" + Lampa.Storage.get("tmdb_lang", "ru");
+                var seed = "";
+                if (category.indexOf("genre_") === 0) {
+                    seed = Math.random().toFixed(6);
+                    url += "&seed=" + seed;
+                }
                 if (Lampa.Storage.get("numparser_hide_unrated")) url += "&hide_unrated=1";
                 var childAge = getChildAge();
                 if (childAge > 0) url += "&child_age=" + childAge;
@@ -536,7 +542,7 @@
                         results = preparedData.results || preparedData.shows || results;
                     }
                     var result = {
-                        url: category,
+                        url: seed ? category + "?seed=" + seed : category,
                         title: title,
                         page: page,
                         total_results: totalResults,
