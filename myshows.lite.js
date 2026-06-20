@@ -2558,6 +2558,74 @@
             });
         }, 1600);
     }
+    function removeUnwatchedTraces(card) {
+        if (!card) return;
+        var showName = card.original_name || card.original_title || card.title || card.name;
+        var myshowsId = card.myshowsId;
+        var poster = $(".full-start-new__poster")[0];
+        if (poster) [ ".myshows-progress", ".myshows-remaining", ".myshows-next-episode" ].forEach(function(sel) {
+            var el = poster.querySelector(sel);
+            if (!el) return;
+            el.style.transition = "opacity 0.4s ease, transform 0.4s ease";
+            el.style.opacity = "0";
+            el.style.transform = "translateY(10px)";
+            setTimeout(function() {
+                if (el.parentNode) el.remove();
+            }, 400);
+        });
+        removeMarkersFromAllCards(showName, myshowsId);
+        var cardEl = findCardInMyShowsSection(showName, myshowsId);
+        if (cardEl) {
+            var parentSection = cardEl.closest(".items-line");
+            var allCards = parentSection ? parentSection.querySelectorAll(".card") : [];
+            var idx = [].slice.call(allCards).indexOf(cardEl);
+            removeCompletedCard(cardEl, showName, parentSection, idx);
+        }
+    }
+    function addUnwatchedTraces(card, attempt) {
+        if (!card) return;
+        attempt = attempt || 0;
+        var showName = card.original_name || card.original_title || card.title || card.name;
+        var needle = card.myshowsId || showName;
+        findShowInCache("unwatched_serials", "shows", needle, function(foundShow) {
+            if (foundShow && (foundShow.progress_marker || foundShow.next_episode || foundShow.remaining)) {
+                if (isSameFullCardOpen(card)) updateFullCardMarkers(foundShow);
+                updateAllMyShowsCards(showName, foundShow.myshowsId, foundShow.progress_marker, foundShow.next_episode, foundShow.remaining);
+                if (!findCardInMyShowsSection(showName, foundShow.myshowsId)) insertNewCardIntoMyShowsSection(foundShow);
+            } else if (attempt < 6) setTimeout(function() {
+                addUnwatchedTraces(card, attempt + 1);
+            }, 2e3);
+        }, card);
+    }
+    function removeMarkersFromAllCards(showName, showMyshowsId) {
+        var cards = document.querySelectorAll(".card");
+        var showNameLower = showName ? showName.toLowerCase() : "";
+        var n = 0;
+        cards.forEach(function(cardElement) {
+            var cardData = cardElement.card_data;
+            if (!cardData) return;
+            var cardName = getCardName(cardData) || "";
+            var match = showMyshowsId && cardData.myshowsId ? cardData.myshowsId === showMyshowsId : cardName.toLowerCase() === showNameLower;
+            if (!match) return;
+            cardData.progress_marker = null;
+            cardData.next_episode = null;
+            cardData.remaining = null;
+            var cardView = cardElement.querySelector(".card__view");
+            if (!cardView) return;
+            [ ".myshows-progress", ".myshows-remaining", ".myshows-next-episode" ].forEach(function(sel) {
+                var el = cardView.querySelector(sel);
+                if (!el) return;
+                el.style.transition = "opacity 0.4s ease, transform 0.4s ease";
+                el.style.opacity = "0";
+                el.style.transform = "translateY(10px)";
+                setTimeout(function() {
+                    if (el.parentNode) el.remove();
+                }, 400);
+            });
+            n++;
+        });
+        if (n) ;
+    }
     function animateFullCardMarker(markerElement, newValue, markerType) {
         var oldValue = markerElement.textContent || "";
         if (oldValue === newValue) return;
@@ -3020,6 +3088,8 @@
                     if (success) {
                         Lampa.Noty.show('Статус "' + buttonData.title + '" установлен на MyShows');
                         updateButtonStates(buttonData.status, isMovie, false);
+                        if (!isMovie && activeStatus === "watching" && buttonData.status !== "watching") removeUnwatchedTraces(e.data.movie);
+                        if (!isMovie && activeStatus !== "watching" && buttonData.status === "watching") addUnwatchedTraces(e.data.movie);
                     } else {
                         Lampa.Noty.show("Ошибка установки статуса");
                         updateButtonStates(currentStatus, isMovie, false);

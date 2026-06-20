@@ -3845,6 +3845,109 @@
         }, 1600);
     }
 
+    // Сериал ушёл из "Смотрю" (Хочу посмотреть/Бросил/Не смотрю) → сразу, без перезагрузки,
+    // убираем НАШИ метки с открытой full-карточки и удаляем карточку из секции "Непросмотренные".
+    // В отличие от completeFullCardMarkers/updateCompletedShowCard здесь НЕ «досматриваем»
+    // (не заполняем прогресс до 100%) — просто плавно убираем. Кэш unwatched_serials всё равно
+    // перестроится через setMyShowsStatus → fetchFromMyShowsAPI; тут только живой DOM.
+    function removeUnwatchedTraces(card) {
+        if (!card) return;
+        var showName  = card.original_name || card.original_title || card.title || card.name;
+        var myshowsId = card.myshowsId;
+
+        // 1) Метки на открытой full-карточке — плавно убрать
+        var poster = $('.full-start-new__poster')[0];
+        if (poster) {
+            ['.myshows-progress', '.myshows-remaining', '.myshows-next-episode'].forEach(function(sel) {
+                var el = poster.querySelector(sel);
+                if (!el) return;
+                el.style.transition = 'opacity 0.4s ease, transform 0.4s ease';
+                el.style.opacity = '0';
+                el.style.transform = 'translateY(10px)';
+                setTimeout(function() { if (el.parentNode) el.remove(); }, 400);
+            });
+        }
+
+        // 2) Метки на ВСЕХ линиях (зеркало updateAllMyShowsCards) — снять везде, где встречается сериал
+        removeMarkersFromAllCards(showName, myshowsId);
+
+        // 3) Карточка в секции "Непросмотренные" (если секция в DOM) — найти и удалить целиком
+        var cardEl = findCardInMyShowsSection(showName, myshowsId);
+        if (cardEl) {
+            var parentSection = cardEl.closest('.items-line');
+            var allCards = parentSection ? parentSection.querySelectorAll('.card') : [];
+            var idx = [].slice.call(allCards).indexOf(cardEl);
+            Log.info('[MS-guard] Сериал ушёл из Смотрю → удаляем карточку из "Непросмотренные" (' + showName + ')');
+            removeCompletedCard(cardEl, showName, parentSection, idx);
+        }
+    }
+
+    // Сериал добавлен в "Смотрю" → сразу, без перезагрузки: метки на full-карточке + на всех
+    // линиях + вставка карточки в "Непросмотренные". Данные прогресса (progress_marker/next_episode/
+    // remaining) появляются только после асинхронной перестройки unwatched_serials
+    // (setMyShowsStatus → fetchFromMyShowsAPI), поэтому читаем кэш с ретраями.
+    function addUnwatchedTraces(card, attempt) {
+        if (!card) return;
+        attempt = attempt || 0;
+        var showName = card.original_name || card.original_title || card.title || card.name;
+        var needle   = card.myshowsId || showName;
+        findShowInCache('unwatched_serials', 'shows', needle, function(foundShow) {
+            if (foundShow && (foundShow.progress_marker || foundShow.next_episode || foundShow.remaining)) {
+                // 1) метки на открытой full-карточке (только если это всё ещё она —
+                // за время ретраев пользователь мог открыть другую карточку)
+                if (isSameFullCardOpen(card)) updateFullCardMarkers(foundShow);
+                // 2) метки на всех линиях, где встречается сериал
+                updateAllMyShowsCards(showName, foundShow.myshowsId, foundShow.progress_marker, foundShow.next_episode, foundShow.remaining);
+                // 3) карточка в секцию "Непросмотренные" (если её там ещё нет)
+                if (!findCardInMyShowsSection(showName, foundShow.myshowsId)) {
+                    insertNewCardIntoMyShowsSection(foundShow);
+                }
+                Log.info('[MS-guard] Сериал добавлен в Смотрю → метки + карточка в "Непросмотренные" (' + showName + ')');
+            } else if (attempt < 6) {
+                // кэш ещё перестраивается — повторим
+                setTimeout(function() { addUnwatchedTraces(card, attempt + 1); }, 2000);
+            } else {
+                Log.warn('[MS-guard] addUnwatchedTraces: сериал не появился в unwatched_serials за отведённое время (' + showName + ')');
+            }
+        }, card);
+    }
+
+    // Снять наши метки со ВСЕХ карточек сериала во всём DOM (любые линии: каталог, похожие,
+    // продолжить и т.п.). Матч как в updateAllMyShowsCards: по myshowsId, иначе по названию.
+    // Чистим card_data, чтобы слушатели visible/update не перерисовали метки обратно.
+    function removeMarkersFromAllCards(showName, showMyshowsId) {
+        var cards = document.querySelectorAll('.card');
+        var showNameLower = showName ? showName.toLowerCase() : '';
+        var n = 0;
+        cards.forEach(function(cardElement) {
+            var cardData = cardElement.card_data;
+            if (!cardData) return;
+            var cardName = getCardName(cardData) || '';
+            var match = (showMyshowsId && cardData.myshowsId)
+                ? cardData.myshowsId === showMyshowsId
+                : cardName.toLowerCase() === showNameLower;
+            if (!match) return;
+
+            // Чистим данные — иначе addProgressMarkerToCard по visible/update нарисует заново
+            cardData.progress_marker = null;
+            cardData.next_episode    = null;
+            cardData.remaining       = null;
+
+            var cardView = cardElement.querySelector('.card__view');
+            if (!cardView) return;
+            ['.myshows-progress', '.myshows-remaining', '.myshows-next-episode'].forEach(function(sel) {
+                var el = cardView.querySelector(sel);
+                if (!el) return;
+                el.style.transition = 'opacity 0.4s ease, transform 0.4s ease';
+                el.style.opacity = '0';
+                el.style.transform = 'translateY(10px)';
+                setTimeout(function() { if (el.parentNode) el.remove(); }, 400);
+            });
+            n++;
+        });
+        if (n) Log.info('[MS-guard] Сняты метки со всех линий: ' + n + ' карточек (' + showName + ')');
+    }
+
     function animateFullCardMarker(markerElement, newValue, markerType) {
         var oldValue = markerElement.textContent || '';
 
@@ -4777,6 +4880,16 @@
                     if (success) {
                         Lampa.Noty.show('Статус "' + buttonData.title + '" установлен на MyShows');
                         updateButtonStates(buttonData.status, isMovie, false);
+                        // Сериал ушёл со "Смотрю" на любой другой статус → сразу убрать метки
+                        // и карточку из "Непросмотренные" (не дожидаясь перезагрузки страницы).
+                        if (!isMovie && activeStatus === 'watching' && buttonData.status !== 'watching') {
+                            removeUnwatchedTraces(e.data.movie);
+                        }
+                        // Сериал переведён В "Смотрю" с другого статуса → показать метки и добавить
+                        // карточку в "Непросмотренные" (тоже без перезагрузки).
+                        if (!isMovie && activeStatus !== 'watching' && buttonData.status === 'watching') {
+                            addUnwatchedTraces(e.data.movie);
+                        }
                     } else {
                         Lampa.Noty.show('Ошибка установки статуса');
                         updateButtonStates(currentStatus, isMovie, false);
