@@ -15,6 +15,7 @@
     };
     var AUTHORIZATION = "authorization2";
     var syncInProgress = false;
+    var checkedEpisodes = {};
     var myshows_icon = '<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><rect x="3" y="7" width="18" height="12" rx="3" style="fill:none;stroke:currentColor;stroke-width:2"/><line x1="12" y1="5" x2="7" y2="1" style="fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round"/><line x1="12" y1="5" x2="17" y2="1" style="fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round"/><circle cx="12" cy="6" r="1" style="fill:currentColor;stroke:none"/></svg>';
     var watch_icon = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z" fill="currentColor"/></svg>';
     var later_icon = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z" fill="currentColor"/></svg>';
@@ -1621,9 +1622,15 @@
                 fetchShowStatus(function(data) {});
             }
         });
-        if (percent >= minProgress) checkEpisodeMyShows(episodeId, function(success) {
-            if (success) fetchFromMyShowsAPI(function(data) {});
-        });
+        if (percent >= minProgress) {
+            if (checkedEpisodes[episodeId]) return;
+            checkEpisodeMyShows(episodeId, function(success) {
+                if (success) {
+                    checkedEpisodes[episodeId] = true;
+                    fetchFromMyShowsAPI(function(data) {});
+                }
+            });
+        }
     }
     function initTimelineListener() {
         if (window.Lampa && Lampa.Timeline && Lampa.Timeline.listener) Lampa.Timeline.listener.follow("update", processTimelineUpdate);

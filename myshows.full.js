@@ -16,6 +16,10 @@
     };
     var AUTHORIZATION = 'authorization2'
     var syncInProgress = false;
+    // Защита от повторной отправки отметки: episodeId уже отмеченные в этой сессии.
+    // Lampa шлёт Timeline.update ~раз в 2 мин — без guard мы бы слали CheckEpisode на каждый тик.
+    // Сбрасывается перезагрузкой страницы (живёт в памяти, не в Storage).
+    var checkedEpisodes = {};
     var myshows_icon = '<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><rect x="3" y="7" width="18" height="12" rx="3" style="fill:none;stroke:currentColor;stroke-width:2"/><line x1="12" y1="5" x2="7" y2="1" style="fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round"/><line x1="12" y1="5" x2="17" y2="1" style="fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round"/><circle cx="12" cy="6" r="1" style="fill:currentColor;stroke:none"/></svg>';
     var watch_icon = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z" fill="currentColor"/></svg>';
     var later_icon = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z" fill="currentColor"/></svg>';
@@ -2338,9 +2342,20 @@
 
         // Отмечаем серию как просмотренную только если достигнут minProgress
         if (percent >= minProgress) {
+            // Guard: если эту серию уже отметили в этой сессии — не дёргаем API повторно
+            if (checkedEpisodes[episodeId]) {
+                Log.info('[MS-guard] episodeId ' + episodeId + ' уже отмечен в этой сессии — пропускаем (percent=' + percent + ')');
+                return;
+            }
+
+            Log.info('[MS-guard] Отправляем CheckEpisode для episodeId ' + episodeId + ' (percent=' + percent + ')');
             checkEpisodeMyShows(episodeId, function(success) {
                 if (success) {
+                    checkedEpisodes[episodeId] = true;
+                    Log.info('[MS-guard] ✅ episodeId ' + episodeId + ' отмечен успешно — больше к API не обращаемся');
                     fetchFromMyShowsAPI(function(data) {})
+                } else {
+                    Log.warn('[MS-guard] ❌ CheckEpisode для episodeId ' + episodeId + ' не удался — повторим на следующем тике');
                 }
             });
         }
