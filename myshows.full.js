@@ -2160,18 +2160,23 @@
     // Проверка: входит ли эпизод в АКТУАЛЬНЫЙ список непросмотренных (кэш unwatched_serials,
     // который держим свежим: кэш → фон → отметка). episodeId глобально уникальны на MyShows,
     // поэтому просто сканируем все шоу. callback(unwatched, known):
-    //   known=false — кэш недоступен (не доверяем, решение принимает вызывающий);
+    //   known=false — определить нельзя (нет данных) → решение принимает вызывающий (он отметит);
     //   unwatched=true  — серия есть в непросмотренных → отмечать имеет смысл;
     //   unwatched=false — серии нет (шоу досмотрено или серия уже отмечена) → пропускаем.
+    // ВАЖНО: в NP-режиме кэш /myshows/watching хранит только счётчики (unwatched_count/next_episode/
+    // progress_marker), но НЕ массив unwatchedEpisodes с id. Если поэпизодных данных в кэше нет —
+    // судить о серии нельзя, возвращаем known=false (иначе всё считалось бы «уже просмотрено»).
     function isEpisodeUnwatched(episodeId, callback) {
         if (!episodeId) { callback(false, true); return; }
         episodeId = parseInt(episodeId);
         loadCacheFromServer('unwatched_serials', 'shows', function(cached) {
             var shows = cached && cached.shows;
             if (!shows) { callback(false, false); return; } // кэш не прогрузился
+            var hasEpisodeData = false;
             for (var i = 0; i < shows.length; i++) {
                 var eps = shows[i] && shows[i].unwatchedEpisodes;
-                if (!eps) continue;
+                if (!eps || !eps.length) continue;
+                hasEpisodeData = true;
                 for (var j = 0; j < eps.length; j++) {
                     if (eps[j] && parseInt(eps[j].id) === episodeId) {
                         callback(true, true);
@@ -2179,6 +2184,8 @@
                     }
                 }
             }
+            // Поэпизодных данных в кэше нет (NP-режим) → достоверно сказать нельзя.
+            if (!hasEpisodeData) { callback(false, false); return; }
             callback(false, true);
         });
     }

@@ -1546,13 +1546,19 @@
                 callback(false, false);
                 return;
             }
+            var hasEpisodeData = false;
             for (var i = 0; i < shows.length; i++) {
                 var eps = shows[i] && shows[i].unwatchedEpisodes;
-                if (!eps) continue;
+                if (!eps || !eps.length) continue;
+                hasEpisodeData = true;
                 for (var j = 0; j < eps.length; j++) if (eps[j] && parseInt(eps[j].id) === episodeId) {
                     callback(true, true);
                     return;
                 }
+            }
+            if (!hasEpisodeData) {
+                callback(false, false);
+                return;
             }
             callback(false, true);
         });
