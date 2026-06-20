@@ -22,6 +22,13 @@
     var checkedEpisodes = {};
     // Фильмы (tmdbId), уже отмеченные "Просмотрел" в этой сессии — тот же 2-мин guard.
     var checkedMovies = {};
+    // In-memory set id непросмотренных серий. Заполняется в fetchFromMyShowsAPI (lists.EpisodesUnwatched,
+    // где есть id серий — в отличие от NP-кэша /myshows/watching, хранящего только счётчики).
+    // fetchFromMyShowsAPI зовётся при старте (через таймаут) и после каждой отметки → set всегда актуален.
+    // Это авторитетный источник для isEpisodeUnwatched во ВСЕХ режимах (включая NP).
+    var _unwatchedEpisodeIds = {};
+    var _unwatchedEpisodeIdsReady = false;
+    var _unwatchedEpisodeIdsProfile = null;
     // Статус открытой карточки, посчитанный при открытии full (см. Listener 'full').
     // Нужен, чтобы авто-флоу не дёргал SetShowStatus/SetMovieStatus, если статус уже такой.
     // Ключ: tmdbId + ':' + (movie|tv). Значения как в резолве карточки:
@@ -304,6 +311,15 @@
                         entry.unwatched_count  = s.remaining || s.unwatched_count || 0;
                         entry.next_episode     = s.next_episode || null;
                         entry.progress_marker  = s.progress_marker || null;
+                        // id непросмотренных серий — чтобы на холодном старте знать сами серии,
+                        // а не только их количество (isEpisodeUnwatched).
+                        entry.unwatched_episodes = [];
+                        if (s.unwatchedEpisodes && s.unwatchedEpisodes.length) {
+                            for (var ue = 0; ue < s.unwatchedEpisodes.length; ue++) {
+                                var ueid = s.unwatchedEpisodes[ue] && s.unwatchedEpisodes[ue].id;
+                                if (ueid) entry.unwatched_episodes.push(parseInt(ueid));
+                            }
+                        }
                     }
                     payload.push(entry);
                 }
@@ -438,6 +454,15 @@
                             if (item && item.myshowsId === undefined && item.myshows_id !== undefined) {
                                 item.myshowsId = item.myshows_id;
                             }
+                            // NP отдаёт unwatched_episodes как массив id → приводим к форме
+                            // unwatchedEpisodes: [{id}], как в local/lampac (для isEpisodeUnwatched/сидинга).
+                            if (item && item.unwatched_episodes && !item.unwatchedEpisodes) {
+                                var uarr = [];
+                                for (var ux = 0; ux < item.unwatched_episodes.length; ux++) {
+                                    uarr.push({ id: item.unwatched_episodes[ux] });
+                                }
+                                item.unwatchedEpisodes = uarr;
+                            }
                         }
                         response.shows = response.results;
                         callback(response);
@@ -489,6 +514,10 @@
         loadCacheFromServer('unwatched_serials', 'shows', function(cachedResult) {
             if (renderToken !== _profileRenderToken) return;
             var cachedShows = cachedResult && cachedResult.shows;
+            // Сидим in-memory set непросмотренных серий из кэша СРАЗУ (local/Storage, Lampac/файл,
+            // NP/БД — все теперь хранят id серий) — чтобы на холодном старте уже знать серии,
+            // не дожидаясь fetchFromMyShowsAPI (он обновит через updateDelay).
+            seedUnwatchedSetFromCache(cachedShows, getProfileId());
             if (cachedShows && cachedShows.length > 0) {
                 // Есть кеш — обновляем в фоне через задержку
                 setTimeout(function() {
@@ -1745,6 +1774,25 @@
                 }
             }
 
+            // Обновляем in-memory set id непросмотренных серий (источник для isEpisodeUnwatched).
+            // Только если профиль не сменился за время запроса.
+            if (getProfileId() === startProfile) {
+                var newUnwatchedIds = {};
+                for (var si = 0; si < response.result.length; si++) {
+                    var rit = response.result[si];
+                    if (rit && rit.episodes) {
+                        for (var ej = 0; ej < rit.episodes.length; ej++) {
+                            var rep = rit.episodes[ej];
+                            if (rep && rep.id) newUnwatchedIds[parseInt(rep.id)] = true;
+                        }
+                    }
+                }
+                _unwatchedEpisodeIds = newUnwatchedIds;
+                _unwatchedEpisodeIdsReady = true;
+                _unwatchedEpisodeIdsProfile = startProfile;
+                Log.info('[MS-guard] in-memory непросмотренных серий: ' + Object.keys(newUnwatchedIds).length);
+            }
+
             // Преобразуем в массив и создаём last_episode_to_myshows
             for (var showId in showsData) {
                 var showData = showsData[showId];
@@ -2166,9 +2214,38 @@
     // ВАЖНО: в NP-режиме кэш /myshows/watching хранит только счётчики (unwatched_count/next_episode/
     // progress_marker), но НЕ массив unwatchedEpisodes с id. Если поэпизодных данных в кэше нет —
     // судить о серии нельзя, возвращаем known=false (иначе всё считалось бы «уже просмотрено»).
+    // Наполнить in-memory set непросмотренных серий из кэша (shows с unwatchedEpisodes).
+    // Используется на холодном старте, пока fetchFromMyShowsAPI ещё не отработал.
+    function seedUnwatchedSetFromCache(shows, profileId) {
+        if (!shows || !shows.length) return;
+        var ids = {};
+        var found = false;
+        for (var i = 0; i < shows.length; i++) {
+            var eps = shows[i] && shows[i].unwatchedEpisodes;
+            if (!eps || !eps.length) continue;
+            found = true;
+            for (var j = 0; j < eps.length; j++) {
+                var id = eps[j] && (eps[j].id !== undefined ? eps[j].id : eps[j]);
+                if (id) ids[parseInt(id)] = true;
+            }
+        }
+        if (!found) return; // поэпизодных данных в кэше нет — set пусть остаётся не готов
+        _unwatchedEpisodeIds = ids;
+        _unwatchedEpisodeIdsReady = true;
+        _unwatchedEpisodeIdsProfile = profileId;
+        Log.info('[MS-guard] in-memory set засеян из кэша: ' + Object.keys(ids).length + ' серий');
+    }
+
     function isEpisodeUnwatched(episodeId, callback) {
         if (!episodeId) { callback(false, true); return; }
         episodeId = parseInt(episodeId);
+        // Приоритет — in-memory set из lists.EpisodesUnwatched: есть id серий во ВСЕХ режимах,
+        // и он свежий (наполняется на старте и после каждой отметки).
+        if (_unwatchedEpisodeIdsReady && _unwatchedEpisodeIdsProfile === getProfileId()) {
+            callback(!!_unwatchedEpisodeIds[episodeId], true);
+            return;
+        }
+        // Set ещё не готов (до первого fetchFromMyShowsAPI) — пробуем кэш, иначе known=false.
         loadCacheFromServer('unwatched_serials', 'shows', function(cached) {
             var shows = cached && cached.shows;
             if (!shows) { callback(false, false); return; } // кэш не прогрузился
@@ -2471,6 +2548,7 @@
                         return;
                     }
                     checkedEpisodes[episodeId] = true;
+                    delete _unwatchedEpisodeIds[parseInt(episodeId)]; // сразу убрать из in-memory set
                     Log.info('[MS-guard] ✅ episodeId ' + episodeId + ' отмечен успешно — больше к API не обращаемся');
                     // Сериал не в "Смотрю" (Бросил/Хочу посмотреть/нет статуса) → переводим в "Смотрю".
                     if (!alreadyWatching) {
@@ -3225,6 +3303,9 @@
         var enrichedShow = enrichShowData(fullResponse, myshowsData);
         enrichedShow.myshowsId = currentShow.myshowsId;
         enrichedShow.unwatchedCount = currentShow.unwatchedCount;
+        // Пробрасываем id непросмотренных серий — иначе saveCacheToServer запишет пустой массив
+        // (для NP-БД и для сидинга isEpisodeUnwatched).
+        enrichedShow.unwatchedEpisodes = currentShow.unwatchedEpisodes;
         enrichedShow.last_episode_to_myshows  = currentShow.last_episode_to_myshows;
         enrichedShow.first_episode_to_myshows = currentShow.first_episode_to_myshows;
         status.append('tmdb_' + index, enrichedShow);

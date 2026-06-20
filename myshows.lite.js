@@ -17,6 +17,9 @@
     var syncInProgress = false;
     var checkedEpisodes = {};
     var checkedMovies = {};
+    var _unwatchedEpisodeIds = {};
+    var _unwatchedEpisodeIdsReady = false;
+    var _unwatchedEpisodeIdsProfile = null;
     var cardStatusCache = {};
     function cardStatusKey(tmdbId, isMovie) {
         return (tmdbId ? String(tmdbId) : "0") + ":" + (isMovie ? "movie" : "tv");
@@ -228,6 +231,11 @@
                         entry.unwatched_count = s.remaining || s.unwatched_count || 0;
                         entry.next_episode = s.next_episode || null;
                         entry.progress_marker = s.progress_marker || null;
+                        entry.unwatched_episodes = [];
+                        if (s.unwatchedEpisodes && s.unwatchedEpisodes.length) for (var ue = 0; ue < s.unwatchedEpisodes.length; ue++) {
+                            var ueid = s.unwatchedEpisodes[ue] && s.unwatchedEpisodes[ue].id;
+                            if (ueid) entry.unwatched_episodes.push(parseInt(ueid));
+                        }
                     }
                     payload.push(entry);
                 }
@@ -327,6 +335,13 @@
                     for (var ri = 0; ri < response.results.length; ri++) {
                         var item = response.results[ri];
                         if (item && item.myshowsId === void 0 && item.myshows_id !== void 0) item.myshowsId = item.myshows_id;
+                        if (item && item.unwatched_episodes && !item.unwatchedEpisodes) {
+                            var uarr = [];
+                            for (var ux = 0; ux < item.unwatched_episodes.length; ux++) uarr.push({
+                                id: item.unwatched_episodes[ux]
+                            });
+                            item.unwatchedEpisodes = uarr;
+                        }
                     }
                     response.shows = response.results;
                     callback(response);
@@ -367,6 +382,7 @@
         loadCacheFromServer("unwatched_serials", "shows", function(cachedResult) {
             if (renderToken !== _profileRenderToken) return;
             var cachedShows = cachedResult && cachedResult.shows;
+            seedUnwatchedSetFromCache(cachedShows, getProfileId());
             if (cachedShows && cachedShows.length > 0) {
                 setTimeout(function() {
                     if (renderToken !== _profileRenderToken) return;
@@ -1261,6 +1277,20 @@
                     });
                 }
             }
+            if (getProfileId() === startProfile) {
+                var newUnwatchedIds = {};
+                for (var si = 0; si < response.result.length; si++) {
+                    var rit = response.result[si];
+                    if (rit && rit.episodes) for (var ej = 0; ej < rit.episodes.length; ej++) {
+                        var rep = rit.episodes[ej];
+                        if (rep && rep.id) newUnwatchedIds[parseInt(rep.id)] = true;
+                    }
+                }
+                _unwatchedEpisodeIds = newUnwatchedIds;
+                _unwatchedEpisodeIdsReady = true;
+                _unwatchedEpisodeIdsProfile = startProfile;
+                Object.keys(newUnwatchedIds).length;
+            }
             for (var showId in showsData) {
                 var showData = showsData[showId];
                 var lastEpisode = showData.episodes[0];
@@ -1534,12 +1564,35 @@
         }
         return map;
     }
+    function seedUnwatchedSetFromCache(shows, profileId) {
+        if (!shows || !shows.length) return;
+        var ids = {};
+        var found = false;
+        for (var i = 0; i < shows.length; i++) {
+            var eps = shows[i] && shows[i].unwatchedEpisodes;
+            if (!eps || !eps.length) continue;
+            found = true;
+            for (var j = 0; j < eps.length; j++) {
+                var id = eps[j] && (eps[j].id !== void 0 ? eps[j].id : eps[j]);
+                if (id) ids[parseInt(id)] = true;
+            }
+        }
+        if (!found) return;
+        _unwatchedEpisodeIds = ids;
+        _unwatchedEpisodeIdsReady = true;
+        _unwatchedEpisodeIdsProfile = profileId;
+        Object.keys(ids).length;
+    }
     function isEpisodeUnwatched(episodeId, callback) {
         if (!episodeId) {
             callback(false, true);
             return;
         }
         episodeId = parseInt(episodeId);
+        if (_unwatchedEpisodeIdsReady && _unwatchedEpisodeIdsProfile === getProfileId()) {
+            callback(!!_unwatchedEpisodeIds[episodeId], true);
+            return;
+        }
         loadCacheFromServer("unwatched_serials", "shows", function(cached) {
             var shows = cached && cached.shows;
             if (!shows) {
@@ -1704,6 +1757,7 @@
                 checkEpisodeMyShows(episodeId, function(success) {
                     if (!success) return;
                     checkedEpisodes[episodeId] = true;
+                    delete _unwatchedEpisodeIds[parseInt(episodeId)];
                     if (!alreadyWatching) ensureWatchingStatus(card, 'отметка серии при статусе "' + currentStatus + '"', function() {});
                     fetchFromMyShowsAPI(function(data) {});
                 });
@@ -2212,6 +2266,7 @@
         var enrichedShow = enrichShowData(fullResponse, myshowsData);
         enrichedShow.myshowsId = currentShow.myshowsId;
         enrichedShow.unwatchedCount = currentShow.unwatchedCount;
+        enrichedShow.unwatchedEpisodes = currentShow.unwatchedEpisodes;
         enrichedShow.last_episode_to_myshows = currentShow.last_episode_to_myshows;
         enrichedShow.first_episode_to_myshows = currentShow.first_episode_to_myshows;
         status.append("tmdb_" + index, enrichedShow);
