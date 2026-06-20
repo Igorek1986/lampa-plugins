@@ -16,6 +16,36 @@
     var AUTHORIZATION = "authorization2";
     var syncInProgress = false;
     var checkedEpisodes = {};
+    var checkedMovies = {};
+    var cardStatusCache = {};
+    function cardStatusKey(tmdbId, isMovie) {
+        return (tmdbId ? String(tmdbId) : "0") + ":" + (isMovie ? "movie" : "tv");
+    }
+    function setCardStatusCache(tmdbId, isMovie, status) {
+        if (!tmdbId || !status) return;
+        cardStatusCache[cardStatusKey(tmdbId, isMovie)] = status;
+    }
+    function getCardStatusCache(tmdbId, isMovie) {
+        return cardStatusCache[cardStatusKey(tmdbId, isMovie)] || null;
+    }
+    var watchingTransitionInFlight = {};
+    function ensureWatchingStatus(card, reason, callback) {
+        var key = card && card.id ? String(card.id) : "";
+        if (getCardStatusCache(card.id, false) === "watching") {
+            if (callback) callback(false);
+            return;
+        }
+        if (watchingTransitionInFlight[key]) {
+            if (callback) callback(false);
+            return;
+        }
+        watchingTransitionInFlight[key] = true;
+        setMyShowsStatus(card, "watching", function(success) {
+            watchingTransitionInFlight[key] = false;
+            if (success) setCardStatusCache(card.id, false, "watching");
+            if (callback) callback(success);
+        });
+    }
     var myshows_icon = '<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><rect x="3" y="7" width="18" height="12" rx="3" style="fill:none;stroke:currentColor;stroke-width:2"/><line x1="12" y1="5" x2="7" y2="1" style="fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round"/><line x1="12" y1="5" x2="17" y2="1" style="fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round"/><circle cx="12" cy="6" r="1" style="fill:currentColor;stroke:none"/></svg>';
     var watch_icon = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z" fill="currentColor"/></svg>';
     var later_icon = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z" fill="currentColor"/></svg>';
@@ -1163,6 +1193,7 @@
                         remove: "remove"
                     };
                     npSetStatus(showId, cardData.id, "tv", tvMap[status] || "remove");
+                    setCardStatusCache(cardData.id, false, status === "finished" ? "watching" : status);
                 }
                 callback(success);
             });
@@ -1306,6 +1337,7 @@
                         remove: "remove"
                     };
                     npSetStatus(movieId, movieData.id, "movie", movieMap[status] || "remove");
+                    setCardStatusCache(movieData.id, true, status);
                 }
                 callback(success);
             });
@@ -1476,7 +1508,7 @@
     function episodeMapKey(tmdbId, hash) {
         return (tmdbId ? String(tmdbId) : "0") + ":" + hash;
     }
-    function buildHashMap(episodes, originalName, tmdbId) {
+    function buildHashMap(episodes, originalName, tmdbId, showId) {
         var map = {};
         var tmdbKey = tmdbId ? String(tmdbId) : "";
         for (var i = 0; i < episodes.length; i++) {
@@ -1487,11 +1519,35 @@
                 episodeId: ep.id,
                 originalName: originalName,
                 tmdbId: tmdbKey,
+                showId: showId || null,
                 hash: hash,
                 timestamp: Date.now()
             };
         }
         return map;
+    }
+    function isEpisodeUnwatched(episodeId, callback) {
+        if (!episodeId) {
+            callback(false, true);
+            return;
+        }
+        episodeId = parseInt(episodeId);
+        loadCacheFromServer("unwatched_serials", "shows", function(cached) {
+            var shows = cached && cached.shows;
+            if (!shows) {
+                callback(false, false);
+                return;
+            }
+            for (var i = 0; i < shows.length; i++) {
+                var eps = shows[i] && shows[i].unwatchedEpisodes;
+                if (!eps) continue;
+                for (var j = 0; j < eps.length; j++) if (eps[j] && parseInt(eps[j].id) === episodeId) {
+                    callback(true, true);
+                    return;
+                }
+            }
+            callback(false, true);
+        });
     }
     function ensureHashMap(card, token, callback) {
         var identifiers = getCardIdentifiers(card);
@@ -1522,7 +1578,7 @@
                 return;
             }
             getEpisodesByShowId(showId, token, function(episodes) {
-                var newMap = buildHashMap(episodes, originalName, tmdbKey);
+                var newMap = buildHashMap(episodes, originalName, tmdbKey, showId);
                 for (var k in newMap) if (newMap.hasOwnProperty(k)) map[k] = newMap[k];
                 EPISODES_CACHE[tmdbKey || originalName] = map;
                 EPISODES_CACHE[tmdbKey || originalName];
@@ -1573,9 +1629,17 @@
         if (!card) return;
         var isMovie = isMovieContent(card);
         if (isMovie) {
-            if (percent >= minProgress) setMyShowsMovieStatus(card, "finished", function(success) {
-                if (success) cachedShuffledItems = {};
-            });
+            if (percent >= minProgress) {
+                var mvKey = card.id ? String(card.id) : "";
+                if (checkedMovies[mvKey] || getCardStatusCache(card.id, true) === "finished") return;
+                setMyShowsMovieStatus(card, "finished", function(success) {
+                    if (success) {
+                        checkedMovies[mvKey] = true;
+                        setCardStatusCache(card.id, true, "finished");
+                        cachedShuffledItems = {};
+                    }
+                });
+            }
         } else {
             var tmdbKey = card.id ? String(card.id) : "";
             var mapKey = episodeMapKey(tmdbKey, hash);
@@ -1609,27 +1673,34 @@
     function processEpisode(episodeId, hash, percent, card, token, minProgress, addThreshold) {
         var originalName = card.original_name || card.original_title || card.title;
         var firstEpisodeHash = Lampa.Utils.hash("11" + originalName);
-        if (hash === firstEpisodeHash && percent >= addThreshold) setMyShowsStatus(card, "watching", function(success) {
+        var currentStatus = getCardStatusCache(card.id, false);
+        var alreadyWatching = currentStatus === "watching";
+        var isFirstEpisode = hash === firstEpisodeHash;
+        if (isFirstEpisode && (percent >= addThreshold || addThreshold === 0) && !alreadyWatching) ensureWatchingStatus(card, "S1E1 percent=" + percent, function(success) {
             cachedShuffledItems = {};
-            if (success) invalidateTimetableCache();
             if (success && percent < minProgress) {
-                fetchFromMyShowsAPI(function(data) {});
-                fetchShowStatus(function(data) {});
-            }
-        }); else if (addThreshold === 0 && hash === firstEpisodeHash) setMyShowsStatus(card, "watching", function(success) {
-            if (success && percent < minProgress) {
+                invalidateTimetableCache();
                 fetchFromMyShowsAPI(function(data) {});
                 fetchShowStatus(function(data) {});
             }
         });
         if (percent >= minProgress) {
             if (checkedEpisodes[episodeId]) return;
-            checkEpisodeMyShows(episodeId, function(success) {
-                if (success) {
+            var markEpisode = function(reason) {
+                checkEpisodeMyShows(episodeId, function(success) {
+                    if (!success) return;
                     checkedEpisodes[episodeId] = true;
+                    if (!alreadyWatching) ensureWatchingStatus(card, 'отметка серии при статусе "' + currentStatus + '"', function() {});
                     fetchFromMyShowsAPI(function(data) {});
+                });
+            };
+            if (currentStatus === "watching") isEpisodeUnwatched(episodeId, function(unwatched, known) {
+                if (known && !unwatched) {
+                    checkedEpisodes[episodeId] = true;
+                    return;
                 }
-            });
+                markEpisode(known ? "есть в непросмотренных" : "список непросмотренных недоступен");
+            }); else markEpisode('статус "' + currentStatus + '"');
         }
     }
     function initTimelineListener() {
@@ -2929,6 +3000,12 @@
             var activeClass = isActive ? " myshows-active" : "";
             var btn = $('<div class="full-start__button selector myshows-btn ' + buttonClass + activeClass + '">' + buttonIcon + "<span>" + buttonData.title + "</span>" + "</div>");
             btn.on("hover:enter", function() {
+                var activeStatus = getCardStatusCache(e.data.movie.id, isMovie) || "remove";
+                if (activeStatus === buttonData.status) {
+                    buttonData.title;
+                    updateButtonStates(buttonData.status, isMovie, false);
+                    return;
+                }
                 updateButtonStates(null, isMovie, false);
                 var setStatusFunction = isMovie ? setMyShowsMovieStatus : setMyShowsStatus;
                 setStatusFunction(e.data.movie, buttonData.status, function(success) {
@@ -3573,6 +3650,7 @@
                         var cacheType = response && response.cache_type;
                         var status;
                         if (isTV) if (cacheType === "watchlist") status = "later"; else if (cacheType === "watching" || cacheType === "cancelled") status = cacheType; else status = "remove"; else if (cacheType === "watched") status = "finished"; else if (cacheType === "watchlist") status = "later"; else status = "remove";
+                        setCardStatusCache(identifiers.tmdbId, !isTV, status);
                         createMyShowsButtons(e, status, !isTV);
                         updateButtonStates(status, !isTV, true);
                     }, function() {
@@ -3583,15 +3661,18 @@
             }
             if (isTV) {
                 getStatusByTitle(originalTitle, false, function(cachedStatus) {
+                    if (cachedStatus) setCardStatusCache(identifiers.tmdbId, false, cachedStatus);
                     if (!cachedStatus || cachedStatus === "remove") updateButtonStates("remove", false, false);
                     if (getProfileSetting("myshows_button_view", true) && getProfileSetting("myshows_token", false)) createMyShowsButtons(e, cachedStatus, false);
                 });
                 getShowIdByExternalIds(identifiers.imdbId, identifiers.kinopoiskId, title, originalTitle, identifiers.tmdbId, identifiers.year, identifiers.alternativeTitles, function(showId) {
                     if (showId) getShowStatus(showId, function(currentStatus) {
+                        setCardStatusCache(identifiers.tmdbId, false, currentStatus);
                         updateButtonStates(currentStatus, false, true);
                     });
                 });
             } else getStatusByTitle(originalTitle, true, function(cachedStatus) {
+                if (cachedStatus) setCardStatusCache(identifiers.tmdbId, true, cachedStatus);
                 if (!cachedStatus || cachedStatus === "remove") updateButtonStates("remove", true, false);
                 if (getProfileSetting("myshows_button_view", true) && getProfileSetting("myshows_token", false)) createMyShowsButtons(e, cachedStatus, true);
             });

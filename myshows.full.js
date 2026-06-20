@@ -20,6 +20,51 @@
     // Lampa шлёт Timeline.update ~раз в 2 мин — без guard мы бы слали CheckEpisode на каждый тик.
     // Сбрасывается перезагрузкой страницы (живёт в памяти, не в Storage).
     var checkedEpisodes = {};
+    // Фильмы (tmdbId), уже отмеченные "Просмотрел" в этой сессии — тот же 2-мин guard.
+    var checkedMovies = {};
+    // Статус открытой карточки, посчитанный при открытии full (см. Listener 'full').
+    // Нужен, чтобы авто-флоу не дёргал SetShowStatus/SetMovieStatus, если статус уже такой.
+    // Ключ: tmdbId + ':' + (movie|tv). Значения как в резолве карточки:
+    //   tv → watching|later|cancelled|remove, movie → finished|later|remove.
+    var cardStatusCache = {};
+    function cardStatusKey(tmdbId, isMovie) {
+        return (tmdbId ? String(tmdbId) : '0') + ':' + (isMovie ? 'movie' : 'tv');
+    }
+    function setCardStatusCache(tmdbId, isMovie, status) {
+        if (!tmdbId || !status) return;
+        cardStatusCache[cardStatusKey(tmdbId, isMovie)] = status;
+    }
+    function getCardStatusCache(tmdbId, isMovie) {
+        return cardStatusCache[cardStatusKey(tmdbId, isMovie)] || null;
+    }
+    // Сериалы, для которых перевод в "Смотрю" уже в полёте — чтобы не слать SetShowStatus дважды
+    // (например Block A на S1E1 и Block B при отметке серии в одном тике).
+    var watchingTransitionInFlight = {};
+    function ensureWatchingStatus(card, reason, callback) {
+        var key = card && card.id ? String(card.id) : '';
+        if (getCardStatusCache(card.id, false) === 'watching') {
+            Log.info('[MS-guard] сериал уже в Смотрю — перевод не нужен (' + reason + ', tmdbId=' + key + ')');
+            if (callback) callback(false);
+            return;
+        }
+        if (watchingTransitionInFlight[key]) {
+            Log.info('[MS-guard] перевод в Смотрю уже в полёте — пропускаем (' + reason + ', tmdbId=' + key + ')');
+            if (callback) callback(false);
+            return;
+        }
+        watchingTransitionInFlight[key] = true;
+        Log.info('[MS-guard] Переводим сериал в Смотрю (' + reason + ', tmdbId=' + key + ')');
+        setMyShowsStatus(card, 'watching', function(success) {
+            watchingTransitionInFlight[key] = false;
+            if (success) {
+                setCardStatusCache(card.id, false, 'watching');
+                Log.info('[MS-guard] ✅ сериал переведён в Смотрю (tmdbId=' + key + ')');
+            } else {
+                Log.warn('[MS-guard] ❌ не удалось перевести сериал в Смотрю (tmdbId=' + key + ')');
+            }
+            if (callback) callback(success);
+        });
+    }
     var myshows_icon = '<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><rect x="3" y="7" width="18" height="12" rx="3" style="fill:none;stroke:currentColor;stroke-width:2"/><line x1="12" y1="5" x2="7" y2="1" style="fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round"/><line x1="12" y1="5" x2="17" y2="1" style="fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round"/><circle cx="12" cy="6" r="1" style="fill:currentColor;stroke:none"/></svg>';
     var watch_icon = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z" fill="currentColor"/></svg>';
     var later_icon = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z" fill="currentColor"/></svg>';
@@ -1600,6 +1645,9 @@
                     // isNpConnected(): сразу обновляем одну запись в базе
                     var tvMap = { watching: 'watching', finished: 'watching', later: 'watchlist', cancelled: 'cancelled', remove: 'remove' };
                     npSetStatus(showId, cardData.id, 'tv', tvMap[status] || 'remove');
+
+                    // держим кэш статуса карточки в синхроне (vocab карточки: finished→watching)
+                    setCardStatusCache(cardData.id, false, status === 'finished' ? 'watching' : status);
                 }
 
                 callback(success);
@@ -1791,6 +1839,9 @@
                     // isNpConnected(): сразу обновляем одну запись в базе
                     var movieMap = { finished: 'watched', later: 'watchlist', remove: 'remove' };
                     npSetStatus(movieId, movieData.id, 'movie', movieMap[status] || 'remove');
+
+                    // держим кэш статуса карточки в синхроне
+                    setCardStatusCache(movieData.id, true, status);
                 }
 
                 callback(success);
@@ -2068,7 +2119,7 @@
     }
 
     // Построить mapping (tmdbId:hash) -> episodeId
-    function buildHashMap(episodes, originalName, tmdbId) {
+    function buildHashMap(episodes, originalName, tmdbId, showId) {
         var map = {};
         var tmdbKey = tmdbId ? String(tmdbId) : '';
         for(var i=0; i<episodes.length; i++){
@@ -2080,6 +2131,7 @@
                 episodeId: ep.id,
                 originalName: originalName,
                 tmdbId: tmdbKey,
+                showId: showId || null,
                 hash: hash,
                 timestamp: Date.now()
             };
@@ -2087,7 +2139,32 @@
         return map;
     }
 
-    // Автоматически получить mapping для текущего сериала (по imdbId или kinopoiskId из карточки)
+    // Проверка: входит ли эпизод в АКТУАЛЬНЫЙ список непросмотренных (кэш unwatched_serials,
+    // который держим свежим: кэш → фон → отметка). episodeId глобально уникальны на MyShows,
+    // поэтому просто сканируем все шоу. callback(unwatched, known):
+    //   known=false — кэш недоступен (не доверяем, решение принимает вызывающий);
+    //   unwatched=true  — серия есть в непросмотренных → отмечать имеет смысл;
+    //   unwatched=false — серии нет (шоу досмотрено или серия уже отмечена) → пропускаем.
+    function isEpisodeUnwatched(episodeId, callback) {
+        if (!episodeId) { callback(false, true); return; }
+        episodeId = parseInt(episodeId);
+        loadCacheFromServer('unwatched_serials', 'shows', function(cached) {
+            var shows = cached && cached.shows;
+            if (!shows) { callback(false, false); return; } // кэш не прогрузился
+            for (var i = 0; i < shows.length; i++) {
+                var eps = shows[i] && shows[i].unwatchedEpisodes;
+                if (!eps) continue;
+                for (var j = 0; j < eps.length; j++) {
+                    if (eps[j] && parseInt(eps[j].id) === episodeId) {
+                        callback(true, true);
+                        return;
+                    }
+                }
+            }
+            callback(false, true);
+        });
+    }
+
     function ensureHashMap(card, token, callback) {
         var identifiers = getCardIdentifiers(card);
         if (!identifiers) {
@@ -2131,7 +2208,7 @@
             Log.info('ensureHashMap showId', showId)
 
             getEpisodesByShowId(showId, token, function(episodes) {
-                var newMap = buildHashMap(episodes, originalName, tmdbKey);
+                var newMap = buildHashMap(episodes, originalName, tmdbKey, showId);
 
                 // Сохраняем mapping
                 for (var k in newMap) {
@@ -2242,10 +2319,20 @@
         var isMovie = isMovieContent(card);
 
         if (isMovie) {
-            // Обработка фильма
+            // Обработка фильма: отмечаем "Просмотрел" только если статус ещё не такой.
             if (percent >= minProgress) {
+                var mvKey = card.id ? String(card.id) : '';
+                // Guard: уже отметили в этой сессии или статус карточки уже "Просмотрел"
+                if (checkedMovies[mvKey] || getCardStatusCache(card.id, true) === 'finished') {
+                    Log.info('[MS-guard] фильм ' + mvKey + ' уже в статусе Просмотрел — пропускаем');
+                    return;
+                }
+                Log.info('[MS-guard] Отмечаем фильм ' + mvKey + ' как Просмотрел (percent=' + percent + ')');
                 setMyShowsMovieStatus(card, 'finished', function(success) {
                     if (success) {
+                        checkedMovies[mvKey] = true;
+                        setCardStatusCache(card.id, true, 'finished');
+                        Log.info('[MS-guard] ✅ фильм ' + mvKey + ' отмечен — больше к API не обращаемся');
                         cachedShuffledItems = {};
                     }
                 });
@@ -2316,48 +2403,72 @@
         var originalName = card.original_name || card.original_title || card.title;
         var firstEpisodeHash = Lampa.Utils.hash('11' + originalName);
 
-        // Проверяем, нужно ли добавить сериал в "Смотрю"
-        if (hash === firstEpisodeHash && percent >= addThreshold) {
+        // Статус сериала известен с открытия full (NP/local/Lampac). Значения: watching|later|cancelled|remove|null.
+        var currentStatus = getCardStatusCache(card.id, false);
+        var alreadyWatching = currentStatus === 'watching';
+        var isFirstEpisode = hash === firstEpisodeHash;
 
-            setMyShowsStatus(card, 'watching', function(success) {
+        Log.info('[MS-guard] processEpisode episodeId=' + episodeId + ' percent=' + percent +
+            ' статус="' + currentStatus + '" S1E1=' + isFirstEpisode +
+            ' addThreshold=' + addThreshold + ' minProgress=' + minProgress);
+
+        // Block A: ранний перевод в "Смотрю" на первой серии (по addThreshold, ещё до minProgress).
+        if (isFirstEpisode && (percent >= addThreshold || addThreshold === 0) && !alreadyWatching) {
+            ensureWatchingStatus(card, 'S1E1 percent=' + percent, function(success) {
                 cachedShuffledItems = {};
-                if (success) invalidateTimetableCache();
-                // Обновляем кеш только если НЕ достигнут minProgress
+                // Обновляем кеши только если серия ещё не будет отмечена ниже (Block B сам обновит).
                 if (success && percent < minProgress) {
-                    fetchFromMyShowsAPI(function(data) {});
-                    fetchShowStatus(function(data) {});
-                }
-            });
-
-        } else if (addThreshold === 0 && hash === firstEpisodeHash) {
-
-            setMyShowsStatus(card, 'watching', function(success) {
-                // Обновляем кеш только если НЕ достигнут minProgress
-                if (success && percent < minProgress) {
+                    invalidateTimetableCache();
                     fetchFromMyShowsAPI(function(data) {});
                     fetchShowStatus(function(data) {});
                 }
             });
         }
 
-        // Отмечаем серию как просмотренную только если достигнут minProgress
+        // Block B: отметка серии как просмотренной (только если достигнут minProgress).
         if (percent >= minProgress) {
-            // Guard: если эту серию уже отметили в этой сессии — не дёргаем API повторно
+            // Guard 1: уже отмечали в этой сессии — не дёргаем API повторно (Lampa шлёт тик ~раз в 2 мин).
             if (checkedEpisodes[episodeId]) {
                 Log.info('[MS-guard] episodeId ' + episodeId + ' уже отмечен в этой сессии — пропускаем (percent=' + percent + ')');
                 return;
             }
 
-            Log.info('[MS-guard] Отправляем CheckEpisode для episodeId ' + episodeId + ' (percent=' + percent + ')');
-            checkEpisodeMyShows(episodeId, function(success) {
-                if (success) {
+            // Отметить серию + (если сериал не в "Смотрю") перевести его в "Смотрю".
+            // Список непросмотренных содержит только сериалы в статусе "Смотрю", поэтому
+            // для "Хочу посмотреть"/"Бросил"/без статуса проверять список бессмысленно — отмечаем всегда.
+            var markEpisode = function(reason) {
+                Log.info('[MS-guard] Отправляем CheckEpisode для episodeId ' + episodeId + ' (' + reason + ', percent=' + percent + ')');
+                checkEpisodeMyShows(episodeId, function(success) {
+                    if (!success) {
+                        Log.warn('[MS-guard] ❌ CheckEpisode для episodeId ' + episodeId + ' не удался — повторим на следующем тике');
+                        return;
+                    }
                     checkedEpisodes[episodeId] = true;
                     Log.info('[MS-guard] ✅ episodeId ' + episodeId + ' отмечен успешно — больше к API не обращаемся');
-                    fetchFromMyShowsAPI(function(data) {})
-                } else {
-                    Log.warn('[MS-guard] ❌ CheckEpisode для episodeId ' + episodeId + ' не удался — повторим на следующем тике');
-                }
-            });
+                    // Сериал не в "Смотрю" (Бросил/Хочу посмотреть/нет статуса) → переводим в "Смотрю".
+                    if (!alreadyWatching) {
+                        ensureWatchingStatus(card, 'отметка серии при статусе "' + currentStatus + '"', function() {});
+                    }
+                    fetchFromMyShowsAPI(function(data) {});
+                });
+            };
+
+            if (currentStatus === 'watching') {
+                // Статус "Смотрю": список непросмотренных авторитетен.
+                // Нет серии в списке (известно) → уже отмечена, пропускаем. Кэш недоступен → отмечаем.
+                isEpisodeUnwatched(episodeId, function(unwatched, known) {
+                    if (known && !unwatched) {
+                        checkedEpisodes[episodeId] = true;
+                        Log.info('[MS-guard] episodeId ' + episodeId + ' нет в непросмотренных (статус Смотрю) — уже отмечен, пропускаем');
+                        return;
+                    }
+                    markEpisode(known ? 'есть в непросмотренных' : 'список непросмотренных недоступен');
+                });
+            } else {
+                // later/cancelled/remove/нет статуса — список непросмотренных не релевантен.
+                Log.info('[MS-guard] статус "' + currentStatus + '" не "Смотрю" → отмечаем серию без проверки списка непросмотренных');
+                markEpisode('статус "' + currentStatus + '"');
+            }
         }
     }
 
@@ -4606,6 +4717,16 @@
                 '</div>');
 
             btn.on('hover:enter', function() {
+                // Если карточка уже в этом статусе — повторный запрос в MyShows бесполезен.
+                // Текущий статус берём из cardStatusCache (синхронизируется при открытии и сменах).
+                // null трактуем как 'remove' (не отслеживается), чтобы повтор "Не смотрю" тоже был no-op.
+                var activeStatus = getCardStatusCache(e.data.movie.id, isMovie) || 'remove';
+                if (activeStatus === buttonData.status) {
+                    Log.info('[MS-guard] кнопка "' + buttonData.title + '" — карточка уже в статусе "' + activeStatus + '", запрос не шлём');
+                    updateButtonStates(buttonData.status, isMovie, false); // только подсветим активную
+                    return;
+                }
+
                 // Сначала снимаем выделение со всех кнопок
                 updateButtonStates(null, isMovie, false);
 
@@ -5591,6 +5712,7 @@
                             else if (cacheType === 'watchlist') status = 'later';
                             else status = 'remove';
                         }
+                        setCardStatusCache(identifiers.tmdbId, !isTV, status);
                         createMyShowsButtons(e, status, !isTV);
                         updateButtonStates(status, !isTV, true);
                     }, function() {
@@ -5605,6 +5727,7 @@
                 getStatusByTitle(originalTitle, false, function(cachedStatus) {
                     Log.info('cachedStatus TV', cachedStatus);
 
+                    if (cachedStatus) setCardStatusCache(identifiers.tmdbId, false, cachedStatus);
                     if (!cachedStatus || cachedStatus === 'remove') {
                         updateButtonStates('remove', false, false);
                     }
@@ -5627,6 +5750,7 @@
                         if (showId) {
                             getShowStatus(showId, function(currentStatus) {
                                 Log.info('currentStatus TV', currentStatus);
+                                setCardStatusCache(identifiers.tmdbId, false, currentStatus);
                                 updateButtonStates(currentStatus, false, true);
                             });
                         }
@@ -5638,6 +5762,7 @@
                 getStatusByTitle(originalTitle, true, function(cachedStatus) {
                     Log.info('cachedStatus Movie', cachedStatus);
 
+                    if (cachedStatus) setCardStatusCache(identifiers.tmdbId, true, cachedStatus);
                     if (!cachedStatus || cachedStatus === 'remove') {
                         updateButtonStates('remove', true, false);
                     }
