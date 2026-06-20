@@ -1152,17 +1152,25 @@
         });
     }
     function npSetStatus(myshowsId, tmdbId, mediaType, npCacheType) {
-        if (!useNpServer()) return;
-        var net = new Lampa.Reguest;
-        net.native(getNpBaseUrl() + "/myshows/set_status?token=" + encodeURIComponent(getNpToken()) + "&profile_id=" + encodeURIComponent(getProfileId()), function() {}, function() {}, JSON.stringify({
+        if (!useNpServer()) {
+            getStorageMode(), window.IS_NP;
+            return;
+        }
+        var profileId = getProfileId();
+        var npUrl = getNpBaseUrl() + "/myshows/set_status?token=" + encodeURIComponent(getNpToken()) + "&profile_id=" + encodeURIComponent(profileId);
+        var xhr = new XMLHttpRequest;
+        xhr.open("POST", npUrl, true);
+        xhr.setRequestHeader("Content-Type", "application/json");
+        xhr.onload = function() {
+            if (xhr.status >= 200 && xhr.status < 300) ; else xhr.status;
+        };
+        xhr.onerror = function() {};
+        xhr.send(JSON.stringify({
             myshows_id: myshowsId,
             tmdb_id: tmdbId,
             media_type: mediaType,
             cache_type: npCacheType
-        }), {
-            headers: JSON_HEADERS,
-            method: "POST"
-        });
+        }));
     }
     function setMyShowsStatus(cardData, status, callback) {
         var identifiers = getCardIdentifiers(cardData);

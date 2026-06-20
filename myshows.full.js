@@ -58,6 +58,7 @@
             watchingTransitionInFlight[key] = false;
             if (success) {
                 setCardStatusCache(card.id, false, 'watching');
+                // Кнопки перерисуем при возврате на full (activity 'archive') — для плавного перехода.
                 Log.info('[MS-guard] ✅ сериал переведён в Смотрю (tmdbId=' + key + ')');
             } else {
                 Log.warn('[MS-guard] ❌ не удалось перевести сериал в Смотрю (tmdbId=' + key + ')');
@@ -1591,15 +1592,32 @@
 
     // Установить статус для сериала ("Смотрю, Буду смотреть, Перестал смотреть, Не смотрю" на MyShows
     function npSetStatus(myshowsId, tmdbId, mediaType, npCacheType) {
-        if (!useNpServer()) return;
-        var net = new Lampa.Reguest();
-        net.native(
-            getNpBaseUrl() + '/myshows/set_status?token=' + encodeURIComponent(getNpToken()) +
-            '&profile_id=' + encodeURIComponent(getProfileId()),
-            function() {}, function() {},
-            JSON.stringify({ myshows_id: myshowsId, tmdb_id: tmdbId, media_type: mediaType, cache_type: npCacheType }),
-            { headers: JSON_HEADERS, method: 'POST' }
-        );
+        // Пишем только когда реально в NP-режиме (IS_NP поднят). При неверном/отсутствующем
+        // токене режим = local → пишем локально, а не лупим в NP заведомо падающие POST.
+        if (!useNpServer()) {
+            Log.warn('[MS-np] npSetStatus ПРОПУЩЕН (mode=' + getStorageMode() + ', IS_NP=' + (!!window.IS_NP) +
+                ') ' + mediaType + ' tmdb=' + tmdbId + ' → "' + npCacheType + '"');
+            return;
+        }
+        var profileId = getProfileId();
+        Log.info('[MS-np] npSetStatus → ' + mediaType + ' tmdb=' + tmdbId + ' myshows=' + myshowsId +
+            ' cache_type="' + npCacheType + '" profile=' + profileId);
+        // XMLHttpRequest напрямую (как в рабочем saveCacheToServer). Через Lampa.Reguest().native()
+        // POST падал с HTTP 0 — не доходил до сервера, при этом тот же сервер по XHR пишет нормально.
+        var npUrl = getNpBaseUrl() + '/myshows/set_status?token=' + encodeURIComponent(getNpToken()) +
+            '&profile_id=' + encodeURIComponent(profileId);
+        var xhr = new XMLHttpRequest();
+        xhr.open('POST', npUrl, true);
+        xhr.setRequestHeader('Content-Type', 'application/json');
+        xhr.onload = function() {
+            if (xhr.status >= 200 && xhr.status < 300) {
+                Log.info('[MS-np] ✅ npSetStatus записан в БД (' + mediaType + ' tmdb=' + tmdbId + ')');
+            } else {
+                Log.error('[MS-np] ❌ npSetStatus ОШИБКА записи (' + mediaType + ' tmdb=' + tmdbId + '), HTTP ' + xhr.status);
+            }
+        };
+        xhr.onerror = function() { Log.error('[MS-np] ❌ npSetStatus сетевая ОШИБКА (' + mediaType + ' tmdb=' + tmdbId + ')'); };
+        xhr.send(JSON.stringify({ myshows_id: myshowsId, tmdb_id: tmdbId, media_type: mediaType, cache_type: npCacheType }));
     }
 
     function setMyShowsStatus(cardData, status, callback) {
@@ -2332,6 +2350,8 @@
                     if (success) {
                         checkedMovies[mvKey] = true;
                         setCardStatusCache(card.id, true, 'finished');
+                        // Кнопки перерисуем при ВОЗВРАТЕ на full (activity 'archive') — чтобы был плавный
+                        // CSS-переход. Во время плеера карточка скрыта, менять её сейчас бессмысленно.
                         Log.info('[MS-guard] ✅ фильм ' + mvKey + ' отмечен — больше к API не обращаемся');
                         cachedShuffledItems = {};
                     }
@@ -3535,6 +3555,27 @@
             type: event.type,
             component: event.component
         });
+
+        // [ВРЕМЕННО ОТКЛЮЧЕНО для теста] Перерисовка кнопок из cardStatusCache при возврате на full.
+        // Проверяем, достаточно ли одного refreshFullCardStatus (он обновляет статус с сервера + метки).
+        /*
+        if ((event.type === 'archive' || event.type === 'start') && event.component === 'full') {
+            var _card = event.object && event.object.card;
+            if (_card) {
+                var _isMovieCard = isMovieContent(_card);
+                var _cachedStatus = getCardStatusCache(_card.id, _isMovieCard);
+                if (_cachedStatus) {
+                    // ~1.5с задержки: сначала видим прежний статус, затем плавная (0.5с CSS) смена.
+                    // 200мс было слишком резко — переход не читался как плавный.
+                    setTimeout(function() {
+                        if (!isSameFullCardOpen(_card)) return;
+                        Log.info('[MS-guard] Возврат на full — перерисовываем кнопки в "' + _cachedStatus + '" (анимация)');
+                        updateButtonStates(_cachedStatus, _isMovieCard, true);
+                    }, 1500);
+                }
+            }
+        }
+        */
 
         // Торренты/Онлайн: у активности есть movie (у full — card)
         if (event.type === 'start' && event.component !== 'full' && event.object && event.object.movie) {
