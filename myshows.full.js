@@ -3556,27 +3556,6 @@
             component: event.component
         });
 
-        // [ВРЕМЕННО ОТКЛЮЧЕНО для теста] Перерисовка кнопок из cardStatusCache при возврате на full.
-        // Проверяем, достаточно ли одного refreshFullCardStatus (он обновляет статус с сервера + метки).
-        /*
-        if ((event.type === 'archive' || event.type === 'start') && event.component === 'full') {
-            var _card = event.object && event.object.card;
-            if (_card) {
-                var _isMovieCard = isMovieContent(_card);
-                var _cachedStatus = getCardStatusCache(_card.id, _isMovieCard);
-                if (_cachedStatus) {
-                    // ~1.5с задержки: сначала видим прежний статус, затем плавная (0.5с CSS) смена.
-                    // 200мс было слишком резко — переход не читался как плавный.
-                    setTimeout(function() {
-                        if (!isSameFullCardOpen(_card)) return;
-                        Log.info('[MS-guard] Возврат на full — перерисовываем кнопки в "' + _cachedStatus + '" (анимация)');
-                        updateButtonStates(_cachedStatus, _isMovieCard, true);
-                    }, 1500);
-                }
-            }
-        }
-        */
-
         // Торренты/Онлайн: у активности есть movie (у full — card)
         if (event.type === 'start' && event.component !== 'full' && event.object && event.object.movie) {
             addNextEpisodeToExplorer(event.object.movie);
