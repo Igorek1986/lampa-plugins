@@ -10,6 +10,9 @@
     var params = new URLSearchParams(scriptUrl.split('?')[1]);
     return params.get('auth_proxy') || 'https://myshows.igorek1986.ru/myshows/auth';
     })();
+    // Прямой эндпоинт логина MyShows (login/password → {token}). Секрета не требует, поэтому
+    // на нативе (мимо CORS) можно дёргать напрямую; в браузере упадёт по CORS → фолбэк на прокси.
+    var MYSHOWS_AUTH_DIRECT = 'https://myshows.me/api/session';
     var DEFAULT_CACHE_DAYS = 30;
     var JSON_HEADERS = {
         'Content-Type': 'application/json'
@@ -609,26 +612,40 @@
             return;
         }
 
-        var network = new Lampa.Reguest();
-        network.native(MYSHOWS_AUTH_PROXY, function(data) {
-            if (data && data.token) {
-                var token = data.token;
-                setProfileSetting('myshows_token', token);
-                Lampa.Storage.set('myshows_token', token, true);
-                if (successCallback) {
-                    successCallback(token);
-                } else {
-                    Lampa.Noty.show('✅ Auth success! Reboot...');
-                    setTimeout(function() { window.location.reload(); }, 3000);
-                }
+        var body = JSON.stringify({ login: login, password: password });
+
+        // Успешный ответ (и от myshows.me/api/session, и от прокси) содержит data.token.
+        function onAuthData(data) {
+            if (!data || !data.token) return false;
+            var token = data.token;
+            setProfileSetting('myshows_token', token);
+            Lampa.Storage.set('myshows_token', token, true);
+            if (successCallback) {
+                successCallback(token);
             } else {
-                fail('No token received');
+                Lampa.Noty.show('✅ Auth success! Reboot...');
+                setTimeout(function() { window.location.reload(); }, 3000);
             }
-        }, function(xhr) {
-            fail('Network error: ' + xhr.status);
-        }, JSON.stringify({ login: login, password: password }), {
-            headers: JSON_HEADERS,
-        });
+            return true;
+        }
+
+        // Через CORS-прокси (браузер). Финальный шаг — если не вышло, fail().
+        function viaProxy() {
+            var net = new Lampa.Reguest();
+            net.native(MYSHOWS_AUTH_PROXY, function(data) {
+                if (!onAuthData(data)) fail('No token received');
+            }, function(xhr) {
+                fail('Network error: ' + (xhr && xhr.status));
+            }, body, { headers: JSON_HEADERS });
+        }
+
+        // Сначала НАПРЯМУЮ (натив — мимо CORS), при любой ошибке/без токена → через прокси.
+        var direct = new Lampa.Reguest();
+        direct.native(MYSHOWS_AUTH_DIRECT, function(data) {
+            if (!onAuthData(data)) viaProxy();
+        }, function() {
+            viaProxy();
+        }, body, { headers: JSON_HEADERS });
 
         function fail(msg) {
             if (successCallback) {

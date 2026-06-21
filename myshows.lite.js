@@ -9,6 +9,7 @@
         var params = new URLSearchParams(scriptUrl.split("?")[1]);
         return params.get("auth_proxy") || "https://myshows.igorek1986.ru/myshows/auth";
     }();
+    var MYSHOWS_AUTH_DIRECT = "https://myshows.me/api/session";
     var DEFAULT_CACHE_DAYS = 30;
     var JSON_HEADERS = {
         "Content-Type": "application/json"
@@ -455,25 +456,39 @@
             if (successCallback) successCallback(null); else Lampa.Noty.show(msg);
             return;
         }
-        var network = new Lampa.Reguest;
-        network.native(MYSHOWS_AUTH_PROXY, function(data) {
-            if (data && data.token) {
-                var token = data.token;
-                setProfileSetting("myshows_token", token);
-                Lampa.Storage.set("myshows_token", token, true);
-                if (successCallback) successCallback(token); else {
-                    Lampa.Noty.show("✅ Auth success! Reboot...");
-                    setTimeout(function() {
-                        window.location.reload();
-                    }, 3e3);
-                }
-            } else fail("No token received");
-        }, function(xhr) {
-            fail("Network error: " + xhr.status);
-        }, JSON.stringify({
+        var body = JSON.stringify({
             login: login,
             password: password
-        }), {
+        });
+        function onAuthData(data) {
+            if (!data || !data.token) return false;
+            var token = data.token;
+            setProfileSetting("myshows_token", token);
+            Lampa.Storage.set("myshows_token", token, true);
+            if (successCallback) successCallback(token); else {
+                Lampa.Noty.show("✅ Auth success! Reboot...");
+                setTimeout(function() {
+                    window.location.reload();
+                }, 3e3);
+            }
+            return true;
+        }
+        function viaProxy() {
+            var net = new Lampa.Reguest;
+            net.native(MYSHOWS_AUTH_PROXY, function(data) {
+                if (!onAuthData(data)) fail("No token received");
+            }, function(xhr) {
+                fail("Network error: " + (xhr && xhr.status));
+            }, body, {
+                headers: JSON_HEADERS
+            });
+        }
+        var direct = new Lampa.Reguest;
+        direct.native(MYSHOWS_AUTH_DIRECT, function(data) {
+            if (!onAuthData(data)) viaProxy();
+        }, function() {
+            viaProxy();
+        }, body, {
             headers: JSON_HEADERS
         });
         function fail(msg) {
