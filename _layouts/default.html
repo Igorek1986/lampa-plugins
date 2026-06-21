@@ -53,6 +53,12 @@
     padding:5px 13px; border-radius:999px; transition:.15s}
   .lang a:hover{color:var(--ink)}
   .lang a.active{background:var(--accent); color:#fff}
+  .donate-btn{display:inline-flex; align-items:center; gap:5px; font-size:13px; font-weight:500;
+    color:var(--ink-subtle); padding:5px 13px; border:1px solid var(--hairline);
+    border-radius:999px; background:var(--surface); transition:.15s; white-space:nowrap}
+  .donate-btn:hover{color:var(--ink); border-color:var(--hairline-strong)}
+  .donate-btn .heart{color:var(--accent-hover)}
+  .topbar__right{display:flex; align-items:center; gap:10px}
 
   /* Hero */
   .hero{padding:74px 0 30px; text-align:center}
@@ -174,10 +180,15 @@
       <a class="brand" href="https://igorek1986.github.io/lampa-plugins/">
         <span class="dot"></span> Lampa Plugins
       </a>
-      <nav class="lang">
-        <a href="https://igorek1986.github.io/lampa-plugins/" class="{% if page.lang != 'en' %}active{% endif %}">RU</a>
-        <a href="https://igorek1986.github.io/lampa-plugins/en" class="{% if page.lang == 'en' %}active{% endif %}">EN</a>
-      </nav>
+      <div class="topbar__right">
+        <a class="donate-btn" href="https://yoomoney.ru/fundraise/1DVU3GIL23V.251112">
+          <span class="heart">♥</span> {% if page.lang == 'en' %}Donate{% else %}Донат{% endif %}
+        </a>
+        <nav class="lang">
+          <a href="https://igorek1986.github.io/lampa-plugins/" class="{% if page.lang != 'en' %}active{% endif %}">RU</a>
+          <a href="https://igorek1986.github.io/lampa-plugins/en" class="{% if page.lang == 'en' %}active{% endif %}">EN</a>
+        </nav>
+      </div>
     </div>
   </header>
 
