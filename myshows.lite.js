@@ -18,9 +18,12 @@
     var syncInProgress = false;
     var checkedEpisodes = {};
     var checkedMovies = {};
+    var _pendingWatchedShows = {};
     var _unwatchedEpisodeIds = {};
     var _unwatchedEpisodeIdsReady = false;
     var _unwatchedEpisodeIdsProfile = null;
+    var _myShowsLine = null;
+    var _myShowsDirty = false;
     var cardStatusCache = {};
     function cardStatusKey(tmdbId, isMovie) {
         return (tmdbId ? String(tmdbId) : "0") + ":" + (isMovie ? "movie" : "tv");
@@ -44,17 +47,22 @@
             return;
         }
         watchingTransitionInFlight[key] = true;
+        if (key) _pendingWatchedShows[key] = true;
         setMyShowsStatus(card, "watching", function(success) {
             watchingTransitionInFlight[key] = false;
-            if (success) setCardStatusCache(card.id, false, "watching");
+            if (success) {
+                setCardStatusCache(card.id, false, "watching");
+                _myShowsDirty = true;
+                addUnwatchedTraces(card);
+            }
             if (callback) callback(success);
         });
     }
     var myshows_icon = '<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><rect x="3" y="7" width="18" height="12" rx="3" style="fill:none;stroke:currentColor;stroke-width:2"/><line x1="12" y1="5" x2="7" y2="1" style="fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round"/><line x1="12" y1="5" x2="17" y2="1" style="fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round"/><circle cx="12" cy="6" r="1" style="fill:currentColor;stroke:none"/></svg>';
-    var watch_icon = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z" fill="currentColor"/></svg>';
-    var later_icon = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z" fill="currentColor"/></svg>';
-    var remove_icon = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" fill="currentColor"/></svg>';
-    var cancelled_icon = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm5 11H7v-2h10v2z" fill="currentColor"/></svg>';
+    var watch_icon = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="2"/></svg>';
+    var later_icon = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2"/><path d="M8 12l3 3 5-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+    var remove_icon = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2"/><path d="M9 9l6 6M15 9l-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
+    var cancelled_icon = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2"/><path d="M8 12h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
     var IS_LAMPAC = null;
     function isNpConnected() {
         return !!window.IS_NP;
@@ -1312,6 +1320,7 @@
                 _unwatchedEpisodeIds = newUnwatchedIds;
                 _unwatchedEpisodeIdsReady = true;
                 _unwatchedEpisodeIdsProfile = startProfile;
+                _pendingWatchedShows = {};
                 Object.keys(newUnwatchedIds).length;
                 scheduleEpisodeBadgeDecorate();
             }
@@ -1918,9 +1927,8 @@
         newShows.forEach(function(newShow) {
             if (!findInArray(newShow, oldShows)) {
                 var showName = newShow.original_name || newShow.name || newShow.title || "";
-                newShow.myshowsId;
                 var existingCard = findCardInMyShowsSection(showName, newShow.myshowsId);
-                if (!existingCard) insertNewCardIntoMyShowsSection(newShow); else {
+                if (existingCard) {
                     existingCard.card_data = existingCard.card_data || {};
                     existingCard.card_data.progress_marker = newShow.progress_marker;
                     existingCard.card_data.next_episode = newShow.next_episode;
@@ -2482,10 +2490,10 @@
             var attempts = 0;
             (function tryInsert() {
                 var act = Lampa.Activity.active && Lampa.Activity.active();
-                if (!act || !act.movie || String(act.movie.id) !== String(movie.id)) return;
-                var cardEl = document.querySelector(".activity--active .explorer-card");
-                if (!cardEl) {
-                    if (nextEpisode && ++attempts < 10) setTimeout(tryInsert, 300);
+                var actOk = act && act.movie && String(act.movie.id) === String(movie.id);
+                var cardEl = actOk ? document.querySelector(".activity--active .explorer-card") : null;
+                if (!actOk || !cardEl) {
+                    if (++attempts < 12) setTimeout(tryInsert, 300);
                     return;
                 }
                 var old = cardEl.querySelector(".myshows-explorer-next");
@@ -2508,12 +2516,18 @@
         if (!act || act.component === "full" || !act.movie) return;
         var movie = act.movie;
         setTimeout(function() {
-            addNextEpisodeToExplorer(movie);
+            fetchFromMyShowsAPI(function() {
+                addNextEpisodeToExplorer(movie);
+            });
         }, 3e3);
     });
     Lampa.Listener.follow("activity", function(event) {
         event.type, event.component;
         if (event.type === "start" && event.component !== "full" && event.object && event.object.movie) addNextEpisodeToExplorer(event.object.movie);
+        if (event.type === "start" && (event.component === "main" || event.component === "category") && _myShowsDirty) {
+            _myShowsDirty = false;
+            setTimeout(reconcileMyShowsLine, 100);
+        }
         if (event.type === "start" && event.component === "full") {
             var currentCard = event.object && event.object.card;
             if (currentCard) {
@@ -2526,7 +2540,9 @@
                 if (previousCard && (previousCard.original_name || previousCard.original_title || previousCard.title) === originalName && wasWatching) {
                     var isSerial = currentCard.number_of_seasons > 0 || currentCard.seasons;
                     setTimeout(function() {
-                        refreshFullCardStatus(isSerial, originalName, currentCard);
+                        fetchFromMyShowsAPI(function() {
+                            refreshFullCardStatus(isSerial, originalName, currentCard);
+                        });
                     }, 3e3);
                 }
             }
@@ -2540,13 +2556,15 @@
                 var lastMyshowsId = lastCard.myshowsId;
                 Lampa.Storage.set("myshows_was_watching", false);
                 setTimeout(function() {
-                    var needle = lastMyshowsId || originalName;
-                    findShowInCache("unwatched_serials", "shows", needle, function(foundShow) {
-                        if (foundShow) {
-                            var existingCard = findCardInMyShowsSection(originalName, foundShow.myshowsId);
-                            if (existingCard && foundShow.progress_marker) updateAllMyShowsCards(originalName, foundShow.myshowsId, foundShow.progress_marker, foundShow.next_episode, foundShow.remaining); else if (!existingCard) insertNewCardIntoMyShowsSection(foundShow);
-                        } else updateCompletedShowCard(originalName);
-                    }, lastCard);
+                    fetchFromMyShowsAPI(function() {
+                        var needle = lastMyshowsId || originalName;
+                        findShowInCache("unwatched_serials", "shows", needle, function(foundShow) {
+                            if (foundShow) {
+                                var existingCard = findCardInMyShowsSection(originalName, foundShow.myshowsId);
+                                if (existingCard && foundShow.progress_marker) updateAllMyShowsCards(originalName, foundShow.myshowsId, foundShow.progress_marker, foundShow.next_episode, foundShow.remaining); else if (!existingCard) insertNewCardIntoMyShowsSection(foundShow);
+                            } else updateCompletedShowCard(originalName);
+                        }, lastCard);
+                    });
                 }, 3e3);
             } else if (currentCard) {
                 var originalName = currentCard.original_name || currentCard.original_title || currentCard.title;
@@ -2634,6 +2652,8 @@
             }, "unwatched_serials", function() {}, getProfileId());
             if (isSameFullCardOpen(card)) updateFullCardMarkers(show);
             updateAllMyShowsCards(showName, show.myshowsId, show.progress_marker, show.next_episode, show.remaining);
+            var act = Lampa.Activity.active && Lampa.Activity.active();
+            if (act && act.movie && act.component !== "full") addNextEpisodeToExplorer(card);
         });
     }
     function refreshFullCardStatus(isSerial, originalName, currentCard) {
@@ -2729,6 +2749,7 @@
     }
     function removeUnwatchedTraces(card) {
         if (!card) return;
+        _myShowsDirty = true;
         var showName = card.original_name || card.original_title || card.title || card.name;
         var myshowsId = card.myshowsId;
         var poster = $(".full-start-new__poster")[0];
@@ -2748,11 +2769,88 @@
             var parentSection = cardEl.closest(".items-line");
             var allCards = parentSection ? parentSection.querySelectorAll(".card") : [];
             var idx = [].slice.call(allCards).indexOf(cardEl);
+            if (_myShowsLine) {
+                var prevMain = neighborCard(allCards, idx);
+                if (prevMain) _myShowsLine.last = prevMain;
+            }
             removeCompletedCard(cardEl, showName, parentSection, idx);
         }
+        removeShowCardFromActiveView(card);
+    }
+    function reconcileMyShowsLine() {
+        var section = findMyShowsSection();
+        if (!section) return;
+        loadCacheFromServer("unwatched_serials", "shows", function(res) {
+            if (!findMyShowsSection()) return;
+            var shows = res && res.shows ? res.shows : [];
+            var moreBtn = section.querySelector(".card-more");
+            var cards = section.querySelectorAll(".card");
+            for (var i = 0; i < cards.length; i++) {
+                var el = cards[i];
+                if (!el.card_data || el.dataset && el.dataset.removing === "true") continue;
+                var stale = true;
+                for (var j = 0; j < shows.length; j++) if (sameShow(shows[j], el.card_data)) {
+                    stale = false;
+                    break;
+                }
+                var afterMore = moreBtn && moreBtn.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING;
+                if (stale || afterMore) {
+                    el.dataset.removing = "true";
+                    var all = section.querySelectorAll(".card");
+                    var idx = [].slice.call(all).indexOf(el);
+                    getCardName(el.card_data);
+                    removeCompletedCard(el, getCardName(el.card_data), section, idx);
+                }
+            }
+        });
+    }
+    function neighborCard(cards, i) {
+        for (var p = i - 1; p >= 0; p--) if (cards[p] && !(cards[p].dataset && cards[p].dataset.removing === "true")) return cards[p];
+        for (var n = i + 1; n < cards.length; n++) if (cards[n] && !(cards[n].dataset && cards[n].dataset.removing === "true")) return cards[n];
+        return null;
+    }
+    function removeShowCardFromActiveView(card) {
+        if (!Lampa.Activity || !Lampa.Activity.all) return;
+        var acts = Lampa.Activity.all() || [];
+        var activeComp = Lampa.Activity.active && Lampa.Activity.active() && Lampa.Activity.active().component || "";
+        var name = card.original_name || card.original_title || card.title || card.name;
+        acts.forEach(function(a) {
+            if (!a || a.component !== "myshows_unwatched" && a.component !== "myshows_all") return;
+            var render = a.activity && a.activity.render && a.activity.render(true);
+            var dom = render && (render[0] || render);
+            if (!dom || !dom.querySelectorAll) return;
+            var isActivePage = a.component === activeComp;
+            var cards = dom.querySelectorAll(".card");
+            for (var i = 0; i < cards.length; i++) {
+                if (cards[i].dataset && cards[i].dataset.removing === "true") continue;
+                if (sameShow(cards[i].card_data, card)) {
+                    cards[i].dataset.removing = "true";
+                    a.component;
+                    if (isActivePage) {
+                        var cont = cards[i].parentNode;
+                        var all = cont ? cont.querySelectorAll(".card") : [];
+                        var idx = [].slice.call(all).indexOf(cards[i]);
+                        removeCompletedCard(cards[i], name, cont, idx);
+                    } else {
+                        var prevDom = neighborCard(cards, i);
+                        var comp = a.activity && a.activity.component;
+                        if (prevDom && comp) comp.last = prevDom;
+                        (function(el) {
+                            el.style.transition = "opacity 0.4s ease, transform 0.4s ease";
+                            el.style.opacity = "0";
+                            el.style.transform = "translateY(10px)";
+                            setTimeout(function() {
+                                if (el.parentNode) el.remove();
+                            }, 400);
+                        })(cards[i]);
+                    }
+                }
+            }
+        });
     }
     function addUnwatchedTraces(card, attempt) {
         if (!card) return;
+        _myShowsDirty = true;
         attempt = attempt || 0;
         var showName = card.original_name || card.original_title || card.title || card.name;
         var needle = card.myshowsId || showName;
@@ -2988,8 +3086,8 @@
                     updateCardWithAnimation(cardElement, newProgressMarker, "myshows-progress");
                     cardData.remaining = 0;
                     updateCardWithAnimation(cardElement, "0", "myshows-remaining");
-                    var parentSection = cardElement.closest(".items-line");
-                    var allCards = parentSection.querySelectorAll(".card");
+                    var parentSection = cardElement.closest(".items-line") || cardElement.parentNode;
+                    var allCards = parentSection ? parentSection.querySelectorAll(".card") : [];
                     var currentIndex = [].slice.call(allCards).indexOf(cardElement);
                     setTimeout(function() {
                         removeCompletedCard(cardElement, showName, parentSection, currentIndex);
@@ -3000,11 +3098,12 @@
         }
     }
     function removeCompletedCard(cardElement, showName, parentSection, cardIndex) {
+        if (!parentSection) parentSection = cardElement.parentNode;
         var isCurrentlyFocused = cardElement.classList.contains("focus");
         var nextCard = null;
         if (isCurrentlyFocused) {
             var allCards = parentSection.querySelectorAll(".card");
-            if (cardIndex < allCards.length - 1) nextCard = allCards[cardIndex + 1]; else if (cardIndex > 0) nextCard = allCards[cardIndex - 1];
+            if (cardIndex > 0) nextCard = allCards[cardIndex - 1]; else if (cardIndex < allCards.length - 1) nextCard = allCards[cardIndex + 1];
         }
         cardElement.style.transition = "opacity 0.5s ease, transform 0.5s ease";
         cardElement.style.opacity = "0";
@@ -3049,10 +3148,65 @@
         }
         return null;
     }
+    function sameShow(a, b) {
+        if (!a || !b) return false;
+        if (a.myshowsId && b.myshowsId && a.myshowsId === b.myshowsId) return true;
+        var an = [ a.name, a.title, a.original_name, a.original_title ];
+        var bn = [ b.name, b.title, b.original_name, b.original_title ];
+        for (var i = 0; i < an.length; i++) {
+            if (!an[i]) continue;
+            var x = String(an[i]).toLowerCase();
+            for (var j = 0; j < bn.length; j++) if (bn[j] && String(bn[j]).toLowerCase() === x) return true;
+        }
+        return false;
+    }
+    function showAlreadyInLine(line, showData) {
+        var section = findMyShowsSection();
+        if (section) {
+            var cards = section.querySelectorAll(".card");
+            for (var i = 0; i < cards.length; i++) if (sameShow(cards[i].card_data, showData)) return true;
+        }
+        var arr = line.data && line.data.results || [];
+        for (var k = 0; k < arr.length; k++) if (sameShow(arr[k], showData)) return true;
+        return false;
+    }
+    function insertViaLine(showData) {
+        var line = _myShowsLine;
+        if (!line || !line.emit || !line.render || !line.data) return false;
+        var html, dom;
+        try {
+            html = line.render(true);
+            dom = html && (html[0] || html) || null;
+        } catch (e) {
+            return false;
+        }
+        if (!dom || !document.body.contains(dom)) return false;
+        if (showAlreadyInLine(line, showData)) return true;
+        try {
+            line.emit("createAndAppend", showData);
+            var item = line.items && line.items[line.items.length - 1];
+            if (item && item.render) {
+                var el = item.render(true);
+                var elDom = el && (el[0] || el);
+                if (elDom) {
+                    elDom.card_data = showData;
+                    if (elDom.parentNode) {
+                        var moreBtn = elDom.parentNode.querySelector(".card-more");
+                        if (moreBtn && moreBtn !== elDom) elDom.parentNode.insertBefore(elDom, moreBtn);
+                    }
+                }
+                addProgressMarkerToCard(el, showData);
+            }
+        } catch (e) {
+            return false;
+        }
+        return true;
+    }
     function insertNewCardIntoMyShowsSection(showData, retryCount) {
         if (showData && showData._renderToken !== void 0 && showData._renderToken !== _profileRenderToken) return;
         if (showData && !showData.release_date && showData.first_air_date) showData.release_date = showData.first_air_date;
         showData.name || showData.title, showData.progress_marker, showData.remaining, showData.next_episode;
+        if (insertViaLine(showData)) return;
         if (typeof retryCount === "undefined") retryCount = 0;
         if (retryCount > 5) {
             showData.name || showData.title;
@@ -3149,7 +3303,7 @@
         }
         return lookup;
     }
-    function decorateOneEpisodeCard(cardEl, lookup, fallbackSeason) {
+    function decorateOneEpisodeCard(cardEl, lookup, fallbackSeason, strict) {
         var entry = null;
         var tl = cardEl.querySelector(".time-line[data-hash]");
         if (tl) {
@@ -3163,15 +3317,23 @@
             if (!isNaN(num) && season) entry = lookup["se:" + season + "_" + num];
         }
         var imgBox = cardEl.querySelector(".full-episode__img, .season-episode__img, .online-prestige__img");
+        if (!imgBox) {
+            var img = cardEl.querySelector("img");
+            if (img && img.parentNode && img.parentNode !== cardEl) imgBox = img.parentNode;
+        }
         if (!imgBox) imgBox = cardEl;
-        if (imgBox === cardEl) cardEl.classList.add("myshows-check-anchor");
+        imgBox.classList.add("myshows-check-anchor");
         var existing = imgBox.querySelector(".myshows-episode-checked");
-        var watched = entry && isEpisodeWatchedMyShows(entry.episodeId, entry.airDate);
+        var watched = strict ? entry && !!checkedEpisodes[parseInt(entry.episodeId)] : entry && isEpisodeWatchedMyShows(entry.episodeId, entry.airDate);
         if (watched) {
             if (!existing) {
                 var badge = document.createElement("div");
                 badge.className = "myshows-episode-checked";
                 imgBox.appendChild(badge);
+                if (imgBox === cardEl) {
+                    var thumb = cardEl.querySelector("img");
+                    if (thumb && thumb.offsetWidth && thumb.offsetWidth < cardEl.offsetWidth * .6) badge.style.right = cardEl.offsetWidth - thumb.offsetLeft - thumb.offsetWidth + 6 + "px";
+                }
             }
         } else if (existing) existing.remove();
     }
@@ -3191,12 +3353,16 @@
     }
     function nearestCardAnchor(tlEl) {
         var n = tlEl, depth = 0;
-        while (n && depth < 6) {
-            if (n.classList && (n.classList.contains("full-episode") || n.classList.contains("season-episode") || n.classList.contains("online-prestige") || n.classList.contains("selector"))) return n;
+        while (n && depth < 8) {
+            if (n.classList) {
+                if (n.classList.contains("card-watched")) return null;
+                if (n.classList.contains("full-episode") || n.classList.contains("season-episode") || n.classList.contains("online-prestige")) return n;
+                if (n.classList.contains("selector")) return n.classList.contains("card") ? null : n;
+            }
             n = n.parentNode;
             depth++;
         }
-        return tlEl.parentNode;
+        return null;
     }
     function collectEpisodeCards() {
         var set = [], seen = [];
@@ -3241,7 +3407,8 @@
             });
             return;
         }
-        for (var i = 0; i < cards.length; i++) decorateOneEpisodeCard(cards[i], lookup, episodeLineSeason(cards[i]));
+        var strict = !!_pendingWatchedShows[tmdbKey];
+        for (var i = 0; i < cards.length; i++) decorateOneEpisodeCard(cards[i], lookup, episodeLineSeason(cards[i]), strict);
     }
     var _episodeMapAttempted = {};
     function hasOwn(obj) {
@@ -4713,6 +4880,7 @@
     }
     Lampa.Listener.follow("line", function(event) {
         if (event.data && event.data.title && event.data.title.indexOf("MyShows") !== -1) if (event.type === "create") {
+            _myShowsLine = event.line || null;
             if (event.data && event.data.results && event.line) event.data.results.forEach(function(show) {
                 if (!show.ready && event.line.append) event.line.append(show);
             });
