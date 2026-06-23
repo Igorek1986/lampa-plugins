@@ -2714,6 +2714,15 @@
                     _populateProgressMap(shows);
                     cachedResult.shows = shows;
                     callback(cachedResult);
+                    // Фоновый refresh + диф: если на MyShows сняли отметку (появился новый
+                    // непросмотренный сериал) или досмотрели — обновляем живую секцию.
+                    setTimeout(function() {
+                        fetchFromMyShowsAPI(function(freshResult) {
+                            if (freshResult && freshResult.shows && cachedResult.shows) {
+                                updateUIIfNeeded(cachedResult.shows, freshResult.shows);
+                            }
+                        });
+                    }, getRefreshDelay());
                 } else {
                     // Первый запуск или пустой кеш — вытягиваем напрямую из MyShows
                     fetchFromMyShowsAPI(function(freshResult) {
@@ -3870,6 +3879,19 @@
             show.remaining       = released - watchedCount;
             show.unwatchedCount  = show.remaining;
 
+            var showName = card.original_name || card.original_title || card.title;
+
+            // Все вышедшие серии просмотрены → сериал уходит из "Непросмотренных":
+            // убираем из кэша, доводим метки до конца и плавно гасим (full + карточка в секции).
+            if (watched && show.remaining <= 0) {
+                var idx = arr.indexOf(show);
+                if (idx > -1) arr.splice(idx, 1);
+                saveCacheToServer({ shows: arr }, 'unwatched_serials', function() {}, getProfileId());
+                if (isSameFullCardOpen(card)) completeFullCardMarkers(card);
+                updateCompletedShowCard(showName, show.myshowsId);
+                return;
+            }
+
             // _unwatchedEpisodeIds уже обновлён вызывающим (серия удалена при отметке /
             // возвращена при снятии), поэтому next считается корректно для обоих случаев.
             var nextEp = computeNextUnwatchedEpisode(card);
@@ -3878,6 +3900,8 @@
             saveCacheToServer({ shows: arr }, 'unwatched_serials', function() {}, getProfileId());
 
             if (isSameFullCardOpen(card)) updateFullCardMarkers(show);
+            // Карточка в секции "Непросмотренные" (если открыта главная) — синхронно
+            updateAllMyShowsCards(showName, show.myshowsId, show.progress_marker, show.next_episode, show.remaining);
         });
     }
 
@@ -4497,6 +4521,12 @@
 
                 var releasedEpisodes = cardData.released_count;
                 var totalEpisodes = cardData.total_count;
+
+                // Фолбэк: если released_count не сохранён в card_data — берём знаменатель
+                // из progress_marker ("16/17" → 17), иначе досматривание/удаление не сработает.
+                if (!releasedEpisodes && cardData.progress_marker && cardData.progress_marker.indexOf('/') > -1) {
+                    releasedEpisodes = parseInt(cardData.progress_marker.split('/')[1], 10);
+                }
 
                 if (releasedEpisodes) {
                     var newProgressMarker = releasedEpisodes + '/' + releasedEpisodes;

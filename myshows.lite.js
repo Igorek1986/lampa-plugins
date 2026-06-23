@@ -1858,6 +1858,11 @@
                     _populateProgressMap(shows);
                     cachedResult.shows = shows;
                     callback(cachedResult);
+                    setTimeout(function() {
+                        fetchFromMyShowsAPI(function(freshResult) {
+                            if (freshResult && freshResult.shows && cachedResult.shows) updateUIIfNeeded(cachedResult.shows, freshResult.shows);
+                        });
+                    }, getRefreshDelay());
                 } else fetchFromMyShowsAPI(function(freshResult) {
                     callback(freshResult || {
                         shows: []
@@ -2605,12 +2610,24 @@
             show.watched_count = watchedCount;
             show.remaining = released - watchedCount;
             show.unwatchedCount = show.remaining;
+            var showName = card.original_name || card.original_title || card.title;
+            if (watched && show.remaining <= 0) {
+                var idx = arr.indexOf(show);
+                if (idx > -1) arr.splice(idx, 1);
+                saveCacheToServer({
+                    shows: arr
+                }, "unwatched_serials", function() {}, getProfileId());
+                if (isSameFullCardOpen(card)) completeFullCardMarkers(card);
+                updateCompletedShowCard(showName, show.myshowsId);
+                return;
+            }
             var nextEp = computeNextUnwatchedEpisode(card);
             if (nextEp !== void 0) show.next_episode = nextEp;
             saveCacheToServer({
                 shows: arr
             }, "unwatched_serials", function() {}, getProfileId());
             if (isSameFullCardOpen(card)) updateFullCardMarkers(show);
+            updateAllMyShowsCards(showName, show.myshowsId, show.progress_marker, show.next_episode, show.remaining);
         });
     }
     function refreshFullCardStatus(isSerial, originalName, currentCard) {
@@ -2958,6 +2975,7 @@
                 cardElement.dataset.removing = "true";
                 var releasedEpisodes = cardData.released_count;
                 var totalEpisodes = cardData.total_count;
+                if (!releasedEpisodes && cardData.progress_marker && cardData.progress_marker.indexOf("/") > -1) releasedEpisodes = parseInt(cardData.progress_marker.split("/")[1], 10);
                 if (releasedEpisodes) {
                     var newProgressMarker = releasedEpisodes + "/" + releasedEpisodes;
                     cardData.progress_marker = newProgressMarker;
