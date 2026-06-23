@@ -1818,6 +1818,8 @@
                 _unwatchedEpisodeIdsReady = true;
                 _unwatchedEpisodeIdsProfile = startProfile;
                 Log.info('[MS-guard] in-memory непросмотренных серий: ' + Object.keys(newUnwatchedIds).length);
+                // Набор непросмотренных мог измениться (в т.ч. правки на сайте) → обновляем галочки.
+                scheduleEpisodeBadgeDecorate();
             }
 
             // Преобразуем в массив и создаём last_episode_to_myshows
@@ -2228,6 +2230,7 @@
                 hash: hash,
                 seasonNumber: ep.seasonNumber,
                 episodeNumber: ep.episodeNumber,
+                airDate: ep.airDate || ep.airDateUTC || null,
                 timestamp: Date.now()
             };
         }
@@ -2323,9 +2326,10 @@
         if (tmdbKey) {
             for (var h in map) {
                 if (map.hasOwnProperty(h) && map[h] && String(map[h].tmdbId) === tmdbKey) {
-                    // Старые записи без номеров season/episode перестраиваем — они нужны
-                    // для локального пересчёта next_episode (computeNextUnwatchedEpisode).
-                    if (map[h].seasonNumber === undefined) break;
+                    // Старые записи без номеров season/episode или без airDate перестраиваем:
+                    // номера нужны для next_episode (computeNextUnwatchedEpisode), airDate —
+                    // чтобы не метить галочкой ещё не вышедшие серии.
+                    if (map[h].seasonNumber === undefined || map[h].airDate === undefined) break;
                     callback(map);
                     return;
                 }
@@ -2636,6 +2640,9 @@
     function initTimelineListener() {
         if (window.Lampa && Lampa.Timeline && Lampa.Timeline.listener) {
             Lampa.Timeline.listener.follow('update', processTimelineUpdate);
+            // 'view' шлётся при создании карточки серии (Timeline.view(hash) в конструкторе
+            // Episode) во всех вью — точечная замена MutationObserver для отрисовки галочек.
+            Lampa.Timeline.listener.follow('view', scheduleEpisodeBadgeDecorate);
         }
     }
 
@@ -3851,6 +3858,8 @@
     // в кэш и, если открыта та же карточка, обновляем бейджи. watched=true — серия отмечена.
     function applyEpisodeMarkLocally(card, episodeId, watched) {
         episodeId = parseInt(episodeId);
+        // _unwatchedEpisodeIds уже обновлён вызывающим → сразу обновляем галочки на сериях.
+        scheduleEpisodeBadgeDecorate();
         loadCacheFromServer('unwatched_serials', 'shows', function(result) {
             var arr = result && result.shows;
             if (!arr) return;
@@ -4925,9 +4934,190 @@
             'body[data-myshows-badge-style="2"].true--mobile.orientation--landscape .full-start-new__poster .myshows-next-episode { bottom: 2.5em; }',
             '@media screen and (min-width: 580px) and (max-width: 1024px) {',
             '    body[data-myshows-badge-style="2"].true--mobile .full-start-new__poster .myshows-next-episode { bottom: 2.5em; font-size: 1.1em; }',
-            '}'
+            '}',
+            /* Зелёная галочка "просмотрено на MyShows" в правом нижнем углу карточки серии */
+            '.full-episode__img, .season-episode__img, .online-prestige__img, .myshows-check-anchor { position: relative; }',
+            '.myshows-episode-checked {',
+            '    position: absolute; right: 0.4em; bottom: 0.4em;',
+            '    width: 1.6em; height: 1.6em; border-radius: 50%;',
+            '    background: #4CAF50; color: #fff; z-index: 3;',
+            '    display: flex; align-items: center; justify-content: center;',
+            '    box-shadow: 0 2px 6px rgba(0,0,0,0.4);',
+            '    animation: msCheckPop 0.25s ease;',
+            '}',
+            '.myshows-episode-checked::after { content: "\\2713"; font-size: 1em; font-weight: bold; line-height: 1; }',
+            '@keyframes msCheckPop { 0% { transform: scale(0); } 70% { transform: scale(1.15); } 100% { transform: scale(1); } }'
         ].join('\n');
         document.head.appendChild(style);
+    }
+
+    // ===== Зелёная галочка "просмотрено на MyShows" на карточках серий =====
+
+    // Разбор даты выхода. MyShows отдаёт ISO с временем и таймзоной
+    // ("2022-02-20T20:00:00+0300") — разбираем нативно; фолбэк для старых WebView,
+    // которые не парсят ISO, — по дате "YYYY-MM-DD" → "YYYY/MM/DD".
+    function parseAirDate(airDate) {
+        if (!airDate) return NaN;
+        var s = String(airDate);
+        var t = new Date(s).getTime();
+        if (!isNaN(t)) return t;
+        var m = s.match(/(\d{4})-(\d{2})-(\d{2})/);
+        return m ? new Date(m[1] + '/' + m[2] + '/' + m[3]).getTime() : NaN;
+    }
+
+    // Серия просмотрена на MyShows, если она УЖЕ ВЫШЛА (известна дата в прошлом) и её id
+    // отсутствует в наборе непросмотренных. Если дата неизвестна или в будущем — не метим:
+    // непросмотренный список содержит только вышедшие серии, поэтому будущую нельзя считать
+    // просмотренной по факту «нет в непросмотренных».
+    function isEpisodeWatchedMyShows(episodeId, airDate) {
+        if (!episodeId) return false;
+        var t = parseAirDate(airDate);
+        if (isNaN(t) || t > Date.now()) return false;
+        return !_unwatchedEpisodeIds[parseInt(episodeId)];
+    }
+
+    // (season_episode) -> запись хэш-карты для открытого сериала (по tmdbId).
+    function buildEpisodeLookupForShow(tmdbKey) {
+        var map = Lampa.Storage.get(MAP_KEY, {});
+        var lookup = {};
+        for (var k in map) {
+            if (!map.hasOwnProperty(k)) continue;
+            var e = map[k];
+            if (!e || String(e.tmdbId) !== String(tmdbKey)) continue;
+            if (e.seasonNumber === undefined || e.episodeNumber === undefined) continue;
+            lookup['h:' + e.hash] = e;                                   // по хэшу Lampa
+            lookup['se:' + e.seasonNumber + '_' + e.episodeNumber] = e;  // по сезону+серии
+        }
+        return lookup;
+    }
+
+    // Навесить/снять галочку на одной DOM-карточке серии.
+    function decorateOneEpisodeCard(cardEl, lookup, fallbackSeason) {
+        var entry = null;
+
+        // 1) Надёжный путь: .time-line[data-hash] (есть у season-episode карточек)
+        var tl = cardEl.querySelector('.time-line[data-hash]');
+        if (tl) {
+            var hash = tl.getAttribute('data-hash');
+            entry = lookup['h:' + hash];
+        }
+
+        // 2) Фолбэк: номер серии из карточки + сезон из заголовка строки
+        if (!entry) {
+            var numEl = cardEl.querySelector('.full-episode__num, .season-episode__episode-number');
+            var num = numEl ? parseInt((numEl.textContent || '').replace(/\D/g, ''), 10) : NaN;
+            var season = fallbackSeason;
+            if (!isNaN(num) && season) entry = lookup['se:' + season + '_' + num];
+        }
+
+        var imgBox = cardEl.querySelector('.full-episode__img, .season-episode__img, .online-prestige__img');
+        // Онлайн/Торренты: если контейнера картинки нет — цепляем галочку к самой карточке.
+        if (!imgBox) imgBox = cardEl;
+        if (imgBox === cardEl) cardEl.classList.add('myshows-check-anchor');
+        var existing = imgBox.querySelector('.myshows-episode-checked');
+
+        var watched = entry && isEpisodeWatchedMyShows(entry.episodeId, entry.airDate);
+        if (watched) {
+            if (!existing) {
+                var badge = document.createElement('div');
+                badge.className = 'myshows-episode-checked';
+                imgBox.appendChild(badge);
+            }
+        } else if (existing) {
+            existing.remove();
+        }
+    }
+
+    // Сезон из заголовка строки/активности (для карточек без .time-line).
+    // closest() может отсутствовать на старых WebView — поднимаемся вручную.
+    function episodeLineSeason(cardEl) {
+        var line = cardEl.parentNode;
+        while (line && line.classList && !line.classList.contains('items-line')) line = line.parentNode;
+        if (line && line.querySelector) {
+            var t = line.querySelector('.items-line__title');
+            if (t) { var m = (t.textContent || '').match(/(\d+)/); if (m) return parseInt(m[1], 10); }
+        }
+        var act = Lampa.Activity.active && Lampa.Activity.active();
+        if (act && act.season) return parseInt(act.season, 10);
+        return null;
+    }
+
+    // Ближайший «карточный» предок таймлайна (для произвольных онлайн/торрент-скинов).
+    function nearestCardAnchor(tlEl) {
+        var n = tlEl, depth = 0;
+        while (n && depth < 6) {
+            if (n.classList && (n.classList.contains('full-episode') || n.classList.contains('season-episode') ||
+                n.classList.contains('online-prestige') || n.classList.contains('selector'))) return n;
+            n = n.parentNode; depth++;
+        }
+        return tlEl.parentNode;
+    }
+
+    // Собрать карточки серий во всех вью: full/season-episode, online-prestige (Lampac)
+    // и любые карточки с таймлайном (.time-line[data-hash]) — это Онлайн/Торренты.
+    function collectEpisodeCards() {
+        var set = [], seen = [];
+        function add(el) { if (el && seen.indexOf(el) === -1) { seen.push(el); set.push(el); } }
+        var direct = document.querySelectorAll('.full-episode, .season-episode, .online-prestige');
+        for (var i = 0; i < direct.length; i++) add(direct[i]);
+        var tls = document.querySelectorAll('.time-line[data-hash]');
+        for (var j = 0; j < tls.length; j++) add(nearestCardAnchor(tls[j]));
+        return set;
+    }
+
+    // Пройтись по всем карточкам серий открытого сериала и обновить галочки.
+    function decorateEpisodeCards() {
+        if (!getProfileSetting('myshows_token', '')) return;
+        if (!_unwatchedEpisodeIdsReady) return;
+
+        var cards = collectEpisodeCards();
+        if (!cards.length) return;
+
+        var card = getCurrentCard();
+        if (!card || !card.id || isMovieContent(card)) { removeAllEpisodeBadges(); return; }
+
+        var status = getCardStatusCache(card.id, false);
+        // Только отслеживаемые сериалы (Смотрю) — иначе у чужих серий были бы ложные галочки.
+        if (status !== 'watching') { removeAllEpisodeBadges(); return; }
+
+        var tmdbKey = String(card.id);
+        var lookup = buildEpisodeLookupForShow(tmdbKey);
+
+        // Карта серий не построена ИЛИ устарела (старый формат без airDate — нужен для проверки
+        // «вышла ли серия»). Строим/перестраиваем через ensureHashMap, затем перерисовываем.
+        // Попытка один раз на сериал — иначе при ненайденном showId был бы бесконечный цикл.
+        var stale = false;
+        for (var key in lookup) {
+            if (lookup.hasOwnProperty(key) && key.indexOf('se:') === 0 && lookup[key].airDate === undefined) { stale = true; break; }
+        }
+        if ((!hasOwn(lookup) || stale) && !_episodeMapAttempted[tmdbKey]) {
+            _episodeMapAttempted[tmdbKey] = true;
+            ensureHashMap(card, getProfileSetting('myshows_token', ''), function() {
+                scheduleEpisodeBadgeDecorate();
+            });
+            return;
+        }
+
+        for (var i = 0; i < cards.length; i++) {
+            decorateOneEpisodeCard(cards[i], lookup, episodeLineSeason(cards[i]));
+        }
+    }
+
+    var _episodeMapAttempted = {};
+    function hasOwn(obj) { for (var k in obj) { if (obj.hasOwnProperty(k)) return true; } return false; }
+
+    function removeAllEpisodeBadges() {
+        var b = document.querySelectorAll('.myshows-episode-checked');
+        for (var i = 0; i < b.length; i++) b[i].remove();
+    }
+
+    var _episodeBadgeTimer = null;
+    function scheduleEpisodeBadgeDecorate() {
+        if (_episodeBadgeTimer) clearTimeout(_episodeBadgeTimer);
+        _episodeBadgeTimer = setTimeout(function() {
+            _episodeBadgeTimer = null;
+            try { decorateEpisodeCards(); } catch (e) { Log.warn('decorateEpisodeCards error', e); }
+        }, 150);
     }
 
     function addMyShowsData(data, oncomplite) {
