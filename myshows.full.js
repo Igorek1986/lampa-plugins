@@ -1636,6 +1636,16 @@
         });
     }
 
+    // Снять отметку «просмотрено» с эпизода на myshows
+    function unCheckEpisodeMyShows(episodeId, callback) {
+        makeMyShowsJSONRPCRequest('manage.UnCheckEpisode', {
+            id: episodeId,
+            rating: 0
+        }, function(success, data) {
+            callback(success);
+        });
+    }
+
     // Установить статус для сериала ("Смотрю, Буду смотреть, Перестал смотреть, Не смотрю" на MyShows
     function npSetStatus(myshowsId, tmdbId, mediaType, npCacheType) {
         // Пишем только когда реально в NP-режиме (IS_NP поднят). При неверном/отсутствующем
@@ -2216,6 +2226,8 @@
                 tmdbId: tmdbKey,
                 showId: showId || null,
                 hash: hash,
+                seasonNumber: ep.seasonNumber,
+                episodeNumber: ep.episodeNumber,
                 timestamp: Date.now()
             };
         }
@@ -2311,6 +2323,9 @@
         if (tmdbKey) {
             for (var h in map) {
                 if (map.hasOwnProperty(h) && map[h] && String(map[h].tmdbId) === tmdbKey) {
+                    // Старые записи без номеров season/episode перестраиваем — они нужны
+                    // для локального пересчёта next_episode (computeNextUnwatchedEpisode).
+                    if (map[h].seasonNumber === undefined) break;
                     callback(map);
                     return;
                 }
@@ -2533,6 +2548,29 @@
             ' статус="' + currentStatus + '" S1E1=' + isFirstEpisode +
             ' addThreshold=' + addThreshold + ' minProgress=' + minProgress);
 
+        // Block C: ручное снятие отметки. mark.js при тапе по уже просмотренной серии
+        // ставит percent=0 → снимаем отметку и на MyShows. Только статус "Смотрю" ведёт
+        // поэпизодный учёт, поэтому при нём percent=0 не несёт работы для Block A/B — выходим.
+        // Снимаем лишь у реально отмеченных серий (known && !unwatched), чтобы не дёргать API
+        // на старте плеера для непросмотренных.
+        if (percent === 0 && currentStatus === 'watching') {
+            isEpisodeUnwatched(episodeId, function(unwatched, known) {
+                if (!known || unwatched) return; // неизвестно или уже непросмотрена — нечего снимать
+                Log.info('[MS-guard] Отправляем UnCheckEpisode для episodeId ' + episodeId + ' (ручное снятие отметки)');
+                unCheckEpisodeMyShows(episodeId, function(success) {
+                    if (!success) {
+                        Log.warn('[MS-guard] ❌ UnCheckEpisode для episodeId ' + episodeId + ' не удался');
+                        return;
+                    }
+                    delete checkedEpisodes[episodeId];
+                    _unwatchedEpisodeIds[parseInt(episodeId)] = true; // снова непросмотрена
+                    Log.info('[MS-guard] ✅ episodeId ' + episodeId + ' отметка снята');
+                    applyEpisodeMarkLocally(card, episodeId, false);
+                });
+            });
+            return;
+        }
+
         // Block A: ранний перевод в "Смотрю" на первой серии (по addThreshold, ещё до minProgress).
         if (isFirstEpisode && (percent >= addThreshold || addThreshold === 0) && !alreadyWatching) {
             ensureWatchingStatus(card, 'S1E1 percent=' + percent, function(success) {
@@ -2571,7 +2609,7 @@
                     if (!alreadyWatching) {
                         ensureWatchingStatus(card, 'отметка серии при статусе "' + currentStatus + '"', function() {});
                     }
-                    fetchFromMyShowsAPI(function(data) {});
+                    applyEpisodeMarkLocally(card, episodeId, true);
                 });
             };
 
@@ -3769,6 +3807,78 @@
         var openCard = active.card_data || active.card || active.movie;
         if (!openCard || !openCard.id) return true;
         return String(openCard.id) === String(card.id);
+    }
+
+    // Следующая непросмотренная серия сериала, посчитанная локально из хэш-карты серий
+    // (MAP_KEY содержит ВСЕ серии с номерами season/episode) и актуального in-memory set
+    // непросмотренных. Работает во всех режимах, включая NP (где кэш хранит лишь id).
+    // Возвращает: undefined — нет метаданных серий (next не трогаем); null — непросмотренных
+    // не осталось (сериал досмотрен); строку "S01/E09" — следующая серия.
+    function computeNextUnwatchedEpisode(card) {
+        var tmdbKey = card && card.id ? String(card.id) : '';
+        if (!tmdbKey) return undefined;
+        var map = Lampa.Storage.get(MAP_KEY, {});
+        var best = null, hasData = false;
+        for (var k in map) {
+            if (!map.hasOwnProperty(k)) continue;
+            var e = map[k];
+            if (!e || String(e.tmdbId) !== tmdbKey) continue;
+            if (e.seasonNumber === undefined || e.episodeNumber === undefined) continue;
+            hasData = true;
+            if (!_unwatchedEpisodeIds[parseInt(e.episodeId)]) continue; // серия просмотрена
+            if (!best || e.seasonNumber < best.seasonNumber ||
+                (e.seasonNumber === best.seasonNumber && e.episodeNumber < best.episodeNumber)) {
+                best = e;
+            }
+        }
+        if (!hasData) return undefined;
+        if (!best) return null;
+        return 'S' + padTwo(best.seasonNumber) + '/E' + padTwo(best.episodeNumber);
+    }
+
+    // Локальный пересчёт меток по факту success от CheckEpisode/UnCheckEpisode — без обращения
+    // к серверу (lists.EpisodesUnwatched обновляется не мгновенно и давал прогресс «назад»).
+    // Базовые числа берём из кэша (а не из DOM, который мог отстать), пишем результат обратно
+    // в кэш и, если открыта та же карточка, обновляем бейджи. watched=true — серия отмечена.
+    function applyEpisodeMarkLocally(card, episodeId, watched) {
+        episodeId = parseInt(episodeId);
+        loadCacheFromServer('unwatched_serials', 'shows', function(result) {
+            var arr = result && result.shows;
+            if (!arr) return;
+            var show = matchShowInArray(arr, card);
+            if (!show || !show.progress_marker || show.progress_marker.indexOf('/') === -1) return;
+
+            var pp = show.progress_marker.split('/');
+            var watchedCount = parseInt(pp[0], 10);
+            var released = parseInt(pp[1], 10);
+            if (isNaN(watchedCount) || isNaN(released) || !released) return;
+
+            // При отметке убираем серию из непросмотренных (для пересчёта next_episode).
+            // При снятии метаданных серии нет — массив не трогаем, next пересчитается приблизительно.
+            if (watched && show.unwatchedEpisodes && show.unwatchedEpisodes.length) {
+                show.unwatchedEpisodes = show.unwatchedEpisodes.filter(function(e) {
+                    return e && parseInt(e.id) !== episodeId;
+                });
+            }
+
+            watchedCount += watched ? 1 : -1;
+            if (watchedCount < 0) watchedCount = 0;
+            if (watchedCount > released) watchedCount = released;
+
+            show.progress_marker = watchedCount + '/' + released;
+            show.watched_count   = watchedCount;
+            show.remaining       = released - watchedCount;
+            show.unwatchedCount  = show.remaining;
+
+            // _unwatchedEpisodeIds уже обновлён вызывающим (серия удалена при отметке /
+            // возвращена при снятии), поэтому next считается корректно для обоих случаев.
+            var nextEp = computeNextUnwatchedEpisode(card);
+            if (nextEp !== undefined) show.next_episode = nextEp; // undefined = нет метаданных, оставляем как было
+
+            saveCacheToServer({ shows: arr }, 'unwatched_serials', function() {}, getProfileId());
+
+            if (isSameFullCardOpen(card)) updateFullCardMarkers(show);
+        });
     }
 
     function refreshFullCardStatus(isSerial, originalName, currentCard) {

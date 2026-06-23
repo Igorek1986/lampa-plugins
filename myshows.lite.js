@@ -1182,6 +1182,14 @@
             callback(success);
         });
     }
+    function unCheckEpisodeMyShows(episodeId, callback) {
+        makeMyShowsJSONRPCRequest("manage.UnCheckEpisode", {
+            id: episodeId,
+            rating: 0
+        }, function(success, data) {
+            callback(success);
+        });
+    }
     function npSetStatus(myshowsId, tmdbId, mediaType, npCacheType) {
         if (!useNpServer()) {
             getStorageMode(), window.IS_NP;
@@ -1574,6 +1582,8 @@
                 tmdbId: tmdbKey,
                 showId: showId || null,
                 hash: hash,
+                seasonNumber: ep.seasonNumber,
+                episodeNumber: ep.episodeNumber,
                 timestamp: Date.now()
             };
         }
@@ -1651,6 +1661,7 @@
         var tmdbKey = tmdbId ? String(tmdbId) : "";
         var map = Lampa.Storage.get(MAP_KEY, {});
         if (tmdbKey) for (var h in map) if (map.hasOwnProperty(h) && map[h] && String(map[h].tmdbId) === tmdbKey) {
+            if (map[h].seasonNumber === void 0) break;
             callback(map);
             return;
         }
@@ -1758,6 +1769,18 @@
         var currentStatus = getCardStatusCache(card.id, false);
         var alreadyWatching = currentStatus === "watching";
         var isFirstEpisode = hash === firstEpisodeHash;
+        if (percent === 0 && currentStatus === "watching") {
+            isEpisodeUnwatched(episodeId, function(unwatched, known) {
+                if (!known || unwatched) return;
+                unCheckEpisodeMyShows(episodeId, function(success) {
+                    if (!success) return;
+                    delete checkedEpisodes[episodeId];
+                    _unwatchedEpisodeIds[parseInt(episodeId)] = true;
+                    applyEpisodeMarkLocally(card, episodeId, false);
+                });
+            });
+            return;
+        }
         if (isFirstEpisode && (percent >= addThreshold || addThreshold === 0) && !alreadyWatching) ensureWatchingStatus(card, "S1E1 percent=" + percent, function(success) {
             cachedShuffledItems = {};
             if (success && percent < minProgress) {
@@ -1774,7 +1797,7 @@
                     checkedEpisodes[episodeId] = true;
                     delete _unwatchedEpisodeIds[parseInt(episodeId)];
                     if (!alreadyWatching) ensureWatchingStatus(card, 'отметка серии при статусе "' + currentStatus + '"', function() {});
-                    fetchFromMyShowsAPI(function(data) {});
+                    applyEpisodeMarkLocally(card, episodeId, true);
                 });
             };
             if (currentStatus === "watching") isEpisodeUnwatched(episodeId, function(unwatched, known) {
@@ -2542,6 +2565,53 @@
         var openCard = active.card_data || active.card || active.movie;
         if (!openCard || !openCard.id) return true;
         return String(openCard.id) === String(card.id);
+    }
+    function computeNextUnwatchedEpisode(card) {
+        var tmdbKey = card && card.id ? String(card.id) : "";
+        if (!tmdbKey) return;
+        var map = Lampa.Storage.get(MAP_KEY, {});
+        var best = null, hasData = false;
+        for (var k in map) {
+            if (!map.hasOwnProperty(k)) continue;
+            var e = map[k];
+            if (!e || String(e.tmdbId) !== tmdbKey) continue;
+            if (e.seasonNumber === void 0 || e.episodeNumber === void 0) continue;
+            hasData = true;
+            if (!_unwatchedEpisodeIds[parseInt(e.episodeId)]) continue;
+            if (!best || e.seasonNumber < best.seasonNumber || e.seasonNumber === best.seasonNumber && e.episodeNumber < best.episodeNumber) best = e;
+        }
+        if (!hasData) return;
+        if (!best) return null;
+        return "S" + padTwo(best.seasonNumber) + "/E" + padTwo(best.episodeNumber);
+    }
+    function applyEpisodeMarkLocally(card, episodeId, watched) {
+        episodeId = parseInt(episodeId);
+        loadCacheFromServer("unwatched_serials", "shows", function(result) {
+            var arr = result && result.shows;
+            if (!arr) return;
+            var show = matchShowInArray(arr, card);
+            if (!show || !show.progress_marker || show.progress_marker.indexOf("/") === -1) return;
+            var pp = show.progress_marker.split("/");
+            var watchedCount = parseInt(pp[0], 10);
+            var released = parseInt(pp[1], 10);
+            if (isNaN(watchedCount) || isNaN(released) || !released) return;
+            if (watched && show.unwatchedEpisodes && show.unwatchedEpisodes.length) show.unwatchedEpisodes = show.unwatchedEpisodes.filter(function(e) {
+                return e && parseInt(e.id) !== episodeId;
+            });
+            watchedCount += watched ? 1 : -1;
+            if (watchedCount < 0) watchedCount = 0;
+            if (watchedCount > released) watchedCount = released;
+            show.progress_marker = watchedCount + "/" + released;
+            show.watched_count = watchedCount;
+            show.remaining = released - watchedCount;
+            show.unwatchedCount = show.remaining;
+            var nextEp = computeNextUnwatchedEpisode(card);
+            if (nextEp !== void 0) show.next_episode = nextEp;
+            saveCacheToServer({
+                shows: arr
+            }, "unwatched_serials", function() {}, getProfileId());
+            if (isSameFullCardOpen(card)) updateFullCardMarkers(show);
+        });
     }
     function refreshFullCardStatus(isSerial, originalName, currentCard) {
         if (!originalName) return;
