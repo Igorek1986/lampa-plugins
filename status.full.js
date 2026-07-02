@@ -1,6 +1,8 @@
 (function () {
     'use strict';
 
+    var VERSION = '1.0.0';
+
     var DEBUG = false;
 
     function log(message, data) {
@@ -97,7 +99,17 @@
 
     // sync=false — только локально (дефолты при загрузке профиля).
     // Без флага — пользователь явно изменил, отправляем на NP-сервер.
+    // Булевы пишем строками 'true'/'false': Storage.set кладёт в кеш readed сырое
+    // значение, а Storage.get затирает закешированный boolean false дефолтом
+    // (value || empty). Строка выживает и парсится get'ом обратно в boolean.
+    function storableValue(v) {
+        if (v === true) return 'true';
+        if (v === false) return 'false';
+        return v;
+    }
+
     function setProfileSetting(key, value, sync) {
+        value = storableValue(value);
         Lampa.Storage.set(getProfileKey(key), value);
         if (sync !== false && !_syncApplying && window.__NMSync) {
             window.__NMSync.patch(SYNC_PLUGIN, getProfileKey(key), value);
@@ -107,6 +119,7 @@
     // Применить настройку, пришедшую с NP-сервера (без обратной отправки)
     function _applyStatusSetting(profileKey, value) {
         if (profileKey.indexOf('_profile_') < 0) return;
+        value = storableValue(value);
         _syncApplying = true;
         Lampa.Storage.set(profileKey, value);
         var base = profileKey.slice(0, profileKey.lastIndexOf('_profile_'));
@@ -142,7 +155,7 @@
             setProfileSetting(STYLE_KEY, '1', false);
         }
         // Восстанавливаем в Lampa.Storage — триггер UI читает именно оттуда
-        Lampa.Storage.set(BASE_KEY, getProfileSetting(BASE_KEY, GLOBAL_DEFAULT), true);
+        Lampa.Storage.set(BASE_KEY, storableValue(getProfileSetting(BASE_KEY, GLOBAL_DEFAULT)), true);
         Lampa.Storage.set(STYLE_KEY, getProfileSetting(STYLE_KEY, '1'), true);
 
         applyStatusStyleAttr();
@@ -326,6 +339,17 @@
         Lampa.Listener.follow('profile', function (e) {
             if (e.type === 'changed') onProfileChanged();
         });
+        // Мгновенная смена нативного профиля Lampa (CUB): profile_select живёт на
+        // внутреннем листенере модуля Account и на глобальный Listener не приходит.
+        // np_profiles шлёт одноимённое событие на глобальном Listener — ловим оба.
+        if (Lampa.Account && Lampa.Account.listener) {
+            Lampa.Account.listener.follow('profile_select', function () {
+                onProfileChanged();
+            });
+        }
+        Lampa.Listener.follow('profile_select', function () {
+            onProfileChanged();
+        });
         Lampa.Listener.follow('state:changed', function (e) {
             if (e.target === 'favorite' && e.reason === 'profile') onProfileChanged();
         });
@@ -349,11 +373,24 @@
         log('Initialization complete, profile: ' + getProfileId());
     }
 
-    if (window.appready) {
+    function boot() {
         init();
+        try {
+            Lampa.Manifest.plugins = {
+                type: 'other',
+                version: VERSION,
+                name: 'Serial Status',
+                description: 'Метки статуса сериалов на карточках (Онгоинг/Завершён/Отменён)'
+            };
+        } catch (e) {}
+        console.log('SerialStatus', 'plugin ready, version', VERSION);
+    }
+
+    if (window.appready) {
+        boot();
     } else {
         Lampa.Listener.follow('app', function (e) {
-            if (e.type === 'ready') init();
+            if (e.type === 'ready') boot();
         });
     }
 })();

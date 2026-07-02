@@ -1,6 +1,8 @@
 (function () {
     'use strict';
 
+    var VERSION = '1.0.0';
+
     var DEFAULT_ADD_THRESHOLD = '0';
     var DEFAULT_MIN_PROGRESS = 90;
     var API_URL = 'https://myshows.me/v3/rpc/';
@@ -774,7 +776,17 @@
     // sync=true (по умолчанию) — сохранить и на сервер. sync=false — только локально.
     // loadProfileSettings использует sync=false, чтобы дефолты не уходили на сервер.
     // onChange-обработчики настроек вызывают без флага (sync=true) — пользователь явно изменил.
+    // Булевы пишем строками 'true'/'false': Storage.set кладёт в кеш readed сырое
+    // значение, а Storage.get затирает закешированный boolean false дефолтом
+    // (value || empty). Строка выживает и парсится get'ом обратно в boolean.
+    function storableValue(v) {
+        if (v === true) return 'true';
+        if (v === false) return 'false';
+        return v;
+    }
+
     function setProfileSetting(key, value, sync) {
+        value = storableValue(value);
         Lampa.Storage.set(getProfileKey(key), value);
         if (sync !== false && !_syncApplying && window.__NMSync) window.__NMSync.patch('myshows', getProfileKey(key), value);
     }
@@ -786,6 +798,7 @@
         // Базовые ключи без _profile_ — legacy, игнорируем
         if (profileKey.indexOf('_profile_') < 0) return;
 
+        value = storableValue(value);
         _syncApplying = true;
         Lampa.Storage.set(profileKey, value);
         var base = profileKey.slice(0, profileKey.lastIndexOf('_profile_'));
@@ -853,8 +866,8 @@
             setProfileSetting('myshows_badge_style', '1', false);
         }
 
-        Lampa.Storage.set('myshows_view_in_main',  getProfileSetting('myshows_view_in_main',  true), true);
-        Lampa.Storage.set('myshows_button_view',   getProfileSetting('myshows_button_view',   true), true);
+        Lampa.Storage.set('myshows_view_in_main',  storableValue(getProfileSetting('myshows_view_in_main',  true)), true);
+        Lampa.Storage.set('myshows_button_view',   storableValue(getProfileSetting('myshows_button_view',   true)), true);
         Lampa.Storage.set('myshows_sort_order',    getProfileSetting('myshows_sort_order',    'progress'), true);
         Lampa.Storage.set('myshows_add_threshold', parseInt(getProfileSetting('myshows_add_threshold', DEFAULT_ADD_THRESHOLD).toString()), true);
         Lampa.Storage.set('myshows_min_progress',  getProfileSetting('myshows_min_progress',  DEFAULT_MIN_PROGRESS).toString(), true);
@@ -864,9 +877,9 @@
         Lampa.Storage.set('myshows_cache_days',    getProfileSetting('myshows_cache_days',    DEFAULT_CACHE_DAYS), true);
         Lampa.Storage.set('myshows_use_np',        getProfileSetting('myshows_use_np',        'false'), true);
 
-        Lampa.Storage.set('myshows_badge_progress',  getProfileSetting('myshows_badge_progress',  true), true);
-        Lampa.Storage.set('myshows_badge_remaining', getProfileSetting('myshows_badge_remaining', true), true);
-        Lampa.Storage.set('myshows_badge_next',      getProfileSetting('myshows_badge_next',      true), true);
+        Lampa.Storage.set('myshows_badge_progress',  storableValue(getProfileSetting('myshows_badge_progress',  true)), true);
+        Lampa.Storage.set('myshows_badge_remaining', storableValue(getProfileSetting('myshows_badge_remaining', true)), true);
+        Lampa.Storage.set('myshows_badge_next',      storableValue(getProfileSetting('myshows_badge_next',      true)), true);
         Lampa.Storage.set('myshows_badge_style',     getProfileSetting('myshows_badge_style',     '1'), true);
 
         applyBadgeStyleAttr();
@@ -1486,6 +1499,20 @@
         if (e.type === 'changed') {
             handleProfileChange();
         }
+    });
+
+    // Мгновенная смена нативного профиля Lampa (CUB): profile_select живёт на
+    // внутреннем листенере модуля Account и на глобальный Listener не приходит
+    // (state:changed выше сработает, но позже — после пересинка закладок).
+    // np_profiles шлёт одноимённое событие на глобальном Listener — ловим оба.
+    // handleProfileChange дедупит по id профиля.
+    if (Lampa.Account && Lampa.Account.listener) {
+        Lampa.Account.listener.follow('profile_select', function() {
+            handleProfileChange();
+        });
+    }
+    Lampa.Listener.follow('profile_select', function() {
+        handleProfileChange();
     });
 
     function getShowIdByExternalIds(imdbId, kinopoiskId, title, originalTitle, tmdbId, year, alternativeTitles, callback) {
@@ -3794,7 +3821,7 @@
                 // Мгновенно секцию уже обновил оптимистичный applyEpisodeMarkLocally.
                 var originalName = lastCard.original_name || lastCard.original_title || lastCard.title;
                 var lastMyshowsId = lastCard.myshowsId;
-                Lampa.Storage.set('myshows_was_watching', false);
+                Lampa.Storage.set('myshows_was_watching', 'false');
 
                 setTimeout(function() {
                     fetchFromMyShowsAPI(function() {
@@ -6494,12 +6521,12 @@
 
     if (window.Lampa && Lampa.Player && Lampa.Player.listener) {
         Lampa.Player.listener.follow('start', function(data) {
-            Lampa.Storage.set('myshows_was_watching', true);
+            Lampa.Storage.set('myshows_was_watching', 'true');
         });
 
         // Для внешнего плеера
         Lampa.Player.listener.follow('external', function(data) {
-            Lampa.Storage.set('myshows_was_watching', true);
+            Lampa.Storage.set('myshows_was_watching', 'true');
         });
     }
 
@@ -8315,12 +8342,25 @@
     }
 
     // Запуск
-    if (window.appready) {
+    function boot() {
         initMyShowsPlugin();
+        try {
+            Lampa.Manifest.plugins = {
+                type: 'other',
+                version: VERSION,
+                name: 'MyShows',
+                description: 'Интеграция с MyShows: статусы, прогресс, отметка серий и фильмов'
+            };
+        } catch (e) {}
+        console.log('MyShows', 'plugin ready, version', VERSION);
+    }
+
+    if (window.appready) {
+        boot();
     } else {
         Lampa.Listener.follow('app', function (event) {
             if (event.type === 'ready') {
-                initMyShowsPlugin();
+                boot();
             }
         });
     }

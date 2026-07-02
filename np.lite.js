@@ -1,5 +1,6 @@
 (function() {
     "use strict";
+    var VERSION = "1.0.0";
     var DEFAULT_SOURCE_NAME = "NUMParser";
     var SOURCE_NAME = Lampa.Storage.get("numparser_source_name", DEFAULT_SOURCE_NAME);
     var newName = SOURCE_NAME;
@@ -682,7 +683,13 @@
         return Lampa.Storage.get(getProfileKey(key), defaultValue);
     }
     var _syncApplying = false;
+    function storableValue(v) {
+        if (v === true) return "true";
+        if (v === false) return "false";
+        return v;
+    }
     function setProfileSetting(key, value, sync) {
+        value = storableValue(value);
         Lampa.Storage.set(getProfileKey(key), value);
         if (sync !== false && !_syncApplying && window.__NMSync) window.__NMSync.patch("np", getProfileKey(key), value);
     }
@@ -691,6 +698,7 @@
         return idx >= 0 ? profileKey.slice(0, idx) : profileKey;
     }
     function _applyNpSetting(profileKey, value) {
+        value = storableValue(value);
         _syncApplying = true;
         Lampa.Storage.set(profileKey, value);
         var base = _baseKey(profileKey);
@@ -710,14 +718,14 @@
         if (!hasProfileSetting("numparser_quality_mode")) setProfileSetting("numparser_quality_mode", "simple", false);
         if (!hasProfileSetting("numparser_hide_unrated")) setProfileSetting("numparser_hide_unrated", false, false);
         if (!hasProfileSetting("numparser_show_cert")) setProfileSetting("numparser_show_cert", false, false);
-        Lampa.Storage.set("numparser_hide_watched", getProfileSetting("numparser_hide_watched", "true"), "true");
+        Lampa.Storage.set("numparser_hide_watched", storableValue(getProfileSetting("numparser_hide_watched", "true")), "true");
         Lampa.Storage.set("numparser_min_progress", getProfileSetting("numparser_min_progress", DEFAULT_MIN_PROGRESS), "true");
         Lampa.Storage.set("numparser_source_name", getProfileSetting("numparser_source_name", DEFAULT_SOURCE_NAME), "true");
         Lampa.Storage.set("numparser_menu_sort", getProfileSetting("numparser_menu_sort", []));
         Lampa.Storage.set("numparser_menu_hide", getProfileSetting("numparser_menu_hide", []));
         Lampa.Storage.set("numparser_quality_mode", getProfileSetting("numparser_quality_mode", "simple"));
-        Lampa.Storage.set("numparser_hide_unrated", getProfileSetting("numparser_hide_unrated", false));
-        Lampa.Storage.set("numparser_show_cert", getProfileSetting("numparser_show_cert", false));
+        Lampa.Storage.set("numparser_hide_unrated", storableValue(getProfileSetting("numparser_hide_unrated", false)));
+        Lampa.Storage.set("numparser_show_cert", storableValue(getProfileSetting("numparser_show_cert", false)));
     }
     function openNumparserMenuEditor() {
         var allCategories = getAllCategories();
@@ -1250,6 +1258,12 @@
         Lampa.Listener.follow("profile", function(e) {
             if (e.type === "changed") refreshProfileSettings();
         });
+        if (Lampa.Account && Lampa.Account.listener) Lampa.Account.listener.follow("profile_select", function() {
+            refreshProfileSettings();
+        });
+        Lampa.Listener.follow("profile_select", function() {
+            refreshProfileSettings();
+        });
         Lampa.Listener.follow("state:changed", function(e) {
             if (e.target === "favorite" && e.reason === "profile") refreshProfileSettings();
         });
@@ -1294,8 +1308,20 @@
             }
         }, 50);
     }
-    if (window.appready) initNUMPlugin(); else Lampa.Listener.follow("app", function(event) {
-        if (event.type === "ready") initNUMPlugin();
+    function boot() {
+        initNUMPlugin();
+        try {
+            Lampa.Manifest.plugins = {
+                type: "other",
+                version: VERSION,
+                name: "NUMParser",
+                description: "Источник NUMParser: каталог, подборки, скрытие просмотренного"
+            };
+        } catch (e) {}
+        console.log("NUMParser", "plugin ready, version", VERSION);
+    }
+    if (window.appready) boot(); else Lampa.Listener.follow("app", function(event) {
+        if (event.type === "ready") boot();
     });
 })();
 

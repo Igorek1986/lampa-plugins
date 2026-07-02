@@ -1,5 +1,6 @@
 (function() {
     "use strict";
+    var VERSION = "1.0.0";
     var DEFAULT_ADD_THRESHOLD = "0";
     var DEFAULT_MIN_PROGRESS = 90;
     var API_URL = "https://myshows.me/v3/rpc/";
@@ -569,13 +570,20 @@
         return Lampa.Storage.get(getProfileKey(key), defaultValue);
     }
     var _syncApplying = false;
+    function storableValue(v) {
+        if (v === true) return "true";
+        if (v === false) return "false";
+        return v;
+    }
     function setProfileSetting(key, value, sync) {
+        value = storableValue(value);
         Lampa.Storage.set(getProfileKey(key), value);
         if (sync !== false && !_syncApplying && window.__NMSync) window.__NMSync.patch("myshows", getProfileKey(key), value);
     }
     var MYSHOWS_SENSITIVE_KEYS = [ "myshows_login", "myshows_password", "myshows_token" ];
     function _applyMyShowsSetting(profileKey, value) {
         if (profileKey.indexOf("_profile_") < 0) return;
+        value = storableValue(value);
         _syncApplying = true;
         Lampa.Storage.set(profileKey, value);
         var base = profileKey.slice(0, profileKey.lastIndexOf("_profile_"));
@@ -600,8 +608,8 @@
         if (!hasProfileSetting("myshows_badge_remaining")) setProfileSetting("myshows_badge_remaining", true, false);
         if (!hasProfileSetting("myshows_badge_next")) setProfileSetting("myshows_badge_next", true, false);
         if (!hasProfileSetting("myshows_badge_style")) setProfileSetting("myshows_badge_style", "1", false);
-        Lampa.Storage.set("myshows_view_in_main", getProfileSetting("myshows_view_in_main", true), true);
-        Lampa.Storage.set("myshows_button_view", getProfileSetting("myshows_button_view", true), true);
+        Lampa.Storage.set("myshows_view_in_main", storableValue(getProfileSetting("myshows_view_in_main", true)), true);
+        Lampa.Storage.set("myshows_button_view", storableValue(getProfileSetting("myshows_button_view", true)), true);
         Lampa.Storage.set("myshows_sort_order", getProfileSetting("myshows_sort_order", "progress"), true);
         Lampa.Storage.set("myshows_add_threshold", parseInt(getProfileSetting("myshows_add_threshold", DEFAULT_ADD_THRESHOLD).toString()), true);
         Lampa.Storage.set("myshows_min_progress", getProfileSetting("myshows_min_progress", DEFAULT_MIN_PROGRESS).toString(), true);
@@ -610,9 +618,9 @@
         Lampa.Storage.set("myshows_password", getProfileSetting("myshows_password", ""), true);
         Lampa.Storage.set("myshows_cache_days", getProfileSetting("myshows_cache_days", DEFAULT_CACHE_DAYS), true);
         Lampa.Storage.set("myshows_use_np", getProfileSetting("myshows_use_np", "false"), true);
-        Lampa.Storage.set("myshows_badge_progress", getProfileSetting("myshows_badge_progress", true), true);
-        Lampa.Storage.set("myshows_badge_remaining", getProfileSetting("myshows_badge_remaining", true), true);
-        Lampa.Storage.set("myshows_badge_next", getProfileSetting("myshows_badge_next", true), true);
+        Lampa.Storage.set("myshows_badge_progress", storableValue(getProfileSetting("myshows_badge_progress", true)), true);
+        Lampa.Storage.set("myshows_badge_remaining", storableValue(getProfileSetting("myshows_badge_remaining", true)), true);
+        Lampa.Storage.set("myshows_badge_next", storableValue(getProfileSetting("myshows_badge_next", true)), true);
         Lampa.Storage.set("myshows_badge_style", getProfileSetting("myshows_badge_style", "1"), true);
         applyBadgeStyleAttr();
     }
@@ -1110,6 +1118,12 @@
     });
     Lampa.Listener.follow("profile", function(e) {
         if (e.type === "changed") handleProfileChange();
+    });
+    if (Lampa.Account && Lampa.Account.listener) Lampa.Account.listener.follow("profile_select", function() {
+        handleProfileChange();
+    });
+    Lampa.Listener.follow("profile_select", function() {
+        handleProfileChange();
     });
     function getShowIdByExternalIds(imdbId, kinopoiskId, title, originalTitle, tmdbId, year, alternativeTitles, callback) {
         getShowIdByImdbId(imdbId, originalTitle || title, year, alternativeTitles, function(imdbResult) {
@@ -2554,7 +2568,7 @@
             if (lastCard && wasWatching) {
                 var originalName = lastCard.original_name || lastCard.original_title || lastCard.title;
                 var lastMyshowsId = lastCard.myshowsId;
-                Lampa.Storage.set("myshows_was_watching", false);
+                Lampa.Storage.set("myshows_was_watching", "false");
                 setTimeout(function() {
                     fetchFromMyShowsAPI(function() {
                         var needle = lastMyshowsId || originalName;
@@ -4182,10 +4196,10 @@
     });
     if (window.Lampa && Lampa.Player && Lampa.Player.listener) {
         Lampa.Player.listener.follow("start", function(data) {
-            Lampa.Storage.set("myshows_was_watching", true);
+            Lampa.Storage.set("myshows_was_watching", "true");
         });
         Lampa.Player.listener.follow("external", function(data) {
-            Lampa.Storage.set("myshows_was_watching", true);
+            Lampa.Storage.set("myshows_was_watching", "true");
         });
     }
     Lampa.Listener.follow("full", function(e) {
@@ -5676,7 +5690,19 @@
             }
         });
     }
-    if (window.appready) initMyShowsPlugin(); else Lampa.Listener.follow("app", function(event) {
-        if (event.type === "ready") initMyShowsPlugin();
+    function boot() {
+        initMyShowsPlugin();
+        try {
+            Lampa.Manifest.plugins = {
+                type: "other",
+                version: VERSION,
+                name: "MyShows",
+                description: "Интеграция с MyShows: статусы, прогресс, отметка серий и фильмов"
+            };
+        } catch (e) {}
+        console.log("MyShows", "plugin ready, version", VERSION);
+    }
+    if (window.appready) boot(); else Lampa.Listener.follow("app", function(event) {
+        if (event.type === "ready") boot();
     });
 })();

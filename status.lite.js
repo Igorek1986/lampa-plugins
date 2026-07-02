@@ -1,5 +1,6 @@
 (function() {
     "use strict";
+    var VERSION = "1.0.0";
     var DEBUG = false;
     function log(message, data) {
         if (DEBUG) console.log("[SerialStatus] " + message, data !== void 0 ? data : "");
@@ -32,12 +33,19 @@
         return Lampa.Storage.get(getProfileKey(key), defaultValue);
     }
     var _syncApplying = false;
+    function storableValue(v) {
+        if (v === true) return "true";
+        if (v === false) return "false";
+        return v;
+    }
     function setProfileSetting(key, value, sync) {
+        value = storableValue(value);
         Lampa.Storage.set(getProfileKey(key), value);
         if (sync !== false && !_syncApplying && window.__NMSync) window.__NMSync.patch(SYNC_PLUGIN, getProfileKey(key), value);
     }
     function _applyStatusSetting(profileKey, value) {
         if (profileKey.indexOf("_profile_") < 0) return;
+        value = storableValue(value);
         _syncApplying = true;
         Lampa.Storage.set(profileKey, value);
         var base = profileKey.slice(0, profileKey.lastIndexOf("_profile_"));
@@ -62,7 +70,7 @@
     function loadProfileSettings() {
         if (!hasProfileSetting(BASE_KEY)) setProfileSetting(BASE_KEY, GLOBAL_DEFAULT, false);
         if (!hasProfileSetting(STYLE_KEY)) setProfileSetting(STYLE_KEY, "1", false);
-        Lampa.Storage.set(BASE_KEY, getProfileSetting(BASE_KEY, GLOBAL_DEFAULT), true);
+        Lampa.Storage.set(BASE_KEY, storableValue(getProfileSetting(BASE_KEY, GLOBAL_DEFAULT)), true);
         Lampa.Storage.set(STYLE_KEY, getProfileSetting(STYLE_KEY, "1"), true);
         applyStatusStyleAttr();
     }
@@ -194,6 +202,12 @@
         Lampa.Listener.follow("profile", function(e) {
             if (e.type === "changed") onProfileChanged();
         });
+        if (Lampa.Account && Lampa.Account.listener) Lampa.Account.listener.follow("profile_select", function() {
+            onProfileChanged();
+        });
+        Lampa.Listener.follow("profile_select", function() {
+            onProfileChanged();
+        });
         Lampa.Listener.follow("state:changed", function(e) {
             if (e.target === "favorite" && e.reason === "profile") onProfileChanged();
         });
@@ -209,7 +223,19 @@
         } catch (e) {}
         getProfileId();
     }
-    if (window.appready) init(); else Lampa.Listener.follow("app", function(e) {
-        if (e.type === "ready") init();
+    function boot() {
+        init();
+        try {
+            Lampa.Manifest.plugins = {
+                type: "other",
+                version: VERSION,
+                name: "Serial Status",
+                description: "Метки статуса сериалов на карточках (Онгоинг/Завершён/Отменён)"
+            };
+        } catch (e) {}
+        console.log("SerialStatus", "plugin ready, version", VERSION);
+    }
+    if (window.appready) boot(); else Lampa.Listener.follow("app", function(e) {
+        if (e.type === "ready") boot();
     });
 })();
