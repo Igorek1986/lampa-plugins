@@ -28,7 +28,7 @@
 
 ## Модуль для Lampac
 
-- [`module/TimecodeUser`](module/TimecodeUser) — C#-модуль бэкенда для отслеживания таймкодов (требуется для скрытия просмотренного в NUMParser и синхронизации в MyShows).
+- [`module/TimecodeUser`](module/TimecodeUser) — C#-модуль для [Lampac-nexgen](https://github.com/lampac-nextgen/lampac) (экспорт/импорт таймкодов через `/timecode/all_views` и `/timecode/batch_add`). Исторически использовался с NUMParser и MyShows, сейчас не используется — заменён на [movies-go](https://github.com/Igorek1986/movies-go).
 
 ## Поддержать
 

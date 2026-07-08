@@ -1,7 +1,3 @@
-{  
-  "enable": true,  
-  "dll": "TimecodeUser",  
-  "version": 3,  
-  "namespace": "TimecodeUser",  
-  "initspace": "ModInit"  
+{
+  "enable": true
 }
