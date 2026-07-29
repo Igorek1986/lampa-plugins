@@ -56,6 +56,7 @@
     var newProgress = MIN_PROGRESS;
     Lampa.Storage.set('base_url_numparser', BASE_URL);
     var NUMPARSER_HIDE_WATCHED = null;
+    var DEVICE_LINK_AVAILABLE = true; // false только если сервер в режиме parser (нет /device/*)
 
 
     function createLogMethod(emoji, consoleMethod) {
@@ -1150,42 +1151,44 @@
                 }
             });
 
-            // Токен устройства (ввод вручную)
-            Lampa.SettingsApi.addParam({
-                component: 'numparser_settings',
-                param: {
-                    name: 'numparser_api_key',
-                    type: 'input',
-                    placeholder: 'Вставьте токен',
-                    values: '',
-                    default: Lampa.Storage.get('numparser_api_key', ''),
-                },
-                field: {
-                    name: 'Токен устройства',
-                    description: 'Токен для идентификации устройства. Получите на сайте или привяжите кнопкой ниже.'
-                },
-                onChange: function (value) {
-                    Lampa.Storage.set('numparser_api_key', value);
-                    checkNpConnected();
-                }
-            });
+            if (DEVICE_LINK_AVAILABLE) {
+                // Токен устройства (ввод вручную)
+                Lampa.SettingsApi.addParam({
+                    component: 'numparser_settings',
+                    param: {
+                        name: 'numparser_api_key',
+                        type: 'input',
+                        placeholder: 'Вставьте токен',
+                        values: '',
+                        default: Lampa.Storage.get('numparser_api_key', ''),
+                    },
+                    field: {
+                        name: 'Токен устройства',
+                        description: 'Токен для идентификации устройства. Получите на сайте или привяжите кнопкой ниже.'
+                    },
+                    onChange: function (value) {
+                        Lampa.Storage.set('numparser_api_key', value);
+                        checkNpConnected();
+                    }
+                });
 
-            // Привязка через код (без ручного ввода токена)
-            Lampa.SettingsApi.addParam({
-                component: 'numparser_settings',
-                param: {
-                    name: 'numparser_activate_device',
-                    type: 'button',
-                    title: 'Привязать устройство'
-                },
-                field: {
-                    name: 'Привязать устройство',
-                    description: 'Показать код для ввода на сайте — без ручного набора токена'
-                },
-                onChange: function () {
-                    startDeviceActivation();
-                }
-            });
+                // Привязка через код (без ручного ввода токена)
+                Lampa.SettingsApi.addParam({
+                    component: 'numparser_settings',
+                    param: {
+                        name: 'numparser_activate_device',
+                        type: 'button',
+                        title: 'Привязать устройство'
+                    },
+                    field: {
+                        name: 'Привязать устройство',
+                        description: 'Показать код для ввода на сайте — без ручного набора токена'
+                    },
+                    onChange: function () {
+                        startDeviceActivation();
+                    }
+                });
+            }
         }
 
         // Настройка для изменения названия источника
@@ -1659,30 +1662,52 @@
         xhr.send();
     }
 
+    // Проверяет, что сервер запущен в режиме "all" (эндпоинты /device/* есть).
+    // В режиме "parser" они отдают 404 — тогда пункты токена/привязки устройства не нужны.
+    function checkDeviceLinkAvailable(callback) {
+        var done = false;
+        function finish(available) {
+            if (done) return;
+            done = true;
+            DEVICE_LINK_AVAILABLE = available;
+            if (callback) callback();
+        }
+        var xhr = new XMLHttpRequest();
+        xhr.open('GET', BASE_URL + '/device/ping', true);
+        xhr.timeout = 4000;
+        xhr.onload = function () { finish(xhr.status !== 404); };
+        // Сеть недоступна/таймаут — не наш случай, не скрываем настройки
+        xhr.onerror = function () { finish(true); };
+        xhr.ontimeout = function () { finish(true); };
+        xhr.send();
+    }
+
     function initNUMPlugin() {
         checkNpConnected();
         startPlugin();
 
         NUMPARSER_HIDE_WATCHED = Lampa.Storage.get('numparser_hide_watched');
 
-        setTimeout(function() {
-            initSettings();
-            loadNumparserProfileSettings();
-            if (window.__NMSync) {
-                var NP_SYNC_KEYS = ['numparser_hide_watched', 'numparser_min_progress',
-                    'numparser_source_name', 'numparser_menu_sort', 'numparser_menu_hide',
-                    'numparser_quality_mode', 'numparser_hide_unrated'];
-                window.__NMSync.register('np', [], _applyNpSetting, function (serverKeys) {
-                    // Досылаем на сервер ключи которые есть локально но отсутствуют на сервере
-                    NP_SYNC_KEYS.forEach(function (key) {
-                        var profileKey = getProfileKey(key);
-                        if (serverKeys.indexOf(profileKey) < 0 && hasProfileSetting(key)) {
-                            setProfileSetting(key, getProfileSetting(key));
-                        }
+        checkDeviceLinkAvailable(function () {
+            setTimeout(function() {
+                initSettings();
+                loadNumparserProfileSettings();
+                if (window.__NMSync) {
+                    var NP_SYNC_KEYS = ['numparser_hide_watched', 'numparser_min_progress',
+                        'numparser_source_name', 'numparser_menu_sort', 'numparser_menu_hide',
+                        'numparser_quality_mode', 'numparser_hide_unrated'];
+                    window.__NMSync.register('np', [], _applyNpSetting, function (serverKeys) {
+                        // Досылаем на сервер ключи которые есть локально но отсутствуют на сервере
+                        NP_SYNC_KEYS.forEach(function (key) {
+                            var profileKey = getProfileKey(key);
+                            if (serverKeys.indexOf(profileKey) < 0 && hasProfileSetting(key)) {
+                                setProfileSetting(key, getProfileSetting(key));
+                            }
+                        });
                     });
-                });
-            }
-        }, 50);
+                }
+            }, 50);
+        });
     }
 
     function boot() {

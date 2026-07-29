@@ -88,6 +88,7 @@
     var newProgress = MIN_PROGRESS;
     Lampa.Storage.set("base_url_numparser", BASE_URL);
     var NUMPARSER_HIDE_WATCHED = null;
+    var DEVICE_LINK_AVAILABLE = true;
     function createLogMethod(emoji, consoleMethod) {
         var DEBUG = Lampa.Storage.get("numparser_debug_mode", false);
         if (!DEBUG) return function() {};
@@ -935,39 +936,41 @@
                     MIN_PROGRESS = newProgress;
                 }
             });
-            Lampa.SettingsApi.addParam({
-                component: "numparser_settings",
-                param: {
-                    name: "numparser_api_key",
-                    type: "input",
-                    placeholder: "Вставьте токен",
-                    values: "",
-                    default: Lampa.Storage.get("numparser_api_key", "")
-                },
-                field: {
-                    name: "Токен устройства",
-                    description: "Токен для идентификации устройства. Получите на сайте или привяжите кнопкой ниже."
-                },
-                onChange: function(value) {
-                    Lampa.Storage.set("numparser_api_key", value);
-                    checkNpConnected();
-                }
-            });
-            Lampa.SettingsApi.addParam({
-                component: "numparser_settings",
-                param: {
-                    name: "numparser_activate_device",
-                    type: "button",
-                    title: "Привязать устройство"
-                },
-                field: {
-                    name: "Привязать устройство",
-                    description: "Показать код для ввода на сайте — без ручного набора токена"
-                },
-                onChange: function() {
-                    startDeviceActivation();
-                }
-            });
+            if (DEVICE_LINK_AVAILABLE) {
+                Lampa.SettingsApi.addParam({
+                    component: "numparser_settings",
+                    param: {
+                        name: "numparser_api_key",
+                        type: "input",
+                        placeholder: "Вставьте токен",
+                        values: "",
+                        default: Lampa.Storage.get("numparser_api_key", "")
+                    },
+                    field: {
+                        name: "Токен устройства",
+                        description: "Токен для идентификации устройства. Получите на сайте или привяжите кнопкой ниже."
+                    },
+                    onChange: function(value) {
+                        Lampa.Storage.set("numparser_api_key", value);
+                        checkNpConnected();
+                    }
+                });
+                Lampa.SettingsApi.addParam({
+                    component: "numparser_settings",
+                    param: {
+                        name: "numparser_activate_device",
+                        type: "button",
+                        title: "Привязать устройство"
+                    },
+                    field: {
+                        name: "Привязать устройство",
+                        description: "Показать код для ввода на сайте — без ручного набора токена"
+                    },
+                    onChange: function() {
+                        startDeviceActivation();
+                    }
+                });
+            }
         }
         Lampa.SettingsApi.addParam({
             component: "numparser_settings",
@@ -1290,23 +1293,47 @@
         };
         xhr.send();
     }
+    function checkDeviceLinkAvailable(callback) {
+        var done = false;
+        function finish(available) {
+            if (done) return;
+            done = true;
+            DEVICE_LINK_AVAILABLE = available;
+            if (callback) callback();
+        }
+        var xhr = new XMLHttpRequest;
+        xhr.open("GET", BASE_URL + "/device/ping", true);
+        xhr.timeout = 4e3;
+        xhr.onload = function() {
+            finish(xhr.status !== 404);
+        };
+        xhr.onerror = function() {
+            finish(true);
+        };
+        xhr.ontimeout = function() {
+            finish(true);
+        };
+        xhr.send();
+    }
     function initNUMPlugin() {
         checkNpConnected();
         startPlugin();
         NUMPARSER_HIDE_WATCHED = Lampa.Storage.get("numparser_hide_watched");
-        setTimeout(function() {
-            initSettings();
-            loadNumparserProfileSettings();
-            if (window.__NMSync) {
-                var NP_SYNC_KEYS = [ "numparser_hide_watched", "numparser_min_progress", "numparser_source_name", "numparser_menu_sort", "numparser_menu_hide", "numparser_quality_mode", "numparser_hide_unrated" ];
-                window.__NMSync.register("np", [], _applyNpSetting, function(serverKeys) {
-                    NP_SYNC_KEYS.forEach(function(key) {
-                        var profileKey = getProfileKey(key);
-                        if (serverKeys.indexOf(profileKey) < 0 && hasProfileSetting(key)) setProfileSetting(key, getProfileSetting(key));
+        checkDeviceLinkAvailable(function() {
+            setTimeout(function() {
+                initSettings();
+                loadNumparserProfileSettings();
+                if (window.__NMSync) {
+                    var NP_SYNC_KEYS = [ "numparser_hide_watched", "numparser_min_progress", "numparser_source_name", "numparser_menu_sort", "numparser_menu_hide", "numparser_quality_mode", "numparser_hide_unrated" ];
+                    window.__NMSync.register("np", [], _applyNpSetting, function(serverKeys) {
+                        NP_SYNC_KEYS.forEach(function(key) {
+                            var profileKey = getProfileKey(key);
+                            if (serverKeys.indexOf(profileKey) < 0 && hasProfileSetting(key)) setProfileSetting(key, getProfileSetting(key));
+                        });
                     });
-                });
-            }
-        }, 50);
+                }
+            }, 50);
+        });
     }
     function boot() {
         initNUMPlugin();
