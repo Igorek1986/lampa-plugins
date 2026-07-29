@@ -868,7 +868,7 @@
                 openNumparserMenuEditor();
             }
         });
-        Lampa.SettingsApi.addParam({
+        if (DEVICE_LINK_AVAILABLE) Lampa.SettingsApi.addParam({
             component: "numparser_settings",
             param: {
                 name: "numparser_hide_watched",
@@ -889,6 +889,36 @@
                 }); else location.reload();
             }
         });
+        if (NUMPARSER_HIDE_WATCHED) Lampa.SettingsApi.addParam({
+            component: "numparser_settings",
+            param: {
+                name: "numparser_min_progress",
+                type: "select",
+                values: {
+                    50: "50%",
+                    55: "55%",
+                    60: "60%",
+                    65: "65%",
+                    70: "70%",
+                    75: "75%",
+                    80: "80%",
+                    85: "85%",
+                    90: "90%",
+                    95: "95%",
+                    100: "100%"
+                },
+                default: getProfileSetting("numparser_min_progress", DEFAULT_MIN_PROGRESS).toString()
+            },
+            field: {
+                name: "Порог просмотра",
+                description: "Минимальный процент просмотра для скрытия контента"
+            },
+            onChange: function(value) {
+                newProgress = parseInt(value);
+                setProfileSetting("numparser_min_progress", newProgress);
+                MIN_PROGRESS = newProgress;
+            }
+        });
         Lampa.SettingsApi.addParam({
             component: "numparser_settings",
             param: {
@@ -905,91 +935,19 @@
                 location.reload();
             }
         });
-        if (NUMPARSER_HIDE_WATCHED) {
-            Lampa.SettingsApi.addParam({
-                component: "numparser_settings",
-                param: {
-                    name: "numparser_min_progress",
-                    type: "select",
-                    values: {
-                        50: "50%",
-                        55: "55%",
-                        60: "60%",
-                        65: "65%",
-                        70: "70%",
-                        75: "75%",
-                        80: "80%",
-                        85: "85%",
-                        90: "90%",
-                        95: "95%",
-                        100: "100%"
-                    },
-                    default: getProfileSetting("numparser_min_progress", DEFAULT_MIN_PROGRESS).toString()
-                },
-                field: {
-                    name: "Порог просмотра",
-                    description: "Минимальный процент просмотра для скрытия контента"
-                },
-                onChange: function(value) {
-                    newProgress = parseInt(value);
-                    setProfileSetting("numparser_min_progress", newProgress);
-                    MIN_PROGRESS = newProgress;
-                }
-            });
-            if (DEVICE_LINK_AVAILABLE) {
-                Lampa.SettingsApi.addParam({
-                    component: "numparser_settings",
-                    param: {
-                        name: "numparser_api_key",
-                        type: "input",
-                        placeholder: "Вставьте токен",
-                        values: "",
-                        default: Lampa.Storage.get("numparser_api_key", "")
-                    },
-                    field: {
-                        name: "Токен устройства",
-                        description: "Токен для идентификации устройства. Получите на сайте или привяжите кнопкой ниже."
-                    },
-                    onChange: function(value) {
-                        Lampa.Storage.set("numparser_api_key", value);
-                        checkNpConnected();
-                    }
-                });
-                Lampa.SettingsApi.addParam({
-                    component: "numparser_settings",
-                    param: {
-                        name: "numparser_activate_device",
-                        type: "button",
-                        title: "Привязать устройство"
-                    },
-                    field: {
-                        name: "Привязать устройство",
-                        description: "Показать код для ввода на сайте — без ручного набора токена"
-                    },
-                    onChange: function() {
-                        startDeviceActivation();
-                    }
-                });
-            }
-        }
         Lampa.SettingsApi.addParam({
             component: "numparser_settings",
             param: {
-                name: "numparser_source_name",
-                type: "input",
-                placeholder: "Введите название",
-                values: "",
-                default: getProfileSetting("numparser_source_name", DEFAULT_SOURCE_NAME)
+                name: "numparser_show_cert",
+                type: "trigger",
+                default: false
             },
             field: {
-                name: "Название источника",
-                description: "Изменение названия источника в меню"
+                name: "Возрастной рейтинг на карточках",
+                description: "Показывать метку 0+, 6+, 12+, 16+, 18+ в правом нижнем углу карточки"
             },
             onChange: function(value) {
-                newName = value;
-                setProfileSetting("numparser_source_name", value);
-                $(".num_text").text(value);
-                Lampa.Settings.update();
+                setProfileSetting("numparser_show_cert", value === true || value === "true");
             }
         });
         Lampa.SettingsApi.addParam({
@@ -1011,19 +969,59 @@
                 setProfileSetting("numparser_quality_mode", value);
             }
         });
+        if (DEVICE_LINK_AVAILABLE) {
+            Lampa.SettingsApi.addParam({
+                component: "numparser_settings",
+                param: {
+                    name: "numparser_api_key",
+                    type: "input",
+                    placeholder: "Вставьте токен",
+                    values: "",
+                    default: Lampa.Storage.get("numparser_api_key", "")
+                },
+                field: {
+                    name: "Токен устройства",
+                    description: "Токен для идентификации устройства. Получите на сайте или привяжите кнопкой ниже."
+                },
+                onChange: function(value) {
+                    Lampa.Storage.set("numparser_api_key", value);
+                    checkNpConnected();
+                }
+            });
+            Lampa.SettingsApi.addParam({
+                component: "numparser_settings",
+                param: {
+                    name: "numparser_activate_device",
+                    type: "button",
+                    title: "Привязать устройство"
+                },
+                field: {
+                    name: "Привязать устройство",
+                    description: "Показать код для ввода на сайте — без ручного набора токена"
+                },
+                onChange: function() {
+                    startDeviceActivation();
+                }
+            });
+        }
         Lampa.SettingsApi.addParam({
             component: "numparser_settings",
             param: {
-                name: "numparser_show_cert",
-                type: "trigger",
-                default: false
+                name: "numparser_source_name",
+                type: "input",
+                placeholder: "Введите название",
+                values: "",
+                default: getProfileSetting("numparser_source_name", DEFAULT_SOURCE_NAME)
             },
             field: {
-                name: "Возрастной рейтинг на карточках",
-                description: "Показывать метку 0+, 6+, 12+, 16+, 18+ в правом нижнем углу карточки"
+                name: "Название источника",
+                description: "Изменение названия источника в меню"
             },
             onChange: function(value) {
-                setProfileSetting("numparser_show_cert", value === true || value === "true");
+                newName = value;
+                setProfileSetting("numparser_source_name", value);
+                $(".num_text").text(value);
+                Lampa.Settings.update();
             }
         });
     }
