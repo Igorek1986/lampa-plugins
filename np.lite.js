@@ -1118,13 +1118,8 @@
     var _timecodeInterceptorActive = false;
     var _lastSentTimecodes = {};
     var SYNC_THROTTLE_MS = 15e3;
-    var _viewSent = {};
-    function recordView(cardId, percent) {
+    function sendViewEvent(cardId, percent) {
         if (percent < 30 || !BASE_URL) return;
-        var today = (new Date).toISOString().slice(0, 10);
-        var key = cardId + ":" + today;
-        if (_viewSent[key]) return;
-        _viewSent[key] = true;
         var uid = getProfileId() || Lampa.Storage.field("lampa_uid");
         if (!uid) return;
         fetch(BASE_URL + "/api/view?card_id=" + encodeURIComponent(cardId) + "&percent=" + percent + "&uid=" + encodeURIComponent(uid), {
@@ -1160,7 +1155,7 @@
         var duration = Math.round(road.duration || 0);
         var mt = card.media_type || (card.isMovie ? "movie" : "tv");
         var cardId = String(card.id) + "_" + mt;
-        recordView(cardId, percent);
+        sendViewEvent(cardId, percent);
         if (!window.IS_NP) return;
         var token = Lampa.Storage.get("numparser_api_key", "");
         if (!token) return;

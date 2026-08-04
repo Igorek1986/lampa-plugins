@@ -1392,16 +1392,14 @@
     var _timecodeInterceptorActive = false;
     var _lastSentTimecodes = {};  // { "cardId::hash": { percent, sentAt } }
     var SYNC_THROTTLE_MS = 15000; // не чаще раза в 15 сек на одну (card+hash) пару
-    var _viewSent = {};           // { "cardId:YYYY-MM-DD": true } — дедуп play-событий на день
 
-    // Play-событие для «Популярного» на сервере. Шлётся независимо от активации/токена
-    // (по uid профиля или lampa_uid). Дедуп — один раз на карточку в сутки.
-    function recordView(cardId, percent) {
+    // Play-событие для «Популярного» на сервере. Шлётся при каждом тике Timeline с
+    // percent>=30 (Lampa шлёт его ~раз в 2 мин, для внешнего плеера — один раз при
+    // возврате в Lampa). Дедуп/агрегация — на бэкенде: max_percent за день берётся как
+    // GREATEST по всем событиям (см. store.RecordPlayEvent), так что клиенту копить
+    // ничего не нужно — послать можно хоть на каждом тике.
+    function sendViewEvent(cardId, percent) {
         if (percent < 30 || !BASE_URL) return;
-        var today = new Date().toISOString().slice(0, 10);
-        var key = cardId + ':' + today;
-        if (_viewSent[key]) return;
-        _viewSent[key] = true;
         var uid = getProfileId() || Lampa.Storage.field('lampa_uid');
         if (!uid) return;
         fetch(BASE_URL + '/api/view?card_id=' + encodeURIComponent(cardId) +
@@ -1483,7 +1481,7 @@
 
         // Play-событие для «Популярного» — шлём независимо от активации/токена/соединения
         // (IS_NP=true только после активации, а просмотры нужно учитывать и без неё).
-        recordView(cardId, percent);
+        sendViewEvent(cardId, percent);
 
         // Синхронизация таймкодов — только при активном NP-соединении и токене.
         if (!window.IS_NP) {
