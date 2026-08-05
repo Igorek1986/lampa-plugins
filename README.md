@@ -12,6 +12,7 @@
 | **NUMParser** | `https://igorek1986.github.io/lampa-plugins/np.js` | [docs/num](docs/num.md) |
 | **Status Serials** | `https://igorek1986.github.io/lampa-plugins/status.js` | [docs/status](docs/status.md) |
 | **MyShows** | `https://igorek1986.github.io/lampa-plugins/myshows.js` | [docs/myshows](docs/myshows.md) |
+| **Стильный интерфейс** | `https://igorek1986.github.io/lampa-plugins/int.js` | [docs/int](docs/int.md) |
 | **Reset Settings** | `https://igorek1986.github.io/lampa-plugins/reset.js` | [docs/reset](docs/reset.md) |
 
 ## Варианты файлов
