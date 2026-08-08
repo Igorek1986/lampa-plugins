@@ -1,6 +1,6 @@
 (function() {
     "use strict";
-    var VERSION = "1.0.1";
+    var VERSION = "1.0.0";
     var DEFAULT_ADD_THRESHOLD = "0";
     var DEFAULT_MIN_PROGRESS = 90;
     var API_URL = "https://myshows.me/v3/rpc/";
@@ -3611,13 +3611,7 @@
             cancelled: "myshows-thrown",
             remove: "myshows-cancelled"
         };
-        var scopeEl = document;
-        var active = Lampa.Activity.active && Lampa.Activity.active();
-        if (active && active.activity && typeof active.activity.render === "function") {
-            var slide = active.activity.render(true);
-            if (slide) scopeEl = slide;
-        }
-        var buttons = scopeEl.querySelectorAll(selector);
+        var buttons = document.querySelectorAll(selector);
         buttons.forEach(function(button) {
             var svg = button.querySelector("svg");
             button.classList.remove("myshows-active");
