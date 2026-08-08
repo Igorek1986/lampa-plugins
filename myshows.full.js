@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    var VERSION = '1.0.0';
+    var VERSION = '1.0.1';
 
     var DEFAULT_ADD_THRESHOLD = '0';
     var DEFAULT_MIN_PROGRESS = 90;
@@ -5631,7 +5631,18 @@
             'remove': 'myshows-cancelled'
         };
 
-        var buttons = document.querySelectorAll(selector);
+        // Lampa не уничтожает DOM карточки при переходе в рекомендации — предыдущая
+        // full-карточка остаётся в дереве (без activity--active) до реального back().
+        // Без привязки к активной активности document.querySelectorAll находит кнопки
+        // сразу во ВСЕХ открытых в стеке карточках и подсвечивает их все разом.
+        var scopeEl = document;
+        var active = Lampa.Activity.active && Lampa.Activity.active();
+        if (active && active.activity && typeof active.activity.render === 'function') {
+            var slide = active.activity.render(true);
+            if (slide) scopeEl = slide;
+        }
+
+        var buttons = scopeEl.querySelectorAll(selector);
 
         buttons.forEach(function(button) {
             var svg = button.querySelector('svg');
