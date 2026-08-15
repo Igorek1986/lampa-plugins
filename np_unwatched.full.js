@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    var VERSION = '1.7.4';
+    var VERSION = '1.8.0';
 
     var DEBUG = false;
     function log(message, data) {
@@ -1179,6 +1179,180 @@
     }
 
     // =========================================================================
+    // Страница «Моё» — хаб личных статусов (Избранное/Смотрю/Буду смотреть/
+    // Просмотрел/Брошено), данные с сервера (subjective_statuses + Lampa
+    // favorite-блоб, см. GET /media-library в movies-go). Только просмотр —
+    // смена статуса из Lampa сюда пока не входит (см. CardDetailPage.tsx на
+    // вебе — там есть кнопки, тут будет отдельной задачей).
+    // =========================================================================
+
+    var MINE_COMPONENT = 'np_mine';
+    var MINE_CATEGORY_COMPONENT = 'np_mine_category';
+    var MINE_TITLE = 'Моё NP';
+    var MINE_ROWS = [
+        { status: 'favorite',  title: 'Избранное' },
+        { status: 'watching',  title: 'Смотрю' },
+        { status: 'planned',   title: 'Буду смотреть' },
+        { status: 'completed', title: 'Просмотрел' },
+        { status: 'stopped',   title: 'Брошено' }
+    ];
+    var MINE_ICON = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">' +
+        '<path fill="currentColor" d="M6 2c-1.1 0-2 .9-2 2v18l8-5.333L20 22V4c0-1.1-.9-2-2-2H6z"/></svg>';
+
+    function mediaLibraryUrl(status, page, perPage) {
+        var url = getNpBaseUrl() + '/media-library?token=' + encodeURIComponent(getNpToken()) +
+            '&status=' + encodeURIComponent(status) +
+            '&page=' + (page || 1) + '&per_page=' + (perPage || 20);
+        var profileId = getProfileId();
+        if (profileId) url += '&profile_id=' + encodeURIComponent(profileId);
+        return url;
+    }
+
+    function fetchMediaLibrary(status, page, perPage, onSuccess, onError) {
+        fetch(mediaLibraryUrl(status, page, perPage))
+            .then(function (r) { return r.json(); })
+            .then(onSuccess)
+            .catch(onError || function () {});
+    }
+
+    function openMineCard(data) {
+        Lampa.Activity.push({
+            url: '',
+            component: 'full',
+            id: data.id,
+            method: data.media_type === 'tv' ? 'tv' : 'movie',
+            card: data
+        });
+    }
+
+    function addMineComponents() {
+        Lampa.Component.add(MINE_COMPONENT, function (object) {
+            var comp = Lampa.Maker.make('Main', object);
+
+            comp.use({
+                onCreate: function () {
+                    this.activity.loader(true);
+                    var self = this;
+
+                    if (!getNpToken()) {
+                        self.empty();
+                        self.activity.loader(false);
+                        return;
+                    }
+
+                    var lines = new Array(MINE_ROWS.length);
+                    var pending = MINE_ROWS.length;
+
+                    function finish() {
+                        var built = [];
+                        for (var i = 0; i < lines.length; i++) {
+                            if (lines[i]) built.push(lines[i]);
+                        }
+                        if (built.length) self.build(built);
+                        else self.empty();
+                        self.activity.loader(false);
+                    }
+
+                    MINE_ROWS.forEach(function (row, index) {
+                        fetchMediaLibrary(row.status, 1, 20, function (data) {
+                            var results = (data && data.results) || [];
+                            if (results.length) {
+                                lines[index] = {
+                                    title: row.title,
+                                    results: results,
+                                    total_pages: (data && data.total_pages) || 1,
+                                    params: {
+                                        module: Lampa.Maker.module('Line').only('Items', 'Create', 'More', 'Event'),
+                                        emit: {
+                                            onMore: function () {
+                                                Lampa.Activity.push({
+                                                    url: '',
+                                                    title: row.title,
+                                                    component: MINE_CATEGORY_COMPONENT,
+                                                    status: row.status,
+                                                    page: 1
+                                                });
+                                            }
+                                        }
+                                    }
+                                };
+                            }
+                            pending--;
+                            if (pending === 0) finish();
+                        }, function () {
+                            pending--;
+                            if (pending === 0) finish();
+                        });
+                    });
+                },
+
+                onInstance: function (item, data) {
+                    item.use({
+                        onInstance: function (card, data) {
+                            card.use({
+                                onEnter: function () { openMineCard(data); },
+                                onFocus: function () { Lampa.Background.change(Lampa.Utils.cardImgBackground(data)); }
+                            });
+                        }
+                    });
+                }
+            });
+
+            return comp;
+        });
+
+        Lampa.Component.add(MINE_CATEGORY_COMPONENT, function (object) {
+            var comp = Lampa.Maker.make('Category', object, function (module) {
+                return module.toggle(module.MASK.base, 'Pagination');
+            });
+
+            comp.use({
+                onCreate: function () {
+                    this.activity.loader(true);
+                    var self = this;
+                    fetchMediaLibrary(object.status, object.page || 1, 20, function (data) {
+                        self.build({ results: (data && data.results) || [], total_pages: (data && data.total_pages) || 1 });
+                        self.activity.loader(false);
+                    }, function () {
+                        self.empty();
+                        self.activity.loader(false);
+                    });
+                },
+                onNext: function (resolve, reject) {
+                    fetchMediaLibrary(object.status, object.page, 20, function (data) {
+                        resolve({ results: (data && data.results) || [], total_pages: (data && data.total_pages) || 1 });
+                    }, reject);
+                },
+                onInstance: function (item, data) {
+                    item.use({
+                        onEnter: function () { openMineCard(data); },
+                        onFocus: function () { Lampa.Background.change(Lampa.Utils.cardImgBackground(data)); }
+                    });
+                }
+            });
+
+            return comp;
+        });
+    }
+
+    function updateMineMenuItem() {
+        var token = getNpToken();
+        var menuItem = $('.menu__item.selector .menu__text:contains("' + MINE_TITLE + '")').closest('.menu__item');
+
+        if (token) {
+            if (menuItem.length === 0) {
+                var btn = $('<li class="menu__item selector"><div class="menu__ico">' + MINE_ICON + '</div><div class="menu__text">' + MINE_TITLE + '</div></li>');
+                btn.on('hover:enter', function () {
+                    Lampa.Activity.push({ url: '', title: MINE_TITLE, component: MINE_COMPONENT });
+                });
+                $('.menu .menu__list').eq(0).append(btn);
+            }
+        } else if (menuItem.length > 0) {
+            menuItem.remove();
+        }
+    }
+
+    // =========================================================================
     // Инициализация
     // =========================================================================
 
@@ -1188,6 +1362,7 @@
         knownProgress = {};
         episodeWatchedCache = {};
         removeAllEpisodeBadges();
+        updateMineMenuItem();
     }
 
     function init() {
@@ -1197,6 +1372,9 @@
         registerSettingsSafely();
         registerNMSync();
         connectWS();
+
+        addMineComponents();
+        waitForNumparser(updateMineMenuItem);
 
         Lampa.Listener.follow('profile', function (e) { if (e.type === 'changed') onProfileChanged(); });
         if (Lampa.Account && Lampa.Account.listener) {
