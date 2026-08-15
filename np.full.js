@@ -1,7 +1,7 @@
  (function () {
     'use strict';
 
-    var VERSION = '1.0.0';
+    var VERSION = '1.0.9';
 
     var DEFAULT_SOURCE_NAME = 'NUMParser';
     var SOURCE_NAME = Lampa.Storage.get('numparser_source_name', DEFAULT_SOURCE_NAME);
@@ -86,6 +86,7 @@
         var currentYear = new Date().getFullYear();
         var list = [
             // ── Фиксированные строки ───────────────────────────────────────────
+            { key: 'unwatched',              title: 'Непросмотренные' },
             { key: 'myshows_unwatched',      title: 'Непросмотренные (MyShows)' },
             { key: 'np_popular',             title: 'Популярно в NP' },
             { key: 'movies_ru_new',          title: 'Новые русские фильмы' },
@@ -177,6 +178,7 @@
                     if (item.released_count !== undefined) dataItem.released_count = item.released_count;
                     if (item.remaining !== undefined) dataItem.remaining = item.remaining;
                     if (item.next_episode) dataItem.next_episode = item.next_episode;
+                    if (item.unwatched_count !== undefined) dataItem.unwatched_count = item.unwatched_count;
                     if (item.last_episode_to_myshows !== undefined) dataItem.last_episode_to_myshows = item.last_episode_to_myshows;
 
                     dataItem.promo_title = dataItem.title || dataItem.name || dataItem.original_title || dataItem.original_name;
@@ -214,7 +216,7 @@
 
             var category = params.url;
             var page = params.page || 1;
-            var isContinues = category === 'continues' || category.indexOf('continues_') === 0;
+            var isContinues = category === 'continues' || category.indexOf('continues_') === 0 || category === 'unwatched';
             var token = '';
             if (Lampa.Storage.get('numparser_hide_watched') || isContinues) {
                 token = Lampa.Storage.get('numparser_api_key', '');
@@ -236,6 +238,10 @@
                 var minProgress = getProfileSetting('numparser_min_progress', DEFAULT_MIN_PROGRESS);
                 if (Lampa.Storage.get('numparser_hide_watched')) {
                     url += '&hide_watched=1&percent=' + encodeURIComponent(minProgress);
+                }
+                if (category === 'unwatched') {
+                    url += '&percent=' + encodeURIComponent(minProgress);
+                    url += '&sort=' + encodeURIComponent(getProfileSetting('np_unwatched_sort_order', 'progress'));
                 }
             }
 
@@ -533,7 +539,7 @@
 
             function makeRequest(category, title, callback) {
                 var page = 1;
-                var isContinues = category === 'continues' || category.indexOf('continues_') === 0;
+                var isContinues = category === 'continues' || category.indexOf('continues_') === 0 || category === 'unwatched';
                 var token = '';
                 if (Lampa.Storage.get('numparser_hide_watched') || isContinues) {
                     token = Lampa.Storage.get('numparser_api_key', '');
@@ -559,6 +565,10 @@
                     var minProgress = getProfileSetting('numparser_min_progress', DEFAULT_MIN_PROGRESS);
                     if (!isContinues) {
                         url += '&hide_watched=1&percent=' + encodeURIComponent(minProgress);
+                    }
+                    if (category === 'unwatched') {
+                        url += '&percent=' + encodeURIComponent(minProgress);
+                        url += '&sort=' + encodeURIComponent(getProfileSetting('np_unwatched_sort_order', 'progress'));
                     }
                 }
 
@@ -1462,6 +1472,9 @@
     }
 
     function onTimelineUpdate(data) {
+        // np_profiles.js применяет так таймкоды с ДРУГИХ устройств (см. onWsTimecode)
+        // — не пересылаем их обратно на сервер, иначе зациклимся пинг-понгом.
+        if (window.__npRemoteTimelineUpdate) return;
         if (!data || !data.data || !data.data.hash || !data.data.road) return;
 
         var card = getCurrentCard();
@@ -1505,7 +1518,8 @@
 
         Log.info('Timecode sync: sending', cardId, hash, percent + '%');
 
-        var timecodeUrl = BASE_URL + '/timecode?token=' + encodeURIComponent(token);
+        var timecodeUrl = BASE_URL + '/timecode?token=' + encodeURIComponent(token) +
+            '&client_id=' + encodeURIComponent(window.__npClientId || '');
         var profileId = getProfileId();
         var profileName = getProfileName();
         if (profileId) timecodeUrl += '&profile_id=' + encodeURIComponent(profileId);
@@ -1521,6 +1535,9 @@
             })
         }).then(function() {
             Log.info('Timecode saved:', cardId, hash, percent + '%');
+            // Другие плагины (np_unwatched.js) ждут именно ПОДТВЕРЖДЁННОГО сохранения,
+            // чтобы точно знать момент перезапроса прогресса — без гадания с setTimeout.
+            Lampa.Listener.send('np_timecode_saved', { card_id: cardId, hash: hash, percent: percent });
         }).catch(function(err) {
             Log.error('Timecode save error:', err);
         });

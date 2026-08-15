@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    var VERSION = '1.0.1';
+    var VERSION = '1.0.5';
 
     var DEFAULT_ADD_THRESHOLD = '0';
     var DEFAULT_MIN_PROGRESS = 90;
@@ -638,6 +638,7 @@
             var token = data.token;
             setProfileSetting('myshows_token', token);
             Lampa.Storage.set('myshows_token', token, true);
+            enableBadgesOnFirstAuth();
             if (successCallback) {
                 successCallback(token);
             } else {
@@ -850,16 +851,23 @@
             setProfileSetting('myshows_use_np', 'false', false);
         }
 
+        if (!hasProfileSetting('myshows_badges_disabled')) {
+            setProfileSetting('myshows_badges_disabled', false, false);
+        }
+
+        // По умолчанию выключены — без токена показывать нечего (значки не проверяют
+        // логин, только сами эти тумблеры). Включаются автоматически при первой
+        // успешной авторизации, см. enableBadgesOnFirstAuth().
         if (!hasProfileSetting('myshows_badge_progress')) {
-            setProfileSetting('myshows_badge_progress', true, false);
+            setProfileSetting('myshows_badge_progress', false, false);
         }
 
         if (!hasProfileSetting('myshows_badge_remaining')) {
-            setProfileSetting('myshows_badge_remaining', true, false);
+            setProfileSetting('myshows_badge_remaining', false, false);
         }
 
         if (!hasProfileSetting('myshows_badge_next')) {
-            setProfileSetting('myshows_badge_next', true, false);
+            setProfileSetting('myshows_badge_next', false, false);
         }
 
         if (!hasProfileSetting('myshows_badge_style')) {
@@ -877,9 +885,10 @@
         Lampa.Storage.set('myshows_cache_days',    getProfileSetting('myshows_cache_days',    DEFAULT_CACHE_DAYS), true);
         Lampa.Storage.set('myshows_use_np',        getProfileSetting('myshows_use_np',        'false'), true);
 
-        Lampa.Storage.set('myshows_badge_progress',  storableValue(getProfileSetting('myshows_badge_progress',  true)), true);
-        Lampa.Storage.set('myshows_badge_remaining', storableValue(getProfileSetting('myshows_badge_remaining', true)), true);
-        Lampa.Storage.set('myshows_badge_next',      storableValue(getProfileSetting('myshows_badge_next',      true)), true);
+        Lampa.Storage.set('myshows_badges_disabled', storableValue(getProfileSetting('myshows_badges_disabled', false)), true);
+        Lampa.Storage.set('myshows_badge_progress',  storableValue(getProfileSetting('myshows_badge_progress',  false)), true);
+        Lampa.Storage.set('myshows_badge_remaining', storableValue(getProfileSetting('myshows_badge_remaining', false)), true);
+        Lampa.Storage.set('myshows_badge_next',      storableValue(getProfileSetting('myshows_badge_next',      false)), true);
         Lampa.Storage.set('myshows_badge_style',     getProfileSetting('myshows_badge_style',     '1'), true);
 
         applyBadgeStyleAttr();
@@ -894,6 +903,25 @@
         else document.body.removeAttribute('data-myshows-badge-style');
     }
 
+    // Общий рубильник — если включён, ни один из значков myshows не рисуется,
+    // независимо от отдельных myshows_badge_progress/remaining/next.
+    function badgesDisabled() {
+        var v = getProfileSetting('myshows_badges_disabled', false);
+        return v === true || v === 'true';
+    }
+
+    // Значки по умолчанию выключены (без токена показывать нечего) — включаем их
+    // один раз, когда профиль впервые успешно авторизуется в MyShows. Дальше
+    // пользователь управляет ими сам (тумблеры/«Отключить все значки»), повторно
+    // не трогаем — маркер не даёт переключить обратно в true при повторном логине.
+    function enableBadgesOnFirstAuth() {
+        if (hasProfileSetting('myshows_badges_auto_enabled')) return;
+        setProfileSetting('myshows_badges_auto_enabled', true, false);
+        setProfileSetting('myshows_badge_progress', true, false);
+        setProfileSetting('myshows_badge_remaining', true, false);
+        setProfileSetting('myshows_badge_next', true, false);
+    }
+
     function hasProfileSetting(key) {
         var profileKey = getProfileKey(key);
         return window.localStorage.getItem(profileKey) !== null;
@@ -904,6 +932,15 @@
         window._myshows_badges_init = true;
 
         Lampa.Template.add('settings_myshows_badges', '<div></div>');
+
+        Lampa.SettingsApi.addParam({
+            component: 'myshows_badges',
+            param: { name: 'myshows_badges_disabled', type: 'trigger', default: false },
+            field: { name: 'Отключить все значки', description: 'Полностью выключает значки myshows на карточках (например, если используете другой плагин со своими метками)' },
+            onChange: function(value) {
+                setProfileSetting('myshows_badges_disabled', value === true || value === 'true');
+            }
+        });
 
         Lampa.SettingsApi.addParam({
             component: 'myshows_badges',
@@ -2477,6 +2514,12 @@
 
     // обработка Timeline обновлений
     function processTimelineUpdate(data) {
+        // np_profiles.js применяет так таймкоды с ДРУГИХ устройств (см. onWsTimecode
+        // в np_profiles.js) — не отмечаем серию на MyShows от имени ЭТОГО устройства
+        // за чужой просмотр и не зацикливаем рассылку между устройствами.
+        if (window.__npRemoteTimelineUpdate) {
+            return;
+        }
         if (syncInProgress) {
             return;
         }
@@ -3694,7 +3737,8 @@
     // есть в непросмотренных — дописываем туда метку «Далее: SxxExx».
     function addNextEpisodeToExplorer(movie) {
         if (!movie || !movie.id) return;
-        var showNext = getProfileSetting('myshows_badge_next', true);
+        if (badgesDisabled()) return;
+        var showNext = getProfileSetting('myshows_badge_next', false);
         if (!(showNext === true || showNext === 'true')) return;
         var isSerial = movie.number_of_seasons > 0 || movie.seasons || movie.first_air_date || movie.original_name;
         if (!isSerial) return;
@@ -4078,9 +4122,10 @@
             }, 50);
         }
 
-        var showProgress  = getProfileSetting('myshows_badge_progress',  true);
-        var showRemaining = getProfileSetting('myshows_badge_remaining', true);
-        var showNext      = getProfileSetting('myshows_badge_next',      true);
+        var disabled = badgesDisabled();
+        var showProgress  = !disabled && getProfileSetting('myshows_badge_progress',  false);
+        var showRemaining = !disabled && getProfileSetting('myshows_badge_remaining', false);
+        var showNext      = !disabled && getProfileSetting('myshows_badge_next',      false);
 
         if (showData.progress_marker && (showProgress === true || showProgress === 'true')) {
             if (existingProgress) animateFullCardMarker(existingProgress, showData.progress_marker, 'progress');
@@ -5347,6 +5392,7 @@
 
     // Пройтись по всем карточкам серий открытого сериала и обновить галочки.
     function decorateEpisodeCards() {
+        if (badgesDisabled()) { removeAllEpisodeBadges(); return; }
         if (!getProfileSetting('myshows_token', '')) return;
         if (!_unwatchedEpisodeIdsReady) return;
 
@@ -8161,9 +8207,10 @@
         var cardView = cardElement.querySelector('.card__view');
         if (!cardView) return;
 
-        var showProgress  = getProfileSetting('myshows_badge_progress',  true);
-        var showRemaining = getProfileSetting('myshows_badge_remaining', true);
-        var showNext      = getProfileSetting('myshows_badge_next',      true);
+        var disabled = badgesDisabled();
+        var showProgress  = !disabled && getProfileSetting('myshows_badge_progress',  false);
+        var showRemaining = !disabled && getProfileSetting('myshows_badge_remaining', false);
+        var showNext      = !disabled && getProfileSetting('myshows_badge_next',      false);
 
         // ✅ Маркер прогресса
         if (cardData.progress_marker && (showProgress === true || showProgress === 'true')) {

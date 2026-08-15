@@ -1,6 +1,6 @@
 (function() {
     "use strict";
-    var VERSION = "1.0.1";
+    var VERSION = "1.0.5";
     var DEFAULT_ADD_THRESHOLD = "0";
     var DEFAULT_MIN_PROGRESS = 90;
     var API_URL = "https://myshows.me/v3/rpc/";
@@ -474,6 +474,7 @@
             var token = data.token;
             setProfileSetting("myshows_token", token);
             Lampa.Storage.set("myshows_token", token, true);
+            enableBadgesOnFirstAuth();
             if (successCallback) successCallback(token); else {
                 Lampa.Noty.show("✅ Auth success! Reboot...");
                 setTimeout(function() {
@@ -604,9 +605,10 @@
         if (!hasProfileSetting("myshows_password")) setProfileSetting("myshows_password", "", false);
         if (!hasProfileSetting("myshows_cache_days")) setProfileSetting("myshows_cache_days", DEFAULT_CACHE_DAYS, false);
         if (!hasProfileSetting("myshows_use_np")) setProfileSetting("myshows_use_np", "false", false);
-        if (!hasProfileSetting("myshows_badge_progress")) setProfileSetting("myshows_badge_progress", true, false);
-        if (!hasProfileSetting("myshows_badge_remaining")) setProfileSetting("myshows_badge_remaining", true, false);
-        if (!hasProfileSetting("myshows_badge_next")) setProfileSetting("myshows_badge_next", true, false);
+        if (!hasProfileSetting("myshows_badges_disabled")) setProfileSetting("myshows_badges_disabled", false, false);
+        if (!hasProfileSetting("myshows_badge_progress")) setProfileSetting("myshows_badge_progress", false, false);
+        if (!hasProfileSetting("myshows_badge_remaining")) setProfileSetting("myshows_badge_remaining", false, false);
+        if (!hasProfileSetting("myshows_badge_next")) setProfileSetting("myshows_badge_next", false, false);
         if (!hasProfileSetting("myshows_badge_style")) setProfileSetting("myshows_badge_style", "1", false);
         Lampa.Storage.set("myshows_view_in_main", storableValue(getProfileSetting("myshows_view_in_main", true)), true);
         Lampa.Storage.set("myshows_button_view", storableValue(getProfileSetting("myshows_button_view", true)), true);
@@ -618,15 +620,27 @@
         Lampa.Storage.set("myshows_password", getProfileSetting("myshows_password", ""), true);
         Lampa.Storage.set("myshows_cache_days", getProfileSetting("myshows_cache_days", DEFAULT_CACHE_DAYS), true);
         Lampa.Storage.set("myshows_use_np", getProfileSetting("myshows_use_np", "false"), true);
-        Lampa.Storage.set("myshows_badge_progress", storableValue(getProfileSetting("myshows_badge_progress", true)), true);
-        Lampa.Storage.set("myshows_badge_remaining", storableValue(getProfileSetting("myshows_badge_remaining", true)), true);
-        Lampa.Storage.set("myshows_badge_next", storableValue(getProfileSetting("myshows_badge_next", true)), true);
+        Lampa.Storage.set("myshows_badges_disabled", storableValue(getProfileSetting("myshows_badges_disabled", false)), true);
+        Lampa.Storage.set("myshows_badge_progress", storableValue(getProfileSetting("myshows_badge_progress", false)), true);
+        Lampa.Storage.set("myshows_badge_remaining", storableValue(getProfileSetting("myshows_badge_remaining", false)), true);
+        Lampa.Storage.set("myshows_badge_next", storableValue(getProfileSetting("myshows_badge_next", false)), true);
         Lampa.Storage.set("myshows_badge_style", getProfileSetting("myshows_badge_style", "1"), true);
         applyBadgeStyleAttr();
     }
     function applyBadgeStyleAttr() {
         var v = getProfileSetting("myshows_badge_style", "1").toString();
         if (v === "2") document.body.setAttribute("data-myshows-badge-style", v); else document.body.removeAttribute("data-myshows-badge-style");
+    }
+    function badgesDisabled() {
+        var v = getProfileSetting("myshows_badges_disabled", false);
+        return v === true || v === "true";
+    }
+    function enableBadgesOnFirstAuth() {
+        if (hasProfileSetting("myshows_badges_auto_enabled")) return;
+        setProfileSetting("myshows_badges_auto_enabled", true, false);
+        setProfileSetting("myshows_badge_progress", true, false);
+        setProfileSetting("myshows_badge_remaining", true, false);
+        setProfileSetting("myshows_badge_next", true, false);
     }
     function hasProfileSetting(key) {
         var profileKey = getProfileKey(key);
@@ -636,6 +650,21 @@
         if (window._myshows_badges_init) return;
         window._myshows_badges_init = true;
         Lampa.Template.add("settings_myshows_badges", "<div></div>");
+        Lampa.SettingsApi.addParam({
+            component: "myshows_badges",
+            param: {
+                name: "myshows_badges_disabled",
+                type: "trigger",
+                default: false
+            },
+            field: {
+                name: "Отключить все значки",
+                description: "Полностью выключает значки myshows на карточках (например, если используете другой плагин со своими метками)"
+            },
+            onChange: function(value) {
+                setProfileSetting("myshows_badges_disabled", value === true || value === "true");
+            }
+        });
         Lampa.SettingsApi.addParam({
             component: "myshows_badges",
             param: {
@@ -1735,6 +1764,7 @@
         };
     }
     function processTimelineUpdate(data) {
+        if (window.__npRemoteTimelineUpdate) return;
         if (syncInProgress) return;
         if (!data || !data.data || !data.data.hash || !data.data.road) return;
         var hash = data.data.hash;
@@ -2495,7 +2525,8 @@
     }
     function addNextEpisodeToExplorer(movie) {
         if (!movie || !movie.id) return;
-        var showNext = getProfileSetting("myshows_badge_next", true);
+        if (badgesDisabled()) return;
+        var showNext = getProfileSetting("myshows_badge_next", false);
         if (!(showNext === true || showNext === "true")) return;
         var isSerial = movie.number_of_seasons > 0 || movie.seasons || movie.first_air_date || movie.original_name;
         if (!isSerial) return;
@@ -2728,9 +2759,10 @@
                 }, 410);
             }, 50);
         }
-        var showProgress = getProfileSetting("myshows_badge_progress", true);
-        var showRemaining = getProfileSetting("myshows_badge_remaining", true);
-        var showNext = getProfileSetting("myshows_badge_next", true);
+        var disabled = badgesDisabled();
+        var showProgress = !disabled && getProfileSetting("myshows_badge_progress", false);
+        var showRemaining = !disabled && getProfileSetting("myshows_badge_remaining", false);
+        var showNext = !disabled && getProfileSetting("myshows_badge_next", false);
         if (showData.progress_marker && (showProgress === true || showProgress === "true")) if (existingProgress) animateFullCardMarker(existingProgress, showData.progress_marker, "progress"); else addMarker("myshows-progress", showData.progress_marker); else if (existingProgress) existingProgress.remove();
         if (showData.remaining !== void 0 && showData.remaining !== null && (showRemaining === true || showRemaining === "true")) if (existingRemaining) animateFullCardMarker(existingRemaining, showData.remaining.toString(), "remaining"); else addMarker("myshows-remaining", showData.remaining); else if (existingRemaining) existingRemaining.remove();
         if (showData.next_episode && (showNext === true || showNext === "true")) if (existingNext) animateFullCardMarker(existingNext, showData.next_episode, "next"); else addMarker("myshows-next-episode", showData.next_episode); else if (existingNext) existingNext.remove();
@@ -3393,6 +3425,10 @@
         return set;
     }
     function decorateEpisodeCards() {
+        if (badgesDisabled()) {
+            removeAllEpisodeBadges();
+            return;
+        }
         if (!getProfileSetting("myshows_token", "")) return;
         if (!_unwatchedEpisodeIdsReady) return;
         var cards = collectEpisodeCards();
@@ -5551,9 +5587,10 @@
         if (!cardData) return;
         var cardView = cardElement.querySelector(".card__view");
         if (!cardView) return;
-        var showProgress = getProfileSetting("myshows_badge_progress", true);
-        var showRemaining = getProfileSetting("myshows_badge_remaining", true);
-        var showNext = getProfileSetting("myshows_badge_next", true);
+        var disabled = badgesDisabled();
+        var showProgress = !disabled && getProfileSetting("myshows_badge_progress", false);
+        var showRemaining = !disabled && getProfileSetting("myshows_badge_remaining", false);
+        var showNext = !disabled && getProfileSetting("myshows_badge_next", false);
         if (cardData.progress_marker && (showProgress === true || showProgress === "true")) {
             var progressMarker = cardView.querySelector(".myshows-progress");
             if (progressMarker) {

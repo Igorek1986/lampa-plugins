@@ -1,6 +1,6 @@
 (function() {
     "use strict";
-    var VERSION = "1.0.0";
+    var VERSION = "1.0.9";
     var DEFAULT_SOURCE_NAME = "NUMParser";
     var SOURCE_NAME = Lampa.Storage.get("numparser_source_name", DEFAULT_SOURCE_NAME);
     var newName = SOURCE_NAME;
@@ -108,6 +108,9 @@
     function getAllCategories() {
         var currentYear = (new Date).getFullYear();
         var list = [ {
+            key: "unwatched",
+            title: "Непросмотренные"
+        }, {
             key: "myshows_unwatched",
             title: "Непросмотренные (MyShows)"
         }, {
@@ -222,6 +225,7 @@
                     if (item.released_count !== void 0) dataItem.released_count = item.released_count;
                     if (item.remaining !== void 0) dataItem.remaining = item.remaining;
                     if (item.next_episode) dataItem.next_episode = item.next_episode;
+                    if (item.unwatched_count !== void 0) dataItem.unwatched_count = item.unwatched_count;
                     if (item.last_episode_to_myshows !== void 0) dataItem.last_episode_to_myshows = item.last_episode_to_myshows;
                     dataItem.promo_title = dataItem.title || dataItem.name || dataItem.original_title || dataItem.original_name;
                     dataItem.promo = dataItem.overview;
@@ -252,7 +256,7 @@
             onError = onError || function() {};
             var category = params.url;
             var page = params.page || 1;
-            var isContinues = category === "continues" || category.indexOf("continues_") === 0;
+            var isContinues = category === "continues" || category.indexOf("continues_") === 0 || category === "unwatched";
             var token = "";
             if (Lampa.Storage.get("numparser_hide_watched") || isContinues) token = Lampa.Storage.get("numparser_api_key", "");
             var sep = category.indexOf("?") >= 0 ? "&" : "?";
@@ -266,6 +270,10 @@
                 if (profileId) url += "&profile_id=" + encodeURIComponent(profileId);
                 var minProgress = getProfileSetting("numparser_min_progress", DEFAULT_MIN_PROGRESS);
                 if (Lampa.Storage.get("numparser_hide_watched")) url += "&hide_watched=1&percent=" + encodeURIComponent(minProgress);
+                if (category === "unwatched") {
+                    url += "&percent=" + encodeURIComponent(minProgress);
+                    url += "&sort=" + encodeURIComponent(getProfileSetting("np_unwatched_sort_order", "progress"));
+                }
             }
             self.get(url, params, function(json) {
                 var results = json.results || [];
@@ -514,7 +522,7 @@
             }
             function makeRequest(category, title, callback) {
                 var page = 1;
-                var isContinues = category === "continues" || category.indexOf("continues_") === 0;
+                var isContinues = category === "continues" || category.indexOf("continues_") === 0 || category === "unwatched";
                 var token = "";
                 if (Lampa.Storage.get("numparser_hide_watched") || isContinues) token = Lampa.Storage.get("numparser_api_key", "");
                 var url = BASE_URL + "/" + category + "?page=" + page + "&language=" + Lampa.Storage.get("tmdb_lang", "ru");
@@ -532,6 +540,10 @@
                     if (profileId) url += "&profile_id=" + encodeURIComponent(profileId);
                     var minProgress = getProfileSetting("numparser_min_progress", DEFAULT_MIN_PROGRESS);
                     if (!isContinues) url += "&hide_watched=1&percent=" + encodeURIComponent(minProgress);
+                    if (category === "unwatched") {
+                        url += "&percent=" + encodeURIComponent(minProgress);
+                        url += "&sort=" + encodeURIComponent(getProfileSetting("np_unwatched_sort_order", "progress"));
+                    }
                 }
                 self.get(url, params, function(json) {
                     var results = json.results || [];
@@ -1145,6 +1157,7 @@
         tryAttach();
     }
     function onTimelineUpdate(data) {
+        if (window.__npRemoteTimelineUpdate) return;
         if (!data || !data.data || !data.data.hash || !data.data.road) return;
         var card = getCurrentCard();
         if (!card || !card.id) return;
@@ -1167,7 +1180,7 @@
             percent: percent,
             sentAt: now
         };
-        var timecodeUrl = BASE_URL + "/timecode?token=" + encodeURIComponent(token);
+        var timecodeUrl = BASE_URL + "/timecode?token=" + encodeURIComponent(token) + "&client_id=" + encodeURIComponent(window.__npClientId || "");
         var profileId = getProfileId();
         var profileName = getProfileName();
         if (profileId) timecodeUrl += "&profile_id=" + encodeURIComponent(profileId);
@@ -1186,7 +1199,13 @@
                     percent: percent
                 })
             })
-        }).then(function() {}).catch(function(err) {});
+        }).then(function() {
+            Lampa.Listener.send("np_timecode_saved", {
+                card_id: cardId,
+                hash: hash,
+                percent: percent
+            });
+        }).catch(function(err) {});
     }
     function startPlugin() {
         if (window.numparser_plugin) return;

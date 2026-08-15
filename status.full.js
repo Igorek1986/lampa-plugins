@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    var VERSION = '1.0.0';
+    var VERSION = '1.1.1';
 
     var DEBUG = false;
 
@@ -11,7 +11,7 @@
 
     var style = document.createElement('style');
     style.textContent = [
-        '.card__type {',
+        '.serial-status__type {',
         '    position: absolute;',
         '    left: 0;',
         '    top: 0.8em;',
@@ -27,7 +27,7 @@
         '    background: #ff4242;',
         '    color: #fff;',
         '}',
-        '.card__status {',
+        '.serial-status__status {',
         '    position: absolute;',
         '    left: 0;',
         '    top: 2.8em;',
@@ -41,25 +41,32 @@
         '    letter-spacing: 0.04em;',
         '    line-height: 1.1;',
         '}',
-        '.card__status[data-status="ended"]   { background: #4CAF50; color: #fff; }',
-        '.card__status[data-status="airing"]  { background: #2196F3; color: #fff; }',
-        '.card__status[data-status="paused"]  { background: #FFC107; color: #222; }',
-        '.card__status[data-status="canceled"]{ background: #FFC107; color: #222; }',
+        '.serial-status__status[data-status="ended"]   { background: #4CAF50; color: #fff; }',
+        '.serial-status__status[data-status="airing"]  { background: #2196F3; color: #fff; }',
+        '.serial-status__status[data-status="paused"]  { background: #FFC107; color: #222; }',
+        '.serial-status__status[data-status="canceled"]{ background: #FFC107; color: #222; }',
         /* ── Вариант 2 (настройка «Расположение меток»): «Сериал» — левый
            верхний угол, статус — правый верхний, не цветные.
            Радиус карточки Lampa = 1em; при font-size 0.9em это 1.11em:
            внешний угол повторяет угол карточки, противоположный — такой же. */
-        'body[data-status-badge-style="2"] .card__type {',
+        'body[data-status-badge-style="2"] .serial-status__type {',
         '    top: 0; left: 0;',
         '    border-radius: 1.11em 0;',
         '    box-shadow: none;',
         '    background: rgba(0,0,0,0.5); color: #fff;',
         '}',
-        'body[data-status-badge-style="2"] .card__status {',
+        'body[data-status-badge-style="2"] .serial-status__status {',
         '    top: 0; left: auto; right: 0;',
         '    border-radius: 0 1.11em;',
         '    box-shadow: none;',
         '    background: rgba(0,0,0,0.5); color: #fff;',
+        '}',
+        // Постер полной карточки крупнее карточек в сетке — те же em-размеры
+        // на нём превращаются в непропорционально большие метки, которые
+        // касаются друг друга (и наезжают на счётчик np_unwatched).
+        '.full-start-new__poster .serial-status__type,',
+        '.full-start-new__poster .serial-status__status {',
+        '    font-size: 0.7em;',
         '}',
     ].join('\n');
     document.head.appendChild(style);
@@ -179,6 +186,34 @@
 
     var processedCards = [];
 
+    // Общая логика меток «Сериал» + статус — используется и для карточек в сетке
+    // (.card__view), и для постера полной карточки (.full-start-new__poster).
+    // Сначала снимает НАТИВНЫЕ метки Lampa (full/start.js сам вешает
+    // <div class="card__type">TV</div> на постер) — иначе у нас будет и чужой
+    // "TV", и наш "Сериал" одновременно.
+    function decorateBadges(container, data) {
+        var isTv = data.type === 'tv' || data.name || data.first_air_date || data.number_of_seasons;
+        if (!isTv || !data.id) return;
+
+        var old = container.querySelectorAll('.card__type, .card__status, .serial-status__type, .serial-status__status');
+        for (var i = 0; i < old.length; i++) old[i].remove();
+        container.classList.remove('view--has-status');
+
+        var typeElem = document.createElement('div');
+        typeElem.className = 'serial-status__type';
+        typeElem.textContent = 'Сериал';
+        container.appendChild(typeElem);
+
+        var existingStatus = (data.status || '').toLowerCase();
+        if (existingStatus) {
+            addStatusBadge(existingStatus, container);
+        } else {
+            fetchSeriesStatus(data.id, function (status) {
+                if (status) addStatusBadge(status.toLowerCase(), container);
+            });
+        }
+    }
+
     function addStatusToCard(card) {
         if (!isPluginEnabled()) return;
 
@@ -193,38 +228,25 @@
         if (!cardView) return;
 
         var data = cardElement.card_data || cardElement.data || {};
-        var isTv = data.type === 'tv' || data.first_air_date || data.number_of_seasons;
-        if (!isTv || !data.id) return;
-
-        // Удаляем старые метки
-        var old = cardView.querySelectorAll('.card__type, .card__status');
-        for (var i = 0; i < old.length; i++) old[i].remove();
-        cardView.classList.remove('view--has-status');
-
-        // Метка «Сериал»
-        var typeElem = document.createElement('div');
-        typeElem.className = 'card__type';
-        typeElem.textContent = 'Сериал';
-        cardView.appendChild(typeElem);
-
         processedCards.push(cardElement);
+        decorateBadges(cardView, data);
+    }
 
-        // Статус
-        var existingStatus = (data.status || '').toLowerCase();
-        if (existingStatus) {
-            addStatusBadge(existingStatus, cardView);
-        } else {
-            fetchSeriesStatus(data.id, function (status) {
-                if (status) addStatusBadge(status.toLowerCase(), cardView);
-            });
-        }
+    // Постер полной карточки — отдельный элемент, переиспользуется Lampa между
+    // открытиями разных карточек, поэтому без dedup-списка: просто перерисовываем
+    // при каждом событии 'full'/'complite'.
+    function decorateFullPoster(movie) {
+        if (!isPluginEnabled() || !movie) return;
+        var posterEl = document.querySelector('.full-start-new__poster');
+        if (!posterEl) return;
+        decorateBadges(posterEl, movie);
     }
 
     function addStatusBadge(status, cardView) {
-        if (cardView.querySelector('.card__status[data-status]')) return;
+        if (cardView.querySelector('.serial-status__status[data-status]')) return;
 
         var el   = document.createElement('div');
-        el.className = 'card__status';
+        el.className = 'serial-status__status';
 
         if (status === 'ended') {
             el.setAttribute('data-status', 'ended');
@@ -369,6 +391,14 @@
                 log('Card.onVisible intercept failed: ' + e);
             }
         }
+
+        // Постер полной карточки — Lampa сам вешает туда нативный
+        // <div class="card__type">TV</div> (full/start.js), поэтому без нашей
+        // перерисовки там остаётся чужой непереведённый "TV" без статуса.
+        Lampa.Listener.follow('full', function (event) {
+            if (event.type !== 'complite' || !event.data || !event.data.movie) return;
+            decorateFullPoster(event.data.movie);
+        });
 
         log('Initialization complete, profile: ' + getProfileId());
     }

@@ -1,12 +1,12 @@
 (function() {
     "use strict";
-    var VERSION = "1.0.0";
+    var VERSION = "1.1.1";
     var DEBUG = false;
     function log(message, data) {
         if (DEBUG) console.log("[SerialStatus] " + message, data !== void 0 ? data : "");
     }
     var style = document.createElement("style");
-    style.textContent = [ ".card__type {", "    position: absolute;", "    left: 0;", "    top: 0.8em;", "    padding: 0.2em 0.8em;", "    font-size: 0.9em;", "    border-radius: 0.5em;", "    text-transform: uppercase;", "    font-weight: bold;", "    z-index: 2;", "    box-shadow: 0 2px 8px rgba(0,0,0,0.15);", "    letter-spacing: 0.04em;", "    line-height: 1.1;", "    background: #ff4242;", "    color: #fff;", "}", ".card__status {", "    position: absolute;", "    left: 0;", "    top: 2.8em;", "    padding: 0.2em 0.8em;", "    font-size: 0.9em;", "    border-radius: 0.5em;", "    text-transform: uppercase;", "    font-weight: bold;", "    z-index: 2;", "    box-shadow: 0 2px 8px rgba(0,0,0,0.15);", "    letter-spacing: 0.04em;", "    line-height: 1.1;", "}", '.card__status[data-status="ended"]   { background: #4CAF50; color: #fff; }', '.card__status[data-status="airing"]  { background: #2196F3; color: #fff; }', '.card__status[data-status="paused"]  { background: #FFC107; color: #222; }', '.card__status[data-status="canceled"]{ background: #FFC107; color: #222; }', 'body[data-status-badge-style="2"] .card__type {', "    top: 0; left: 0;", "    border-radius: 1.11em 0;", "    box-shadow: none;", "    background: rgba(0,0,0,0.5); color: #fff;", "}", 'body[data-status-badge-style="2"] .card__status {', "    top: 0; left: auto; right: 0;", "    border-radius: 0 1.11em;", "    box-shadow: none;", "    background: rgba(0,0,0,0.5); color: #fff;", "}" ].join("\n");
+    style.textContent = [ ".serial-status__type {", "    position: absolute;", "    left: 0;", "    top: 0.8em;", "    padding: 0.2em 0.8em;", "    font-size: 0.9em;", "    border-radius: 0.5em;", "    text-transform: uppercase;", "    font-weight: bold;", "    z-index: 2;", "    box-shadow: 0 2px 8px rgba(0,0,0,0.15);", "    letter-spacing: 0.04em;", "    line-height: 1.1;", "    background: #ff4242;", "    color: #fff;", "}", ".serial-status__status {", "    position: absolute;", "    left: 0;", "    top: 2.8em;", "    padding: 0.2em 0.8em;", "    font-size: 0.9em;", "    border-radius: 0.5em;", "    text-transform: uppercase;", "    font-weight: bold;", "    z-index: 2;", "    box-shadow: 0 2px 8px rgba(0,0,0,0.15);", "    letter-spacing: 0.04em;", "    line-height: 1.1;", "}", '.serial-status__status[data-status="ended"]   { background: #4CAF50; color: #fff; }', '.serial-status__status[data-status="airing"]  { background: #2196F3; color: #fff; }', '.serial-status__status[data-status="paused"]  { background: #FFC107; color: #222; }', '.serial-status__status[data-status="canceled"]{ background: #FFC107; color: #222; }', 'body[data-status-badge-style="2"] .serial-status__type {', "    top: 0; left: 0;", "    border-radius: 1.11em 0;", "    box-shadow: none;", "    background: rgba(0,0,0,0.5); color: #fff;", "}", 'body[data-status-badge-style="2"] .serial-status__status {', "    top: 0; left: auto; right: 0;", "    border-radius: 0 1.11em;", "    box-shadow: none;", "    background: rgba(0,0,0,0.5); color: #fff;", "}", ".full-start-new__poster .serial-status__type,", ".full-start-new__poster .serial-status__status {", "    font-size: 0.7em;", "}" ].join("\n");
     document.head.appendChild(style);
     var SETTINGS_COMPONENT = "serial_status_settings";
     var BASE_KEY = "serial_status_enabled";
@@ -82,6 +82,21 @@
         return getProfileSetting(BASE_KEY, GLOBAL_DEFAULT);
     }
     var processedCards = [];
+    function decorateBadges(container, data) {
+        var isTv = data.type === "tv" || data.name || data.first_air_date || data.number_of_seasons;
+        if (!isTv || !data.id) return;
+        var old = container.querySelectorAll(".card__type, .card__status, .serial-status__type, .serial-status__status");
+        for (var i = 0; i < old.length; i++) old[i].remove();
+        container.classList.remove("view--has-status");
+        var typeElem = document.createElement("div");
+        typeElem.className = "serial-status__type";
+        typeElem.textContent = "Сериал";
+        container.appendChild(typeElem);
+        var existingStatus = (data.status || "").toLowerCase();
+        if (existingStatus) addStatusBadge(existingStatus, container); else fetchSeriesStatus(data.id, function(status) {
+            if (status) addStatusBadge(status.toLowerCase(), container);
+        });
+    }
     function addStatusToCard(card) {
         if (!isPluginEnabled()) return;
         var cardElement = card;
@@ -91,25 +106,19 @@
         var cardView = cardElement.querySelector(".card__view");
         if (!cardView) return;
         var data = cardElement.card_data || cardElement.data || {};
-        var isTv = data.type === "tv" || data.first_air_date || data.number_of_seasons;
-        if (!isTv || !data.id) return;
-        var old = cardView.querySelectorAll(".card__type, .card__status");
-        for (var i = 0; i < old.length; i++) old[i].remove();
-        cardView.classList.remove("view--has-status");
-        var typeElem = document.createElement("div");
-        typeElem.className = "card__type";
-        typeElem.textContent = "Сериал";
-        cardView.appendChild(typeElem);
         processedCards.push(cardElement);
-        var existingStatus = (data.status || "").toLowerCase();
-        if (existingStatus) addStatusBadge(existingStatus, cardView); else fetchSeriesStatus(data.id, function(status) {
-            if (status) addStatusBadge(status.toLowerCase(), cardView);
-        });
+        decorateBadges(cardView, data);
+    }
+    function decorateFullPoster(movie) {
+        if (!isPluginEnabled() || !movie) return;
+        var posterEl = document.querySelector(".full-start-new__poster");
+        if (!posterEl) return;
+        decorateBadges(posterEl, movie);
     }
     function addStatusBadge(status, cardView) {
-        if (cardView.querySelector(".card__status[data-status]")) return;
+        if (cardView.querySelector(".serial-status__status[data-status]")) return;
         var el = document.createElement("div");
-        el.className = "card__status";
+        el.className = "serial-status__status";
         if (status === "ended") {
             el.setAttribute("data-status", "ended");
             el.textContent = "Завершён";
@@ -221,6 +230,10 @@
                 };
             }
         } catch (e) {}
+        Lampa.Listener.follow("full", function(event) {
+            if (event.type !== "complite" || !event.data || !event.data.movie) return;
+            decorateFullPoster(event.data.movie);
+        });
         getProfileId();
     }
     function boot() {
