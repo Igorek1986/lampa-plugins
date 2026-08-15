@@ -1,12 +1,12 @@
 (function() {
     "use strict";
-    var VERSION = "1.9.0";
+    var VERSION = "1.9.1";
     var DEBUG = false;
     function log(message, data) {
         if (DEBUG) console.log("[NPUnwatched] " + message, data !== void 0 ? data : "");
     }
     var style = document.createElement("style");
-    style.textContent = [ ".np-unwatched-progress {", "    position: absolute; left: 0em; bottom: 0em;", "    padding: 0.2em 0.4em; font-size: 1.2em; border-radius: 0.5em;", "    font-weight: bold; z-index: 2; box-shadow: 0 2px 8px rgba(0,0,0,0.15);", "    background: #4CAF50; color: #fff;", "    transition: all 0.3s ease, transform 0.15s ease !important;", "}", ".np-unwatched-remaining {", "    position: absolute; right: 0em; top: 0em;", "    padding: 0.2em 0.4em; font-size: 1.2em; border-radius: 1em 0 0 1em;", "    font-weight: bold; z-index: 2;", "    background: rgba(0,0,0,0.5); color: #fff; transition: all 0.3s ease;", "}", 'body[data-status-badge-style="2"] .card .view--has-status .np-unwatched-remaining,', 'body[data-status-badge-style="2"] .full-start-new__poster .view--has-status .np-unwatched-remaining {', "    top: 1.6em;", "}", ".np-unwatched-next {", "    position: absolute; left: 0em; bottom: 1.5em;", "    padding: 0.2em 0.4em; font-size: 1.2em; border-radius: 0.5em;", "    font-weight: bold; z-index: 2; box-shadow: 0 2px 8px rgba(0,0,0,0.15);", "    letter-spacing: 0.04em; line-height: 1.1;", "    background: #2196F3; color: #fff; transition: all 0.3s ease;", "}", ".np-unwatched-explorer-next {", "    margin: 0 0 1em;", "    font-size: 1.15em; font-weight: 300;", "}", ".full-episode__img, .season-episode__img, .online-prestige__img, .np-unwatched-check-anchor { position: relative; }", ".np-unwatched-episode-checked {", "    position: absolute; right: 0.4em; bottom: 0.4em;", "    width: 1.6em; height: 1.6em; border-radius: 50%;", "    background: #4CAF50; color: #fff; z-index: 3;", "    display: flex; align-items: center; justify-content: center;", "    box-shadow: 0 2px 6px rgba(0,0,0,0.4);", "    animation: npCheckPop 0.25s ease;", "}", '.np-unwatched-episode-checked::after { content: "\\2713"; font-size: 1em; font-weight: bold; line-height: 1; }', "@keyframes npCheckPop { 0% { transform: scale(0); } 70% { transform: scale(1.15); } 100% { transform: scale(1); } }", "@keyframes npUnwatchedFlip {", "    0%   { transform: scale(1); box-shadow: 0 2px 8px rgba(0,0,0,0.15); }", "    50%  { transform: scale(1); box-shadow: 0 5px 15px rgba(0,0,0,0.3); }", "    100% { transform: scale(1); box-shadow: 0 2px 8px rgba(0,0,0,0.15); }", "}", ".np-unwatched-flip { animation: npUnwatchedFlip 0.4s ease; }", ".full-start-new__poster { position: relative; }", ".full-start-new__poster .np-unwatched-progress,", ".full-start-new__poster .np-unwatched-next {", "    position: absolute; left: 0.5em; z-index: 3;", "}", ".full-start-new__poster .np-unwatched-progress,", ".full-start-new__poster .np-unwatched-remaining,", ".full-start-new__poster .np-unwatched-next {", "    transition: all 0.3s ease !important;", "}", ".full-start-new__poster .np-unwatched-progress { bottom: 0.5em; }", ".full-start-new__poster .np-unwatched-next     { bottom: 2em; }", ".full-start-new__poster .np-unwatched-remaining { top: 1em; }", "body.true--mobile.orientation--portrait .full-start-new__poster .np-unwatched-progress  { bottom: 15em; }", "body.true--mobile.orientation--portrait .full-start-new__poster .np-unwatched-next       { bottom: 17em; }", "body.true--mobile.orientation--landscape .full-start-new__poster .np-unwatched-progress  { bottom: 2.5em; }", "body.true--mobile.orientation--landscape .full-start-new__poster .np-unwatched-next       { bottom: 4em; }", "@media screen and (min-width: 580px) and (max-width: 1024px) {", "    body.true--mobile .full-start-new__poster .np-unwatched-progress  { bottom: 2.5em; font-size: 1.1em; }", "    body.true--mobile .full-start-new__poster .np-unwatched-next      { bottom: 4em;   font-size: 1.1em; }", "}", "body.glass--style.platform--browser .card .np-unwatched-progress,", "body.glass--style.platform--nw .card .np-unwatched-progress,", "body.glass--style.platform--apple .card .np-unwatched-progress {", "    background-color: rgba(76,175,80,0.8);", "    -webkit-backdrop-filter: blur(1em); backdrop-filter: blur(1em);", "}", "body.glass--style.platform--browser .card .np-unwatched-next,", "body.glass--style.platform--nw .card .np-unwatched-next,", "body.glass--style.platform--apple .card .np-unwatched-next {", "    background-color: rgba(33,150,243,0.8);", "    -webkit-backdrop-filter: blur(1em); backdrop-filter: blur(1em);", "}", 'body[data-np-unwatched-badge-style="2"] .card .np-unwatched-next,', 'body[data-np-unwatched-badge-style="2"] .full-start-new__poster .np-unwatched-next {', "    left: 0; bottom: 0; border-radius: 0 0.83em;", "    background: rgba(0,0,0,0.5); box-shadow: none;", "}", 'body[data-np-unwatched-badge-style="2"] .card .np-unwatched-progress,', 'body[data-np-unwatched-badge-style="2"] .full-start-new__poster .np-unwatched-progress {', "    left: auto; right: 0; bottom: 0; border-radius: 0.83em 0;", "    background: rgba(0,0,0,0.5); box-shadow: none;", "}", 'body[data-np-unwatched-badge-style="2"].glass--style .card .np-unwatched-progress,', 'body[data-np-unwatched-badge-style="2"].glass--style .card .np-unwatched-next {', "    background-color: rgba(0,0,0,0.5);", "    -webkit-backdrop-filter: none; backdrop-filter: none;", "}", 'body[data-np-unwatched-badge-style="2"][data-status-badge-style="2"] .card .view--has-status .np-unwatched-remaining,', 'body[data-np-unwatched-badge-style="2"][data-status-badge-style="2"] .full-start-new__poster .view--has-status .np-unwatched-remaining {', "    top: 1.25em;", "}" ].join("\n");
+    style.textContent = [ ".np-unwatched-progress {", "    position: absolute; left: 0em; bottom: 0em;", "    padding: 0.2em 0.4em; font-size: 1.2em; border-radius: 0.5em;", "    font-weight: bold; z-index: 2; box-shadow: 0 2px 8px rgba(0,0,0,0.15);", "    background: #4CAF50; color: #fff;", "    transition: all 0.3s ease, transform 0.15s ease !important;", "}", ".np-unwatched-remaining {", "    position: absolute; right: 0em; top: 0em;", "    padding: 0.2em 0.4em; font-size: 1.2em; border-radius: 1em 0 0 1em;", "    font-weight: bold; z-index: 2;", "    background: rgba(0,0,0,0.5); color: #fff; transition: all 0.3s ease;", "}", 'body[data-status-badge-style="2"] .card .view--has-status .np-unwatched-remaining,', 'body[data-status-badge-style="2"] .full-start-new__poster .view--has-status .np-unwatched-remaining {', "    top: 1.6em;", "}", ".np-unwatched-next {", "    position: absolute; left: 0em; bottom: 1.5em;", "    padding: 0.2em 0.4em; font-size: 1.2em; border-radius: 0.5em;", "    font-weight: bold; z-index: 2; box-shadow: 0 2px 8px rgba(0,0,0,0.15);", "    letter-spacing: 0.04em; line-height: 1.1;", "    background: #2196F3; color: #fff; transition: all 0.3s ease;", "}", ".np-unwatched-explorer-next {", "    margin: 0 0 1em;", "    font-size: 1.15em; font-weight: 300;", "}", ".full-episode__img, .season-episode__img, .online-prestige__img, .np-unwatched-check-anchor { position: relative; }", ".np-unwatched-episode-checked {", "    position: absolute; right: 0.4em; bottom: 0.4em;", "    width: 1.6em; height: 1.6em; border-radius: 50%;", "    background: #4CAF50; color: #fff; z-index: 3;", "    display: flex; align-items: center; justify-content: center;", "    box-shadow: 0 2px 6px rgba(0,0,0,0.4);", "    animation: npCheckPop 0.25s ease;", "}", '.np-unwatched-episode-checked::after { content: "\\2713"; font-size: 1em; font-weight: bold; line-height: 1; }', "@keyframes npCheckPop { 0% { transform: scale(0); } 70% { transform: scale(1.15); } 100% { transform: scale(1); } }", "@keyframes npUnwatchedFlip {", "    0%   { transform: scale(1); box-shadow: 0 2px 8px rgba(0,0,0,0.15); }", "    50%  { transform: scale(1); box-shadow: 0 5px 15px rgba(0,0,0,0.3); }", "    100% { transform: scale(1); box-shadow: 0 2px 8px rgba(0,0,0,0.15); }", "}", ".np-unwatched-flip { animation: npUnwatchedFlip 0.4s ease; }", ".np-status-btn { transition: color 0.5s ease, border-color 0.5s ease; }", ".full-start-new__poster { position: relative; }", ".full-start-new__poster .np-unwatched-progress,", ".full-start-new__poster .np-unwatched-next {", "    position: absolute; left: 0.5em; z-index: 3;", "}", ".full-start-new__poster .np-unwatched-progress,", ".full-start-new__poster .np-unwatched-remaining,", ".full-start-new__poster .np-unwatched-next {", "    transition: all 0.3s ease !important;", "}", ".full-start-new__poster .np-unwatched-progress { bottom: 0.5em; }", ".full-start-new__poster .np-unwatched-next     { bottom: 2em; }", ".full-start-new__poster .np-unwatched-remaining { top: 1em; }", "body.true--mobile.orientation--portrait .full-start-new__poster .np-unwatched-progress  { bottom: 15em; }", "body.true--mobile.orientation--portrait .full-start-new__poster .np-unwatched-next       { bottom: 17em; }", "body.true--mobile.orientation--landscape .full-start-new__poster .np-unwatched-progress  { bottom: 2.5em; }", "body.true--mobile.orientation--landscape .full-start-new__poster .np-unwatched-next       { bottom: 4em; }", "@media screen and (min-width: 580px) and (max-width: 1024px) {", "    body.true--mobile .full-start-new__poster .np-unwatched-progress  { bottom: 2.5em; font-size: 1.1em; }", "    body.true--mobile .full-start-new__poster .np-unwatched-next      { bottom: 4em;   font-size: 1.1em; }", "}", "body.glass--style.platform--browser .card .np-unwatched-progress,", "body.glass--style.platform--nw .card .np-unwatched-progress,", "body.glass--style.platform--apple .card .np-unwatched-progress {", "    background-color: rgba(76,175,80,0.8);", "    -webkit-backdrop-filter: blur(1em); backdrop-filter: blur(1em);", "}", "body.glass--style.platform--browser .card .np-unwatched-next,", "body.glass--style.platform--nw .card .np-unwatched-next,", "body.glass--style.platform--apple .card .np-unwatched-next {", "    background-color: rgba(33,150,243,0.8);", "    -webkit-backdrop-filter: blur(1em); backdrop-filter: blur(1em);", "}", 'body[data-np-unwatched-badge-style="2"] .card .np-unwatched-next,', 'body[data-np-unwatched-badge-style="2"] .full-start-new__poster .np-unwatched-next {', "    left: 0; bottom: 0; border-radius: 0 0.83em;", "    background: rgba(0,0,0,0.5); box-shadow: none;", "}", 'body[data-np-unwatched-badge-style="2"] .card .np-unwatched-progress,', 'body[data-np-unwatched-badge-style="2"] .full-start-new__poster .np-unwatched-progress {', "    left: auto; right: 0; bottom: 0; border-radius: 0.83em 0;", "    background: rgba(0,0,0,0.5); box-shadow: none;", "}", 'body[data-np-unwatched-badge-style="2"].glass--style .card .np-unwatched-progress,', 'body[data-np-unwatched-badge-style="2"].glass--style .card .np-unwatched-next {', "    background-color: rgba(0,0,0,0.5);", "    -webkit-backdrop-filter: none; backdrop-filter: none;", "}", 'body[data-np-unwatched-badge-style="2"][data-status-badge-style="2"] .card .view--has-status .np-unwatched-remaining,', 'body[data-np-unwatched-badge-style="2"][data-status-badge-style="2"] .full-start-new__poster .view--has-status .np-unwatched-remaining {', "    top: 1.25em;", "}" ].join("\n");
     document.head.appendChild(style);
     function getNpToken() {
         return Lampa.Storage.get("numparser_api_key", "");
@@ -538,7 +538,7 @@
             });
         }
         options.forEach(function(opt) {
-            var btn = $('<div class="full-start__button selector np-status-btn">' + opt.icon + "<span>" + opt.title + "</span></div>");
+            var btn = $('<div class="full-start__button selector np-status-btn" data-np-status="' + opt.status + '">' + opt.icon + "<span>" + opt.title + "</span></div>");
             btn.on("hover:enter", function() {
                 if (!isSameFullCardOpen(movie)) return;
                 applyActive(opt.status);
@@ -547,6 +547,7 @@
                 });
                 pushToMyShows(movie, opt.myshows, isMovie);
                 if (isMovie && opt.status === "watched") markMovieWatchedTimecode(movie, cardId);
+                refreshFullCardPosterAnimated(movie);
             });
             buttons[opt.status] = btn;
             container.append(btn);
@@ -562,6 +563,46 @@
             Lampa.Controller.collectionSet(container);
             if (allButtons.length > 0) Lampa.Controller.collectionFocus(allButtons.eq(0)[0], container);
         }
+    }
+    function refreshStatusButtonsSmooth(movie) {
+        if (!getNpToken() || !isTrue(getProfileSetting(STATUS_BUTTONS_KEY, true))) return;
+        var scopeEl = document;
+        var active = Lampa.Activity.active && Lampa.Activity.active();
+        if (active && active.activity && typeof active.activity.render === "function") {
+            var slide = active.activity.render(true);
+            if (slide && slide[0]) scopeEl = slide[0];
+        }
+        var btnEls = scopeEl.querySelectorAll(".np-status-btn");
+        if (!btnEls.length) return;
+        var isMovie = isMovieFullCard(movie);
+        var cardId = statusCardId(movie, isMovie);
+        if (!cardId) return;
+        var options = isMovie ? MOVIE_STATUS_OPTIONS : TV_STATUS_OPTIONS;
+        fetchSubjectiveStatus(cardId, function(status) {
+            if (!isSameFullCardOpen(movie)) return;
+            var activeStatus = status || "not_watching";
+            for (var i = 0; i < btnEls.length; i++) {
+                var el = btnEls[i];
+                var st = el.getAttribute("data-np-status");
+                var opt = null;
+                for (var j = 0; j < options.length; j++) if (options[j].status === st) {
+                    opt = options[j];
+                    break;
+                }
+                if (!opt) continue;
+                var wasActive = el.classList.contains("np-status-active");
+                if (st === activeStatus) {
+                    el.style.color = opt.color;
+                    el.style.borderColor = opt.color;
+                    el.classList.add("np-status-active");
+                    if (!wasActive) flash(el);
+                } else {
+                    el.style.color = "";
+                    el.style.borderColor = "";
+                    el.classList.remove("np-status-active");
+                }
+            }
+        });
     }
     function addNextEpisodeToExplorer(movie) {
         if (!movie || !movie.id) return;
@@ -617,7 +658,12 @@
             addNextEpisodeToExplorer(event.object.movie);
             scheduleEpisodeBadgeDecorate();
         }
-        if (event.type === "archive" && event.component === "full" && event.object && event.object.card) refreshFullCardPosterAnimated(event.object.card);
+        if (event.type === "archive" && event.component === "full" && event.object && event.object.card) {
+            refreshFullCardPosterAnimated(event.object.card);
+            setTimeout(function() {
+                refreshStatusButtonsSmooth(event.object.card);
+            }, 1500);
+        }
         if (event.type === "archive" && (event.component === "main" || event.component === "category")) refreshVisibleRowCards();
     });
     var episodeWatchedCache = {};

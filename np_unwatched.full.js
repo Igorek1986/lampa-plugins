@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    var VERSION = '1.9.0';
+    var VERSION = '1.9.1';
 
     var DEBUG = false;
     function log(message, data) {
@@ -69,6 +69,7 @@
         '    100% { transform: scale(1); box-shadow: 0 2px 8px rgba(0,0,0,0.15); }',
         '}',
         '.np-unwatched-flip { animation: npUnwatchedFlip 0.4s ease; }',
+        '.np-status-btn { transition: color 0.5s ease, border-color 0.5s ease; }',
         '.full-start-new__poster { position: relative; }',
         '.full-start-new__poster .np-unwatched-progress,',
         '.full-start-new__poster .np-unwatched-next {',
@@ -725,7 +726,7 @@
         }
 
         options.forEach(function (opt) {
-            var btn = $('<div class="full-start__button selector np-status-btn">' + opt.icon + '<span>' + opt.title + '</span></div>');
+            var btn = $('<div class="full-start__button selector np-status-btn" data-np-status="' + opt.status + '">' + opt.icon + '<span>' + opt.title + '</span></div>');
             btn.on('hover:enter', function () {
                 if (!isSameFullCardOpen(movie)) return;
                 applyActive(opt.status);
@@ -737,6 +738,11 @@
                 // timecode не появляется сам — иначе фильм не считается просмотренным нигде,
                 // кроме нашего личного статуса (история, "Продолжить просмотр" и т.п. это не видят).
                 if (isMovie && opt.status === 'watched') markMovieWatchedTimecode(movie, cardId);
+                // Бейджи прогресса на постере (осталось серий/следующая серия) не связаны
+                // со статусом напрямую, но кнопка — тоже "точка возврата" вроде архива после
+                // плеера: если прогресс уже есть на сервере (с другого устройства и т.п.),
+                // а карточка открыта давно, только сама смена статуса это не подхватывала.
+                refreshFullCardPosterAnimated(movie);
             });
             buttons[opt.status] = btn;
             container.append(btn);
@@ -754,6 +760,53 @@
             Lampa.Controller.collectionSet(container);
             if (allButtons.length > 0) Lampa.Controller.collectionFocus(allButtons.eq(0)[0], container);
         }
+    }
+
+    // Возврат на уже открытую полную карточку после просмотра (плеер/эпизод) — кнопки
+    // уже отрисованы (renderStatusButtons не перевызывается, 'complite' не шлётся
+    // повторно), просто сверяем активную кнопку с сервером и подсвечиваем плавно.
+    // Скоуп поиска — как в myshows.js updateButtonStates: Lampa не всегда убирает из
+    // DOM предыдущую full-карточку при переходе вперёд, глобальный querySelectorAll
+    // мог бы задеть кнопки чужой (неактивной) карточки в стеке.
+    function refreshStatusButtonsSmooth(movie) {
+        if (!getNpToken() || !isTrue(getProfileSetting(STATUS_BUTTONS_KEY, true))) return;
+
+        var scopeEl = document;
+        var active = Lampa.Activity.active && Lampa.Activity.active();
+        if (active && active.activity && typeof active.activity.render === 'function') {
+            var slide = active.activity.render(true);
+            if (slide && slide[0]) scopeEl = slide[0];
+        }
+        var btnEls = scopeEl.querySelectorAll('.np-status-btn');
+        if (!btnEls.length) return;
+
+        var isMovie = isMovieFullCard(movie);
+        var cardId = statusCardId(movie, isMovie);
+        if (!cardId) return;
+        var options = isMovie ? MOVIE_STATUS_OPTIONS : TV_STATUS_OPTIONS;
+
+        fetchSubjectiveStatus(cardId, function (status) {
+            if (!isSameFullCardOpen(movie)) return;
+            var activeStatus = status || 'not_watching';
+            for (var i = 0; i < btnEls.length; i++) {
+                var el = btnEls[i];
+                var st = el.getAttribute('data-np-status');
+                var opt = null;
+                for (var j = 0; j < options.length; j++) { if (options[j].status === st) { opt = options[j]; break; } }
+                if (!opt) continue;
+                var wasActive = el.classList.contains('np-status-active');
+                if (st === activeStatus) {
+                    el.style.color = opt.color;
+                    el.style.borderColor = opt.color;
+                    el.classList.add('np-status-active');
+                    if (!wasActive) flash(el);
+                } else {
+                    el.style.color = '';
+                    el.style.borderColor = '';
+                    el.classList.remove('np-status-active');
+                }
+            }
+        });
     }
 
     // =========================================================================
@@ -840,6 +893,7 @@
         // бейджи с сервером, без лишних перерисовок на каждый заход вперёд.
         if (event.type === 'archive' && event.component === 'full' && event.object && event.object.card) {
             refreshFullCardPosterAnimated(event.object.card);
+            setTimeout(function () { refreshStatusButtonsSmooth(event.object.card); }, 1500);
         }
         if (event.type === 'archive' && (event.component === 'main' || event.component === 'category')) {
             refreshVisibleRowCards();
