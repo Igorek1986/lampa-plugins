@@ -1,6 +1,6 @@
 (function() {
     "use strict";
-    var VERSION = "1.0.5";
+    var VERSION = "1.0.6";
     var DEFAULT_ADD_THRESHOLD = "0";
     var DEFAULT_MIN_PROGRESS = 90;
     var API_URL = "https://myshows.me/v3/rpc/";
@@ -2390,6 +2390,10 @@
         openPage: openMyShowsPage,
         isLoggedIn: function() {
             return !!getProfileSetting("myshows_token", "");
+        },
+        setStatus: function(cardData, status, isMovie, callback) {
+            var fn = isMovie ? setMyShowsMovieStatus : setMyShowsStatus;
+            fn(cardData, status, callback || function() {});
         }
     };
     var _sursBtn = {

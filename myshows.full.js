@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    var VERSION = '1.0.5';
+    var VERSION = '1.0.6';
 
     var DEFAULT_ADD_THRESHOLD = '0';
     var DEFAULT_MIN_PROGRESS = 90;
@@ -3489,6 +3489,14 @@
         getUnwatchedShowsWithDetails: getUnwatchedShowsWithDetails,
         openPage: openMyShowsPage,
         isLoggedIn: function () { return !!getProfileSetting('myshows_token', ''); },
+        // Для сторонних плагинов (np_unwatched.js — свои кнопки статуса), чтобы не
+        // дублировать резолвинг MyShows id (IMDB/Kinopoisk/поиск по названию+году).
+        // status — словарь MyShows: сериалы 'watching'/'later'/'cancelled'/'remove',
+        // фильмы 'finished'/'later'/'remove'.
+        setStatus: function (cardData, status, isMovie, callback) {
+            var fn = isMovie ? setMyShowsMovieStatus : setMyShowsStatus;
+            fn(cardData, status, callback || function () {});
+        },
     };
 
     // ── SURS integration ──────────────────────────────────────────────────────

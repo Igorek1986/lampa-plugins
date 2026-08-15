@@ -1,6 +1,6 @@
 (function() {
     "use strict";
-    var VERSION = "1.8.0";
+    var VERSION = "1.9.0";
     var DEBUG = false;
     function log(message, data) {
         if (DEBUG) console.log("[NPUnwatched] " + message, data !== void 0 ? data : "");
@@ -43,9 +43,10 @@
     var BADGE_STYLE_KEY = "np_unwatched_badge_style";
     var SORT_KEY = "np_unwatched_sort_order";
     var DEFAULT_SORT = "progress";
+    var STATUS_BUTTONS_KEY = "np_unwatched_status_buttons";
     var DEFAULT_MIN_PROGRESS = 90;
     var SYNC_PLUGIN = "np_unwatched";
-    var SYNC_KEYS = [ PROGRESS_KEY, REMAINING_KEY, NEXT_KEY, BADGE_STYLE_KEY, SORT_KEY ];
+    var SYNC_KEYS = [ PROGRESS_KEY, REMAINING_KEY, NEXT_KEY, BADGE_STYLE_KEY, SORT_KEY, STATUS_BUTTONS_KEY ];
     function storableValue(v) {
         if (v === true) return "true";
         if (v === false) return "false";
@@ -82,11 +83,13 @@
         if (!hasProfileSetting(NEXT_KEY)) setProfileSetting(NEXT_KEY, true, false);
         if (!hasProfileSetting(BADGE_STYLE_KEY)) setProfileSetting(BADGE_STYLE_KEY, "1", false);
         if (!hasProfileSetting(SORT_KEY)) setProfileSetting(SORT_KEY, DEFAULT_SORT, false);
+        if (!hasProfileSetting(STATUS_BUTTONS_KEY)) setProfileSetting(STATUS_BUTTONS_KEY, true, false);
         Lampa.Storage.set(PROGRESS_KEY, storableValue(getProfileSetting(PROGRESS_KEY, true)), true);
         Lampa.Storage.set(REMAINING_KEY, storableValue(getProfileSetting(REMAINING_KEY, true)), true);
         Lampa.Storage.set(NEXT_KEY, storableValue(getProfileSetting(NEXT_KEY, true)), true);
         Lampa.Storage.set(BADGE_STYLE_KEY, getProfileSetting(BADGE_STYLE_KEY, "1"), true);
         Lampa.Storage.set(SORT_KEY, getProfileSetting(SORT_KEY, DEFAULT_SORT), true);
+        Lampa.Storage.set(STATUS_BUTTONS_KEY, storableValue(getProfileSetting(STATUS_BUTTONS_KEY, true)), true);
         applyBadgeStyleAttr();
     }
     function applyBadgeStyleAttr() {
@@ -115,6 +118,21 @@
                         Lampa.Settings.create(SETTINGS_COMPONENT);
                     }
                 });
+            }
+        });
+        Lampa.SettingsApi.addParam({
+            component: SETTINGS_COMPONENT,
+            param: {
+                name: STATUS_BUTTONS_KEY,
+                type: "trigger",
+                default: true
+            },
+            field: {
+                name: "Кнопки статуса на карточке",
+                description: "Смотрю/Буду смотреть/Брошено/Не смотрю на полной карточке (пишут в личный статус, опционально дублируют в MyShows)"
+            },
+            onChange: function(value) {
+                setProfileSetting(STATUS_BUTTONS_KEY, value === true || value === "true");
             }
         });
         Lampa.SettingsApi.addParam({
@@ -350,6 +368,7 @@
     Lampa.Listener.follow("full", function(event) {
         if (event.type !== "complite" || !event.data || !event.data.movie) return;
         refreshFullCardPoster(event.data.movie);
+        renderStatusButtons(event);
     });
     function refreshFullCardPosterAnimated(movie) {
         if (!isPluginEnabled() || !isTvShow(movie)) return;
@@ -364,6 +383,185 @@
             });
         }, 1500);
         scheduleEpisodeBadgeDecorate();
+    }
+    var ICON_EYE = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="2"/></svg>';
+    var ICON_CHECK = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2"/><path d="M8 12l3 3 5-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+    var ICON_MINUS = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2"/><path d="M8 12h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
+    var ICON_CROSS = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2"/><path d="M9 9l6 6M15 9l-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
+    var TV_STATUS_OPTIONS = [ {
+        status: "watching",
+        title: "Смотрю",
+        color: "#4CAF50",
+        icon: ICON_EYE,
+        myshows: "watching"
+    }, {
+        status: "planned",
+        title: "Буду смотреть",
+        color: "#2196F3",
+        icon: ICON_CHECK,
+        myshows: "later"
+    }, {
+        status: "stopped",
+        title: "Перестал смотреть",
+        color: "#FF9800",
+        icon: ICON_MINUS,
+        myshows: "cancelled"
+    }, {
+        status: "not_watching",
+        title: "Не смотрю",
+        color: "#F44336",
+        icon: ICON_CROSS,
+        myshows: "remove"
+    } ];
+    var MOVIE_STATUS_OPTIONS = [ {
+        status: "watched",
+        title: "Просмотрел",
+        color: "#4CAF50",
+        icon: ICON_EYE,
+        myshows: "finished"
+    }, {
+        status: "planned",
+        title: "Буду смотреть",
+        color: "#2196F3",
+        icon: ICON_CHECK,
+        myshows: "later"
+    }, {
+        status: "not_watching",
+        title: "Не смотрю",
+        color: "#F44336",
+        icon: ICON_CROSS,
+        myshows: "remove"
+    } ];
+    function isMovieFullCard(movie) {
+        var active = Lampa.Activity.active && Lampa.Activity.active();
+        if (active && active.method === "movie") return true;
+        if (active && active.method === "tv") return false;
+        if (!movie) return false;
+        return !(movie.number_of_seasons || movie.seasons || movie.first_air_date || movie.original_name || movie.name);
+    }
+    function statusCardId(movie, isMovie) {
+        if (!movie || !movie.id) return "";
+        return movie.id + (isMovie ? "_movie" : "_tv");
+    }
+    function statusUrl(cardId) {
+        var url = getNpBaseUrl() + "/timecode/status?token=" + encodeURIComponent(getNpToken()) + "&card_id=" + encodeURIComponent(cardId);
+        var profileId = getProfileId();
+        if (profileId) url += "&profile_id=" + encodeURIComponent(profileId);
+        return url;
+    }
+    function fetchSubjectiveStatus(cardId, callback) {
+        if (!getNpToken() || !cardId) {
+            callback("");
+            return;
+        }
+        fetch(statusUrl(cardId)).then(function(r) {
+            return r.json();
+        }).then(function(data) {
+            callback(data && data.status || "");
+        }).catch(function() {
+            callback("");
+        });
+    }
+    function setSubjectiveStatus(cardId, status, callback) {
+        if (!getNpToken() || !cardId) {
+            callback(false);
+            return;
+        }
+        fetch(statusUrl(cardId), {
+            method: "PUT",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                status: status
+            })
+        }).then(function(r) {
+            callback(r.ok);
+        }).catch(function() {
+            callback(false);
+        });
+    }
+    function myShowsAvailable() {
+        return !!(window.MyShows && window.MyShows.isLoggedIn && window.MyShows.isLoggedIn() && window.MyShows.setStatus);
+    }
+    function pushToMyShows(movie, myshowsStatus, isMovie) {
+        if (!myShowsAvailable()) return;
+        window.MyShows.setStatus(movie, myshowsStatus, isMovie, function() {});
+    }
+    function markMovieWatchedTimecode(movie, cardId) {
+        var token = getNpToken();
+        if (!token || !movie) return;
+        var duration = movie.runtime ? movie.runtime * 60 : 7200;
+        var percent = 90;
+        var hash = Lampa.Utils.hash([ movie.original_title || movie.title || "" ].join(""));
+        var url = getNpBaseUrl() + "/timecode?token=" + encodeURIComponent(token);
+        var profileId = getProfileId();
+        if (profileId) url += "&profile_id=" + encodeURIComponent(profileId);
+        fetch(url, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                card_id: cardId,
+                item: hash.toString(),
+                data: JSON.stringify({
+                    time: duration * percent / 100,
+                    duration: duration,
+                    percent: percent
+                })
+            })
+        }).catch(function() {});
+    }
+    function renderStatusButtons(event) {
+        if (!getNpToken()) return;
+        if (!isTrue(getProfileSetting(STATUS_BUTTONS_KEY, true))) return;
+        if (!event.object || !event.object.activity) return;
+        var container = event.object.activity.render().find(".full-start-new__buttons");
+        if (!container.length || container.data("np-status-initialized")) return;
+        container.data("np-status-initialized", true);
+        var movie = event.data.movie;
+        var isMovie = isMovieFullCard(movie);
+        var cardId = statusCardId(movie, isMovie);
+        if (!cardId) return;
+        var options = isMovie ? MOVIE_STATUS_OPTIONS : TV_STATUS_OPTIONS;
+        var buttons = {};
+        function applyActive(activeStatus) {
+            options.forEach(function(opt) {
+                if (opt.status === activeStatus) buttons[opt.status].css({
+                    color: opt.color,
+                    borderColor: opt.color
+                }).addClass("np-status-active"); else buttons[opt.status].css({
+                    color: "",
+                    borderColor: ""
+                }).removeClass("np-status-active");
+            });
+        }
+        options.forEach(function(opt) {
+            var btn = $('<div class="full-start__button selector np-status-btn">' + opt.icon + "<span>" + opt.title + "</span></div>");
+            btn.on("hover:enter", function() {
+                if (!isSameFullCardOpen(movie)) return;
+                applyActive(opt.status);
+                setSubjectiveStatus(cardId, opt.status, function(ok) {
+                    if (!ok) Lampa.Noty.show("Ошибка установки статуса");
+                });
+                pushToMyShows(movie, opt.myshows, isMovie);
+                if (isMovie && opt.status === "watched") markMovieWatchedTimecode(movie, cardId);
+            });
+            buttons[opt.status] = btn;
+            container.append(btn);
+        });
+        fetchSubjectiveStatus(cardId, function(status) {
+            if (!isSameFullCardOpen(movie)) return;
+            applyActive(status || "not_watching");
+        });
+        if (window.Lampa && window.Lampa.Controller) {
+            var allButtons = container.find("> *").filter(function() {
+                return $(this).is(":visible");
+            });
+            Lampa.Controller.collectionSet(container);
+            if (allButtons.length > 0) Lampa.Controller.collectionFocus(allButtons.eq(0)[0], container);
+        }
     }
     function addNextEpisodeToExplorer(movie) {
         if (!movie || !movie.id) return;
