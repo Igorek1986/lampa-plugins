@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    var VERSION = '1.9.7';
+    var VERSION = '1.9.8';
 
     var DEBUG = false;
     function log(message, data) {
@@ -271,46 +271,18 @@
 
     var BADGES_BUTTON_NAME = 'Непросмотренные — значки на карточках';
 
-    function initSettings() {
-        if (!Lampa.SettingsApi) return;
+    // BADGES_COMPONENT (в отличие от SETTINGS_COMPONENT) никогда не чистится чужим
+    // removeComponent — addParam же просто пушит в массив без дедупа, поэтому
+    // регистрируем его пункты РОВНО ОДИН РАЗ за всё время жизни страницы, а не
+    // при каждом вызове initSettings() (который может честно перезапускаться —
+    // см. registerSettingsSafely()/settingsStillRegistered() ниже). Без этой
+    // защиты повторный initSettings() дублирует все пункты «Значки на карточках».
+    var _badgesComponentRegistered = false;
+    function registerBadgesComponent() {
+        if (_badgesComponentRegistered) return;
+        _badgesComponentRegistered = true;
 
         Lampa.Template.add('settings_' + BADGES_COMPONENT, '<div></div>');
-
-        // Кнопка внутри NUMParser, открывающая подраздел со значками — сгруппированы
-        // отдельно, как «Значки на карточках» у myshows, а не плоским списком.
-        Lampa.SettingsApi.addParam({
-            component: SETTINGS_COMPONENT,
-            param: { type: 'button' },
-            field: {
-                name: BADGES_BUTTON_NAME,
-                description: 'Прогресс, остаток серий, следующий эпизод. Если пользуетесь myshows — отключите его значки (myshows → Значки на карточках → «Отключить все значки»), иначе будут задвоены.',
-            },
-            onChange: function () {
-                Lampa.Settings.create(BADGES_COMPONENT, {
-                    onBack: function () { Lampa.Settings.create(SETTINGS_COMPONENT); }
-                });
-            },
-        });
-
-        Lampa.SettingsApi.addParam({
-            component: SETTINGS_COMPONENT,
-            param: { name: STATUS_BUTTONS_KEY, type: 'trigger', default: true },
-            field: {
-                name: 'Кнопки статуса на карточке',
-                description: 'Смотрю/Буду смотреть/Брошено/Не смотрю на полной карточке (пишут в личный статус, опционально дублируют в MyShows)',
-            },
-            onChange: function (value) { setProfileSetting(STATUS_BUTTONS_KEY, value === true || value === 'true'); },
-        });
-
-        Lampa.SettingsApi.addParam({
-            component: SETTINGS_COMPONENT,
-            param: { name: VIEW_IN_MAIN_KEY, type: 'trigger', default: true },
-            field: {
-                name: 'Непросмотренные на Главной',
-                description: 'Строка «Непросмотренные» на главном экране (источники TMDB/CUB)',
-            },
-            onChange: function (value) { setProfileSetting(VIEW_IN_MAIN_KEY, value === true || value === 'true'); },
-        });
 
         Lampa.SettingsApi.addParam({
             component: BADGES_COMPONENT,
@@ -370,6 +342,48 @@
                 description: 'Порядок показа сериалов в категории',
             },
             onChange: function (value) { setProfileSetting(SORT_KEY, value.toString()); },
+        });
+    }
+
+    function initSettings() {
+        if (!Lampa.SettingsApi) return;
+
+        registerBadgesComponent();
+
+        // Кнопка внутри NUMParser, открывающая подраздел со значками — сгруппированы
+        // отдельно, как «Значки на карточках» у myshows, а не плоским списком.
+        Lampa.SettingsApi.addParam({
+            component: SETTINGS_COMPONENT,
+            param: { type: 'button' },
+            field: {
+                name: BADGES_BUTTON_NAME,
+                description: 'Прогресс, остаток серий, следующий эпизод. Если пользуетесь myshows — отключите его значки (myshows → Значки на карточках → «Отключить все значки»), иначе будут задвоены.',
+            },
+            onChange: function () {
+                Lampa.Settings.create(BADGES_COMPONENT, {
+                    onBack: function () { Lampa.Settings.create(SETTINGS_COMPONENT); }
+                });
+            },
+        });
+
+        Lampa.SettingsApi.addParam({
+            component: SETTINGS_COMPONENT,
+            param: { name: STATUS_BUTTONS_KEY, type: 'trigger', default: true },
+            field: {
+                name: 'Кнопки статуса на карточке',
+                description: 'Смотрю/Буду смотреть/Брошено/Не смотрю на полной карточке (пишут в личный статус, опционально дублируют в MyShows)',
+            },
+            onChange: function (value) { setProfileSetting(STATUS_BUTTONS_KEY, value === true || value === 'true'); },
+        });
+
+        Lampa.SettingsApi.addParam({
+            component: SETTINGS_COMPONENT,
+            param: { name: VIEW_IN_MAIN_KEY, type: 'trigger', default: true },
+            field: {
+                name: 'Непросмотренные на Главной',
+                description: 'Строка «Непросмотренные» на главном экране (источники TMDB/CUB)',
+            },
+            onChange: function (value) { setProfileSetting(VIEW_IN_MAIN_KEY, value === true || value === 'true'); },
         });
     }
 
