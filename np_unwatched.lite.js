@@ -1,6 +1,6 @@
 (function() {
     "use strict";
-    var VERSION = "1.9.3";
+    var VERSION = "1.9.4";
     var DEBUG = false;
     function log(message, data) {
         if (DEBUG) console.log("[NPUnwatched] " + message, data !== void 0 ? data : "");
@@ -859,7 +859,7 @@
             _ws.onmessage = function(event) {
                 try {
                     var msg = JSON.parse(event.data);
-                    if (msg.type === "timecode") onWsTimecode(msg);
+                    if (msg.type === "timecode") onWsTimecode(msg); else if (msg.type === "unwatched_stale") onUnwatchedStale();
                 } catch (e) {}
             };
             _ws.onclose = function() {
@@ -886,6 +886,34 @@
             hash: msg.item,
             percent: data.percent || 0
         });
+    }
+    function onUnwatchedStale() {
+        if (!isPluginEnabled()) return;
+        var ids = {};
+        var cards = document.querySelectorAll(".card");
+        for (var i = 0; i < cards.length; i++) {
+            var data = cards[i].card_data || cards[i].data;
+            if (data && isTvShow(data)) {
+                var id = cardIdOf(data);
+                if (id) ids[id] = true;
+            }
+        }
+        var active = Lampa.Activity.active && Lampa.Activity.active();
+        if (active) {
+            var openCard = active.card_data || active.card || active.movie;
+            if (openCard && isTvShow(openCard)) {
+                var openId = cardIdOf(openCard);
+                if (openId) ids[openId] = true;
+            }
+        }
+        for (var cardId in ids) {
+            if (!ids.hasOwnProperty(cardId)) continue;
+            (function(id) {
+                fetchProgress(id, function(progress) {
+                    if (progress) updateBadgesEverywhere(id, progress);
+                });
+            })(cardId);
+        }
     }
     function updateBadgesEverywhere(cardId, progress) {
         if (cardId) knownProgress[cardId] = progress;
