@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    var VERSION = '1.9.9';
+    var VERSION = '1.10.0';
 
     var DEBUG = false;
     function log(message, data) {
@@ -187,8 +187,16 @@
     // Порог "серия просмотрена" — не свой, используем настройку np.js
     // numparser_min_progress (тот же смысл, что и для hide_watched).
     var DEFAULT_MIN_PROGRESS = 90;
+    // Порог добавления сериала в наш локальный статус "Смотрю" — по образцу
+    // myshows_add_threshold у myshows.js, но пишет в наш subjective_statuses
+    // (EnsureImpliedStatus на сервере, см. db/store/status.go), не на MyShows.
+    // Профильная настройка, читается сервером через plugin_settings (см. её же
+    // синхронизацию ниже) — если профиль её не задал, сервер берёт свой
+    // дефолт (admin-настройка watching_threshold).
+    var WATCHING_THRESHOLD_KEY = 'np_unwatched_watching_threshold';
+    var DEFAULT_WATCHING_THRESHOLD = '0';
     var SYNC_PLUGIN = 'np_unwatched';
-    var SYNC_KEYS   = [PROGRESS_KEY, REMAINING_KEY, NEXT_KEY, BADGE_STYLE_KEY, SORT_KEY, STATUS_BUTTONS_KEY, VIEW_IN_MAIN_KEY, TIMETABLE_CALENDAR_KEY];
+    var SYNC_KEYS   = [PROGRESS_KEY, REMAINING_KEY, NEXT_KEY, BADGE_STYLE_KEY, SORT_KEY, STATUS_BUTTONS_KEY, VIEW_IN_MAIN_KEY, TIMETABLE_CALENDAR_KEY, WATCHING_THRESHOLD_KEY];
 
     // Булевы в Storage пишем строками 'true'/'false' — Storage.get затирает
     // закешированный boolean false дефолтом (value || empty), строка выживает.
@@ -241,6 +249,7 @@
         if (!hasProfileSetting(STATUS_BUTTONS_KEY)) setProfileSetting(STATUS_BUTTONS_KEY, true, false);
         if (!hasProfileSetting(VIEW_IN_MAIN_KEY)) setProfileSetting(VIEW_IN_MAIN_KEY, true, false);
         if (!hasProfileSetting(TIMETABLE_CALENDAR_KEY)) setProfileSetting(TIMETABLE_CALENDAR_KEY, true, false);
+        if (!hasProfileSetting(WATCHING_THRESHOLD_KEY)) setProfileSetting(WATCHING_THRESHOLD_KEY, DEFAULT_WATCHING_THRESHOLD, false);
 
         Lampa.Storage.set(PROGRESS_KEY, storableValue(getProfileSetting(PROGRESS_KEY, true)), true);
         Lampa.Storage.set(REMAINING_KEY, storableValue(getProfileSetting(REMAINING_KEY, true)), true);
@@ -250,6 +259,7 @@
         Lampa.Storage.set(STATUS_BUTTONS_KEY, storableValue(getProfileSetting(STATUS_BUTTONS_KEY, true)), true);
         Lampa.Storage.set(VIEW_IN_MAIN_KEY, storableValue(getProfileSetting(VIEW_IN_MAIN_KEY, true)), true);
         Lampa.Storage.set(TIMETABLE_CALENDAR_KEY, storableValue(getProfileSetting(TIMETABLE_CALENDAR_KEY, true)), true);
+        Lampa.Storage.set(WATCHING_THRESHOLD_KEY, getProfileSetting(WATCHING_THRESHOLD_KEY, DEFAULT_WATCHING_THRESHOLD).toString(), true);
 
         applyBadgeStyleAttr();
     }
@@ -397,6 +407,32 @@
                 description: 'Дописывать сериалы со статусом «Смотрю» в нативное Расписание Lampa (даты берутся из нашего календаря)',
             },
             onChange: function (value) { setProfileSetting(TIMETABLE_CALENDAR_KEY, value === true || value === 'true'); },
+        });
+
+        Lampa.SettingsApi.addParam({
+            component: SETTINGS_COMPONENT,
+            param: {
+                name: WATCHING_THRESHOLD_KEY, type: 'select',
+                values: {
+                    '0': 'Сразу при запуске',
+                    '5': 'После 5% просмотра',
+                    '10': 'После 10% просмотра',
+                    '15': 'После 15% просмотра',
+                    '20': 'После 20% просмотра',
+                    '25': 'После 25% просмотра',
+                    '30': 'После 30% просмотра',
+                    '35': 'После 35% просмотра',
+                    '40': 'После 40% просмотра',
+                    '45': 'После 45% просмотра',
+                    '50': 'После 50% просмотра',
+                },
+                default: DEFAULT_WATCHING_THRESHOLD,
+            },
+            field: {
+                name: 'Порог добавления в «Смотрю»',
+                description: 'Когда сериал получает наш локальный статус «Смотрю» (не MyShows — свой отдельный порог у него в настройках MyShows)',
+            },
+            onChange: function (value) { setProfileSetting(WATCHING_THRESHOLD_KEY, value.toString()); },
         });
     }
 

@@ -1,6 +1,6 @@
 (function() {
     "use strict";
-    var VERSION = "1.9.9";
+    var VERSION = "1.10.0";
     var DEBUG = false;
     function log(message, data) {
         if (DEBUG) console.log("[NPUnwatched] " + message, data !== void 0 ? data : "");
@@ -47,8 +47,10 @@
     var VIEW_IN_MAIN_KEY = "np_unwatched_view_in_main";
     var TIMETABLE_CALENDAR_KEY = "np_unwatched_calendar";
     var DEFAULT_MIN_PROGRESS = 90;
+    var WATCHING_THRESHOLD_KEY = "np_unwatched_watching_threshold";
+    var DEFAULT_WATCHING_THRESHOLD = "0";
     var SYNC_PLUGIN = "np_unwatched";
-    var SYNC_KEYS = [ PROGRESS_KEY, REMAINING_KEY, NEXT_KEY, BADGE_STYLE_KEY, SORT_KEY, STATUS_BUTTONS_KEY, VIEW_IN_MAIN_KEY, TIMETABLE_CALENDAR_KEY ];
+    var SYNC_KEYS = [ PROGRESS_KEY, REMAINING_KEY, NEXT_KEY, BADGE_STYLE_KEY, SORT_KEY, STATUS_BUTTONS_KEY, VIEW_IN_MAIN_KEY, TIMETABLE_CALENDAR_KEY, WATCHING_THRESHOLD_KEY ];
     function storableValue(v) {
         if (v === true) return "true";
         if (v === false) return "false";
@@ -88,6 +90,7 @@
         if (!hasProfileSetting(STATUS_BUTTONS_KEY)) setProfileSetting(STATUS_BUTTONS_KEY, true, false);
         if (!hasProfileSetting(VIEW_IN_MAIN_KEY)) setProfileSetting(VIEW_IN_MAIN_KEY, true, false);
         if (!hasProfileSetting(TIMETABLE_CALENDAR_KEY)) setProfileSetting(TIMETABLE_CALENDAR_KEY, true, false);
+        if (!hasProfileSetting(WATCHING_THRESHOLD_KEY)) setProfileSetting(WATCHING_THRESHOLD_KEY, DEFAULT_WATCHING_THRESHOLD, false);
         Lampa.Storage.set(PROGRESS_KEY, storableValue(getProfileSetting(PROGRESS_KEY, true)), true);
         Lampa.Storage.set(REMAINING_KEY, storableValue(getProfileSetting(REMAINING_KEY, true)), true);
         Lampa.Storage.set(NEXT_KEY, storableValue(getProfileSetting(NEXT_KEY, true)), true);
@@ -96,6 +99,7 @@
         Lampa.Storage.set(STATUS_BUTTONS_KEY, storableValue(getProfileSetting(STATUS_BUTTONS_KEY, true)), true);
         Lampa.Storage.set(VIEW_IN_MAIN_KEY, storableValue(getProfileSetting(VIEW_IN_MAIN_KEY, true)), true);
         Lampa.Storage.set(TIMETABLE_CALENDAR_KEY, storableValue(getProfileSetting(TIMETABLE_CALENDAR_KEY, true)), true);
+        Lampa.Storage.set(WATCHING_THRESHOLD_KEY, getProfileSetting(WATCHING_THRESHOLD_KEY, DEFAULT_WATCHING_THRESHOLD).toString(), true);
         applyBadgeStyleAttr();
     }
     function applyBadgeStyleAttr() {
@@ -264,6 +268,34 @@
             },
             onChange: function(value) {
                 setProfileSetting(TIMETABLE_CALENDAR_KEY, value === true || value === "true");
+            }
+        });
+        Lampa.SettingsApi.addParam({
+            component: SETTINGS_COMPONENT,
+            param: {
+                name: WATCHING_THRESHOLD_KEY,
+                type: "select",
+                values: {
+                    0: "Сразу при запуске",
+                    5: "После 5% просмотра",
+                    10: "После 10% просмотра",
+                    15: "После 15% просмотра",
+                    20: "После 20% просмотра",
+                    25: "После 25% просмотра",
+                    30: "После 30% просмотра",
+                    35: "После 35% просмотра",
+                    40: "После 40% просмотра",
+                    45: "После 45% просмотра",
+                    50: "После 50% просмотра"
+                },
+                default: DEFAULT_WATCHING_THRESHOLD
+            },
+            field: {
+                name: "Порог добавления в «Смотрю»",
+                description: "Когда сериал получает наш локальный статус «Смотрю» (не MyShows — свой отдельный порог у него в настройках MyShows)"
+            },
+            onChange: function(value) {
+                setProfileSetting(WATCHING_THRESHOLD_KEY, value.toString());
             }
         });
     }
