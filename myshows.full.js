@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    var VERSION = '1.0.6';
+    var VERSION = '1.0.7';
 
     var DEFAULT_ADD_THRESHOLD = '0';
     var DEFAULT_MIN_PROGRESS = 90;
@@ -5217,10 +5217,29 @@
             '    right: 0; top: 0; border-radius: 0 0.83em;',
             '}',
             /* Правый верх занят статусом сериала (status.js, вариант 2, класс
-               view--has-status) — счётчик остатка встаёт под него. Высота
-               статуса ≈1.35em карточки = 1.125em при font-size 1.2em + зазор */
+               view--has-status). На карточках в сетке класс висит на
+               .card__view — родителе метки, поэтому подходит обычный потомок-
+               селектор ".view--has-status .myshows-remaining". На постере
+               полной карточки status.js вешает класс прямо на
+               .full-start-new__poster — тот же элемент, в который myshows.js
+               добавляет .myshows-remaining, а не отдельный родитель, поэтому
+               там нужен составной селектор БЕЗ пробела:
+               ".full-start-new__poster.view--has-status". С пробелом (как было)
+               правило никогда не совпадало, и на постере счётчик оставался
+               поверх статуса. Высота статуса на карточке ≈1.35em (font-size
+               0.9em), на постере статус мельче (font-size 0.7em, см. status.js) —
+               отсюда разные top для карточки и постера. */
+            'body[data-status-badge-style="2"] .card .view--has-status .myshows-remaining {',
+            '    top: 1.6em;',
+            '}',
+            'body[data-status-badge-style="2"] .full-start-new__poster.view--has-status .myshows-remaining {',
+            '    top: 0.95em;',
+            '}',
             'body[data-myshows-badge-style="2"][data-status-badge-style="2"] .card .view--has-status .myshows-remaining {',
             '    top: 1.25em; border-radius: 0.83em 0 0 0.83em;',
+            '}',
+            'body[data-myshows-badge-style="2"][data-status-badge-style="2"] .full-start-new__poster.view--has-status .myshows-remaining {',
+            '    top: 0.95em; border-radius: 0.83em 0 0 0.83em;',
             '}',
             /* Нативное качество Lampa (left:-0.8em торчит за край) — прижимаем
                к левому краю, над меткой следующей серии */

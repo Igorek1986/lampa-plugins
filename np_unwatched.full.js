@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    var VERSION = '1.9.2';
+    var VERSION = '1.9.3';
 
     var DEBUG = false;
     function log(message, data) {
@@ -33,10 +33,15 @@
         '    background: rgba(0,0,0,0.5); color: #fff; transition: all 0.3s ease;',
         '}',
         // status.js (вариант 2) занимает правый верхний угол статусом сериала —
-        // счётчик остатка сдвигаем ниже него.
-        'body[data-status-badge-style="2"] .card .view--has-status .np-unwatched-remaining,',
-        'body[data-status-badge-style="2"] .full-start-new__poster .view--has-status .np-unwatched-remaining {',
+        // счётчик остатка сдвигаем ниже него. На постере status.js вешает
+        // view--has-status прямо на .full-start-new__poster (тот же элемент,
+        // куда np_unwatched.js добавляет .np-unwatched-remaining), поэтому
+        // там нужен составной селектор без пробела — иначе правило не матчится.
+        'body[data-status-badge-style="2"] .card .view--has-status .np-unwatched-remaining {',
         '    top: 1.6em;',
+        '}',
+        'body[data-status-badge-style="2"] .full-start-new__poster.view--has-status .np-unwatched-remaining {',
+        '    top: 0.95em;',
         '}',
         '.np-unwatched-next {',
         '    position: absolute; left: 0em; bottom: 1.5em;',
@@ -120,9 +125,11 @@
         '    background-color: rgba(0,0,0,0.5);',
         '    -webkit-backdrop-filter: none; backdrop-filter: none;',
         '}',
-        'body[data-np-unwatched-badge-style="2"][data-status-badge-style="2"] .card .view--has-status .np-unwatched-remaining,',
-        'body[data-np-unwatched-badge-style="2"][data-status-badge-style="2"] .full-start-new__poster .view--has-status .np-unwatched-remaining {',
+        'body[data-np-unwatched-badge-style="2"][data-status-badge-style="2"] .card .view--has-status .np-unwatched-remaining {',
         '    top: 1.25em;',
+        '}',
+        'body[data-np-unwatched-badge-style="2"][data-status-badge-style="2"] .full-start-new__poster.view--has-status .np-unwatched-remaining {',
+        '    top: 0.95em;',
         '}',
     ].join('\n');
     document.head.appendChild(style);
