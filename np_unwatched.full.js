@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    var VERSION = '1.9.4';
+    var VERSION = '1.9.5';
 
     var DEBUG = false;
     function log(message, data) {
@@ -524,6 +524,39 @@
                 setTimeout(function () { if (el.parentNode) el.remove(); }, 400);
             })(old[i]);
         }
+    }
+
+    // Живое удаление карточки со страницы «Непросмотренные», когда досмотрели
+    // последнюю вышедшую серию — по образцу removeCompletedCard в myshows.js:
+    // fade-out + удаление из DOM, с переносом фокуса на соседнюю карточку, если
+    // удаляемая была в фокусе.
+    function removeCompletedRowCard(cardEl) {
+        var parent = cardEl.parentNode;
+        if (!parent) return;
+
+        var wasFocused = cardEl.classList.contains('focus');
+        var siblings = [].slice.call(parent.querySelectorAll('.card'));
+        var idx = siblings.indexOf(cardEl);
+        var nextFocus = null;
+        if (wasFocused) {
+            nextFocus = idx > 0 ? siblings[idx - 1] : siblings[idx + 1];
+        }
+
+        cardEl.style.transition = 'opacity 0.5s ease';
+        cardEl.style.opacity = '0';
+
+        setTimeout(function () {
+            if (!cardEl.parentNode) return;
+            cardEl.remove();
+            // Коллекцию (для навигации с клавиатуры/пульта) пересобираем только если
+            // удалённая карточка реально была в фокусе — иначе не трогаем чужой фокус.
+            if (wasFocused && window.Lampa && Lampa.Controller) {
+                setTimeout(function () {
+                    Lampa.Controller.collectionSet(parent);
+                    if (nextFocus) Lampa.Controller.collectionFocus(nextFocus, parent);
+                }, 50);
+            }
+        }, 500);
     }
 
     // =========================================================================
@@ -1293,8 +1326,15 @@
         var nextEl = container.querySelector('.np-unwatched-next');
 
         if (progress.unwatched_count <= 0) {
-            // Досмотрели всё, что было вышедшим — снимаем бейджи.
+            // Досмотрели всё, что было вышедшим — снимаем бейджи. На самой странице
+            // «Непросмотренные» (а не где-то ещё, где бейдж мог всплыть по знакомому
+            // cardId — см. addBadgesToRowCard) убираем и саму карточку: раз серий не
+            // осталось, ей тут больше не место, как и в myshows.js.
             removeBadges(container);
+            var cardEl = container.closest ? container.closest('.card') : null;
+            if (cardEl && cardEl.card_data && cardEl.card_data.unwatched_count !== undefined) {
+                removeCompletedRowCard(cardEl);
+            }
             return;
         }
 

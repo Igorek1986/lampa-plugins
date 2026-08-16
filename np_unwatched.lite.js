@@ -1,6 +1,6 @@
 (function() {
     "use strict";
-    var VERSION = "1.9.4";
+    var VERSION = "1.9.5";
     var DEBUG = false;
     function log(message, data) {
         if (DEBUG) console.log("[NPUnwatched] " + message, data !== void 0 ? data : "");
@@ -335,6 +335,25 @@
                 if (el.parentNode) el.remove();
             }, 400);
         })(old[i]);
+    }
+    function removeCompletedRowCard(cardEl) {
+        var parent = cardEl.parentNode;
+        if (!parent) return;
+        var wasFocused = cardEl.classList.contains("focus");
+        var siblings = [].slice.call(parent.querySelectorAll(".card"));
+        var idx = siblings.indexOf(cardEl);
+        var nextFocus = null;
+        if (wasFocused) nextFocus = idx > 0 ? siblings[idx - 1] : siblings[idx + 1];
+        cardEl.style.transition = "opacity 0.5s ease";
+        cardEl.style.opacity = "0";
+        setTimeout(function() {
+            if (!cardEl.parentNode) return;
+            cardEl.remove();
+            if (wasFocused && window.Lampa && Lampa.Controller) setTimeout(function() {
+                Lampa.Controller.collectionSet(parent);
+                if (nextFocus) Lampa.Controller.collectionFocus(nextFocus, parent);
+            }, 50);
+        }, 500);
     }
     function isSameFullCardOpen(card) {
         if (!card || !card.id) return true;
@@ -943,6 +962,8 @@
         var nextEl = container.querySelector(".np-unwatched-next");
         if (progress.unwatched_count <= 0) {
             removeBadges(container);
+            var cardEl = container.closest ? container.closest(".card") : null;
+            if (cardEl && cardEl.card_data && cardEl.card_data.unwatched_count !== void 0) removeCompletedRowCard(cardEl);
             return;
         }
         if (isTrue(getProfileSetting(REMAINING_KEY, true))) if (remainingEl) animateCounter(remainingEl, parseInt(remainingEl.textContent, 10) || 0, progress.unwatched_count); else {
