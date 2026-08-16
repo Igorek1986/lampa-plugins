@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    var VERSION = '1.9.6';
+    var VERSION = '1.9.7';
 
     var DEBUG = false;
     function log(message, data) {
@@ -182,11 +182,12 @@
     var SORT_KEY = 'np_unwatched_sort_order';
     var DEFAULT_SORT = 'progress';
     var STATUS_BUTTONS_KEY = 'np_unwatched_status_buttons';
+    var VIEW_IN_MAIN_KEY = 'np_unwatched_view_in_main';
     // Порог "серия просмотрена" — не свой, используем настройку np.js
     // numparser_min_progress (тот же смысл, что и для hide_watched).
     var DEFAULT_MIN_PROGRESS = 90;
     var SYNC_PLUGIN = 'np_unwatched';
-    var SYNC_KEYS   = [PROGRESS_KEY, REMAINING_KEY, NEXT_KEY, BADGE_STYLE_KEY, SORT_KEY, STATUS_BUTTONS_KEY];
+    var SYNC_KEYS   = [PROGRESS_KEY, REMAINING_KEY, NEXT_KEY, BADGE_STYLE_KEY, SORT_KEY, STATUS_BUTTONS_KEY, VIEW_IN_MAIN_KEY];
 
     // Булевы в Storage пишем строками 'true'/'false' — Storage.get затирает
     // закешированный boolean false дефолтом (value || empty), строка выживает.
@@ -237,6 +238,7 @@
         if (!hasProfileSetting(BADGE_STYLE_KEY)) setProfileSetting(BADGE_STYLE_KEY, '1', false);
         if (!hasProfileSetting(SORT_KEY)) setProfileSetting(SORT_KEY, DEFAULT_SORT, false);
         if (!hasProfileSetting(STATUS_BUTTONS_KEY)) setProfileSetting(STATUS_BUTTONS_KEY, true, false);
+        if (!hasProfileSetting(VIEW_IN_MAIN_KEY)) setProfileSetting(VIEW_IN_MAIN_KEY, true, false);
 
         Lampa.Storage.set(PROGRESS_KEY, storableValue(getProfileSetting(PROGRESS_KEY, true)), true);
         Lampa.Storage.set(REMAINING_KEY, storableValue(getProfileSetting(REMAINING_KEY, true)), true);
@@ -244,6 +246,7 @@
         Lampa.Storage.set(BADGE_STYLE_KEY, getProfileSetting(BADGE_STYLE_KEY, '1'), true);
         Lampa.Storage.set(SORT_KEY, getProfileSetting(SORT_KEY, DEFAULT_SORT), true);
         Lampa.Storage.set(STATUS_BUTTONS_KEY, storableValue(getProfileSetting(STATUS_BUTTONS_KEY, true)), true);
+        Lampa.Storage.set(VIEW_IN_MAIN_KEY, storableValue(getProfileSetting(VIEW_IN_MAIN_KEY, true)), true);
 
         applyBadgeStyleAttr();
     }
@@ -297,6 +300,16 @@
                 description: 'Смотрю/Буду смотреть/Брошено/Не смотрю на полной карточке (пишут в личный статус, опционально дублируют в MyShows)',
             },
             onChange: function (value) { setProfileSetting(STATUS_BUTTONS_KEY, value === true || value === 'true'); },
+        });
+
+        Lampa.SettingsApi.addParam({
+            component: SETTINGS_COMPONENT,
+            param: { name: VIEW_IN_MAIN_KEY, type: 'trigger', default: true },
+            field: {
+                name: 'Непросмотренные на Главной',
+                description: 'Строка «Непросмотренные» на главном экране (источники TMDB/CUB)',
+            },
+            onChange: function (value) { setProfileSetting(VIEW_IN_MAIN_KEY, value === true || value === 'true'); },
         });
 
         Lampa.SettingsApi.addParam({
@@ -1704,6 +1717,134 @@
         });
     }
 
+    // =========================================================================
+    // Строка «Непросмотренные» на нативной Главной (источники TMDB/CUB) — по
+    // образцу addMyShowsToTMDB()/addMyShowsToCUB() в myshows.js, но без его
+    // MyShows-кеширования: /unwatched уже отдаёт карточки в готовом Lampa-формате
+    // (см. handleUnwatched), поэтому оборачивать нечего.
+    // =========================================================================
+
+    var UNWATCHED_MAIN_COMPONENT = 'np_unwatched_full';
+    var UNWATCHED_MAIN_PAGE_SIZE = 20;
+
+    function unwatchedMainUrl(page, perPage) {
+        var url = getNpBaseUrl() + '/unwatched?token=' + encodeURIComponent(getNpToken()) +
+            '&page=' + (page || 1) + '&per_page=' + (perPage || UNWATCHED_MAIN_PAGE_SIZE) +
+            '&sort=' + encodeURIComponent(getProfileSetting(SORT_KEY, DEFAULT_SORT));
+        var profileId = getProfileId();
+        if (profileId) url += '&profile_id=' + encodeURIComponent(profileId);
+        return url;
+    }
+
+    function fetchUnwatchedMain(page, perPage, onSuccess, onError) {
+        fetch(unwatchedMainUrl(page, perPage)).then(function (r) { return r.json(); })
+            .then(onSuccess).catch(onError || function () {});
+    }
+
+    function addNpUnwatchedData(data, oncomplite) {
+        if (getNpToken() && isTrue(getProfileSetting(VIEW_IN_MAIN_KEY, true))) {
+            var startProfile = getProfileId();
+            fetchUnwatchedMain(1, UNWATCHED_MAIN_PAGE_SIZE, function (json) {
+                // Профиль мог смениться, пока строилась строка — не подмешиваем чужие данные
+                if (getProfileId() === startProfile && json && json.results && json.results.length) {
+                    data.unshift({
+                        title: 'Непросмотренные',
+                        results: json.results,
+                        source: 'tmdb',
+                        url: 'np://unwatched',
+                        total_pages: json.total_pages || 1
+                    });
+                }
+                oncomplite(data);
+            }, function () { oncomplite(data); });
+            return true;
+        }
+        oncomplite(data);
+        return false;
+    }
+
+    // Перехват Activity.push: любая навигация с url=np://unwatched → наш полный
+    // пагинированный список (по образцу patchActivityForMyShows в myshows.js).
+    function patchActivityForNpUnwatched() {
+        if (window._np_unwatched_activity_patched) return;
+        window._np_unwatched_activity_patched = true;
+
+        var originalPush = Lampa.Activity.push;
+        Lampa.Activity.push = function (params) {
+            if (params && params.url === 'np://unwatched') {
+                return originalPush.call(this, {
+                    component: UNWATCHED_MAIN_COMPONENT,
+                    title: params.title || 'Непросмотренные',
+                    page: params.page || 1
+                });
+            }
+            return originalPush.call(this, params);
+        };
+    }
+
+    // Главная TMDB
+    function addNpUnwatchedToTMDB() {
+        if (window._np_unwatched_tmdb_patched) return;
+        if (!Lampa.Api || !Lampa.Api.sources || !Lampa.Api.sources.tmdb) return;
+        window._np_unwatched_tmdb_patched = true;
+
+        var originalTMDBMain = Lampa.Api.sources.tmdb.main;
+        Lampa.Api.sources.tmdb.main = function (params, oncomplite, onerror) {
+            return originalTMDBMain.call(this, params, function (data) {
+                addNpUnwatchedData(data, oncomplite);
+            }, onerror);
+        };
+    }
+
+    // Главная CUB
+    function addNpUnwatchedToCUB() {
+        if (window._np_unwatched_cub_patched) return;
+        if (!Lampa.Api || !Lampa.Api.sources || !Lampa.Api.sources.cub) return;
+        window._np_unwatched_cub_patched = true;
+
+        var originalCUBMain = Lampa.Api.sources.cub.main;
+        Lampa.Api.sources.cub.main = function (params, oncomplite, onerror) {
+            return originalCUBMain.call(this, params, function (data) {
+                addNpUnwatchedData(data, oncomplite);
+            }, onerror);
+        };
+    }
+
+    function addUnwatchedMainComponent() {
+        Lampa.Component.add(UNWATCHED_MAIN_COMPONENT, function (object) {
+            var comp = Lampa.Maker.make('Category', object, function (module) {
+                return module.toggle(module.MASK.base, 'Pagination');
+            });
+
+            comp.use({
+                onCreate: function () {
+                    this.activity.loader(true);
+                    var self = this;
+                    fetchUnwatchedMain(object.page || 1, 20, function (data) {
+                        self.build({ results: (data && data.results) || [], total_pages: (data && data.total_pages) || 1 });
+                        self.activity.loader(false);
+                    }, function () {
+                        self.empty();
+                        self.activity.loader(false);
+                    });
+                },
+                onNext: function (resolve, reject) {
+                    fetchUnwatchedMain(object.page, 20, function (data) {
+                        resolve({ results: (data && data.results) || [], total_pages: (data && data.total_pages) || 1 });
+                    }, reject);
+                },
+                onInstance: function (item, data) {
+                    item.use({
+                        onEnter: function () { openMineCard(data); },
+                        onFocus: function () { Lampa.Background.change(Lampa.Utils.cardImgBackground(data)); }
+                    });
+                }
+            });
+
+            return comp;
+        });
+    }
+
     function updateMineMenuItem() {
         var token = getNpToken();
         var menuItem = $('.menu__item.selector .menu__text:contains("' + MINE_TITLE + '")').closest('.menu__item');
@@ -1765,6 +1906,13 @@
 
     function init() {
         var isLampa3 = Lampa.Manifest && Lampa.Manifest.app_digital >= 300;
+
+        // Патчим источники Главной сразу — до любых async-операций, иначе Lampa
+        // успевает вызвать tmdb.main/cub.main до нашего патча (как в myshows.js).
+        addNpUnwatchedToTMDB();
+        addNpUnwatchedToCUB();
+        patchActivityForNpUnwatched();
+        addUnwatchedMainComponent();
 
         loadProfileSettings();
         registerSettingsSafely();
