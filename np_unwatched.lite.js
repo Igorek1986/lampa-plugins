@@ -1,6 +1,6 @@
 (function() {
     "use strict";
-    var VERSION = "1.9.5";
+    var VERSION = "1.9.6";
     var DEBUG = false;
     function log(message, data) {
         if (DEBUG) console.log("[NPUnwatched] " + message, data !== void 0 ? data : "");
@@ -562,7 +562,11 @@
                 if (!isSameFullCardOpen(movie)) return;
                 applyActive(opt.status);
                 setSubjectiveStatus(cardId, opt.status, function(ok) {
-                    if (!ok) Lampa.Noty.show("Ошибка установки статуса");
+                    if (!ok) {
+                        Lampa.Noty.show("Ошибка установки статуса");
+                        return;
+                    }
+                    onStatusChanged(cardId, opt.status);
                 });
                 pushToMyShows(movie, opt.myshows, isMovie);
                 if (isMovie && opt.status === "watched") markMovieWatchedTimecode(movie, cardId);
@@ -878,7 +882,7 @@
             _ws.onmessage = function(event) {
                 try {
                     var msg = JSON.parse(event.data);
-                    if (msg.type === "timecode") onWsTimecode(msg); else if (msg.type === "unwatched_stale") onUnwatchedStale();
+                    if (msg.type === "timecode") onWsTimecode(msg); else if (msg.type === "unwatched_stale") onUnwatchedStale(); else if (msg.type === "status") onWsStatus(msg);
                 } catch (e) {}
             };
             _ws.onclose = function() {
@@ -905,6 +909,12 @@
             hash: msg.item,
             percent: data.percent || 0
         });
+    }
+    function onWsStatus(msg) {
+        var myProfile = getProfileId();
+        if (String(msg.profile_id || "") !== String(myProfile || "")) return;
+        if (!msg.card_id) return;
+        onStatusChanged(msg.card_id, msg.status || "");
     }
     function onUnwatchedStale() {
         if (!isPluginEnabled()) return;
@@ -933,6 +943,23 @@
                 });
             })(cardId);
         }
+    }
+    function removeCardEverywhere(cardId) {
+        delete knownProgress[cardId];
+        var cards = document.querySelectorAll(".card");
+        for (var i = 0; i < cards.length; i++) {
+            var cardElement = cards[i];
+            var data = cardElement.card_data || cardElement.data;
+            if (!data || cardIdOf(data) !== cardId) continue;
+            var cardView = cardElement.querySelector(".card__view");
+            if (cardView) removeBadges(cardView);
+            if (data.unwatched_count !== void 0) removeCompletedRowCard(cardElement);
+        }
+    }
+    function onStatusChanged(cardId, status) {
+        if (status === "watching") fetchProgress(cardId, function(progress) {
+            if (progress) updateBadgesEverywhere(cardId, progress);
+        }); else removeCardEverywhere(cardId);
     }
     function updateBadgesEverywhere(cardId, progress) {
         if (cardId) knownProgress[cardId] = progress;

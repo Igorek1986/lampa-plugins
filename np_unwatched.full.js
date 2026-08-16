@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    var VERSION = '1.9.5';
+    var VERSION = '1.9.6';
 
     var DEBUG = false;
     function log(message, data) {
@@ -771,7 +771,12 @@
                 if (!isSameFullCardOpen(movie)) return;
                 applyActive(opt.status);
                 setSubjectiveStatus(cardId, opt.status, function (ok) {
-                    if (!ok) Lampa.Noty.show('Ошибка установки статуса');
+                    if (!ok) { Lampa.Noty.show('Ошибка установки статуса'); return; }
+                    // Убираем/обновляем карточку в «Непросмотренные» и других уже
+                    // отрисованных списках сразу, не дожидаясь WS/следующего reload
+                    // (фильмам бейджи "Непросмотренные" не касаются — там просто нет
+                    // совпадающих карточек по id, вызов безвреден).
+                    onStatusChanged(cardId, opt.status);
                 });
                 pushToMyShows(movie, opt.myshows, isMovie);
                 // "Просмотрел" для фильма без правки movie.js: без реального проигрывания
@@ -1219,6 +1224,7 @@
                     var msg = JSON.parse(event.data);
                     if (msg.type === 'timecode') onWsTimecode(msg);
                     else if (msg.type === 'unwatched_stale') onUnwatchedStale();
+                    else if (msg.type === 'status') onWsStatus(msg);
                 } catch (e) {}
             };
 
@@ -1243,6 +1249,16 @@
         if (!data) return;
 
         onTimecodeSaved({ card_id: msg.card_id, hash: msg.item, percent: data.percent || 0 });
+    }
+
+    // Статус поменяли с другого устройства/вкладки того же профиля (см. кнопки
+    // статуса на полной карточке ниже) — тот же путь, что и локальный клик,
+    // см. onStatusChanged.
+    function onWsStatus(msg) {
+        var myProfile = getProfileId();
+        if (String(msg.profile_id || '') !== String(myProfile || '')) return;
+        if (!msg.card_id) return;
+        onStatusChanged(msg.card_id, msg.status || '');
     }
 
     // Сервер шлёт это раз в сутки, в момент пересечения aired_cutoff (см.
@@ -1280,6 +1296,39 @@
                     if (progress) updateBadgesEverywhere(id, progress);
                 });
             })(cardId);
+        }
+    }
+
+    // Статус ушёл со "Смотрю" (Перестал смотреть/Не смотрю/Буду смотреть) —
+    // UnwatchedTVShowProgress перестаёт находить карточку (её "watching"-гейт
+    // не пройден), поэтому progress не пришёл бы вовсе — снимаем бейджи и
+    // саму карточку из уже отрисованных списков напрямую, тем же путём, что и
+    // "досмотрел всё" в animateBadgeUpdate ниже.
+    function removeCardEverywhere(cardId) {
+        delete knownProgress[cardId];
+
+        var cards = document.querySelectorAll('.card');
+        for (var i = 0; i < cards.length; i++) {
+            var cardElement = cards[i];
+            var data = cardElement.card_data || cardElement.data;
+            if (!data || cardIdOf(data) !== cardId) continue;
+
+            var cardView = cardElement.querySelector('.card__view');
+            if (cardView) removeBadges(cardView);
+            if (data.unwatched_count !== undefined) removeCompletedRowCard(cardElement);
+        }
+    }
+
+    // Общая точка для локального клика по кнопке статуса и WS-события с другого
+    // устройства того же профиля — статус снова "Смотрю" обновляет бейджи (если
+    // прогресс нашёлся), любой другой статус убирает карточку отовсюду на экране.
+    function onStatusChanged(cardId, status) {
+        if (status === 'watching') {
+            fetchProgress(cardId, function (progress) {
+                if (progress) updateBadgesEverywhere(cardId, progress);
+            });
+        } else {
+            removeCardEverywhere(cardId);
         }
     }
 
