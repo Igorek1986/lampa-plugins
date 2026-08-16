@@ -1,6 +1,6 @@
 (function() {
     "use strict";
-    var VERSION = "1.9.8";
+    var VERSION = "1.9.9";
     var DEBUG = false;
     function log(message, data) {
         if (DEBUG) console.log("[NPUnwatched] " + message, data !== void 0 ? data : "");
@@ -45,9 +45,10 @@
     var DEFAULT_SORT = "progress";
     var STATUS_BUTTONS_KEY = "np_unwatched_status_buttons";
     var VIEW_IN_MAIN_KEY = "np_unwatched_view_in_main";
+    var TIMETABLE_CALENDAR_KEY = "np_unwatched_calendar";
     var DEFAULT_MIN_PROGRESS = 90;
     var SYNC_PLUGIN = "np_unwatched";
-    var SYNC_KEYS = [ PROGRESS_KEY, REMAINING_KEY, NEXT_KEY, BADGE_STYLE_KEY, SORT_KEY, STATUS_BUTTONS_KEY, VIEW_IN_MAIN_KEY ];
+    var SYNC_KEYS = [ PROGRESS_KEY, REMAINING_KEY, NEXT_KEY, BADGE_STYLE_KEY, SORT_KEY, STATUS_BUTTONS_KEY, VIEW_IN_MAIN_KEY, TIMETABLE_CALENDAR_KEY ];
     function storableValue(v) {
         if (v === true) return "true";
         if (v === false) return "false";
@@ -86,6 +87,7 @@
         if (!hasProfileSetting(SORT_KEY)) setProfileSetting(SORT_KEY, DEFAULT_SORT, false);
         if (!hasProfileSetting(STATUS_BUTTONS_KEY)) setProfileSetting(STATUS_BUTTONS_KEY, true, false);
         if (!hasProfileSetting(VIEW_IN_MAIN_KEY)) setProfileSetting(VIEW_IN_MAIN_KEY, true, false);
+        if (!hasProfileSetting(TIMETABLE_CALENDAR_KEY)) setProfileSetting(TIMETABLE_CALENDAR_KEY, true, false);
         Lampa.Storage.set(PROGRESS_KEY, storableValue(getProfileSetting(PROGRESS_KEY, true)), true);
         Lampa.Storage.set(REMAINING_KEY, storableValue(getProfileSetting(REMAINING_KEY, true)), true);
         Lampa.Storage.set(NEXT_KEY, storableValue(getProfileSetting(NEXT_KEY, true)), true);
@@ -93,6 +95,7 @@
         Lampa.Storage.set(SORT_KEY, getProfileSetting(SORT_KEY, DEFAULT_SORT), true);
         Lampa.Storage.set(STATUS_BUTTONS_KEY, storableValue(getProfileSetting(STATUS_BUTTONS_KEY, true)), true);
         Lampa.Storage.set(VIEW_IN_MAIN_KEY, storableValue(getProfileSetting(VIEW_IN_MAIN_KEY, true)), true);
+        Lampa.Storage.set(TIMETABLE_CALENDAR_KEY, storableValue(getProfileSetting(TIMETABLE_CALENDAR_KEY, true)), true);
         applyBadgeStyleAttr();
     }
     function applyBadgeStyleAttr() {
@@ -246,6 +249,21 @@
             },
             onChange: function(value) {
                 setProfileSetting(VIEW_IN_MAIN_KEY, value === true || value === "true");
+            }
+        });
+        Lampa.SettingsApi.addParam({
+            component: SETTINGS_COMPONENT,
+            param: {
+                name: TIMETABLE_CALENDAR_KEY,
+                type: "trigger",
+                default: true
+            },
+            field: {
+                name: "Смотрю в Расписании",
+                description: "Дописывать сериалы со статусом «Смотрю» в нативное Расписание Lampa (даты берутся из нашего календаря)"
+            },
+            onChange: function(value) {
+                setProfileSetting(TIMETABLE_CALENDAR_KEY, value === true || value === "true");
             }
         });
     }
@@ -1454,6 +1472,118 @@
             return comp;
         });
     }
+    function npTimetableEnabled() {
+        return isTrue(getProfileSetting(TIMETABLE_CALENDAR_KEY, true)) && !!getNpToken();
+    }
+    function calendarMonthUrl(year, month) {
+        var url = getNpBaseUrl() + "/calendar?token=" + encodeURIComponent(getNpToken()) + "&year=" + year + "&month=" + month;
+        var profileId = getProfileId();
+        if (profileId) url += "&profile_id=" + encodeURIComponent(profileId);
+        return url;
+    }
+    function fetchCalendarMonth(year, month, callback) {
+        fetch(calendarMonthUrl(year, month)).then(function(r) {
+            return r.json();
+        }).then(function(data) {
+            callback(data && data.episodes || []);
+        }).catch(function() {
+            callback([]);
+        });
+    }
+    function fetchCalendarWindow(callback) {
+        var now = new Date;
+        var next = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+        var results = [];
+        var pending = 2;
+        function done() {
+            if (--pending === 0) callback(results);
+        }
+        fetchCalendarMonth(now.getFullYear(), now.getMonth() + 1, function(eps) {
+            results = results.concat(eps);
+            done();
+        });
+        fetchCalendarMonth(next.getFullYear(), next.getMonth() + 1, function(eps) {
+            results = results.concat(eps);
+            done();
+        });
+    }
+    function toRelativePosterPath(url) {
+        if (!url) return null;
+        var m = /\/t\/p\/\w+(\/.+)$/.exec(url);
+        return m ? m[1] : url;
+    }
+    function mergeNpCalendarIntoTimetable(table, cardsMap, done) {
+        if (!npTimetableEnabled()) {
+            done();
+            return;
+        }
+        var existingIds = {};
+        table.forEach(function(e) {
+            if (e && e.id != null) existingIds[e.id] = true;
+        });
+        fetchCalendarWindow(function(episodes) {
+            var byShow = {};
+            episodes.forEach(function(ep) {
+                if (!ep || !ep.tmdb_id || !ep.air_date || existingIds[ep.tmdb_id]) return;
+                if (!byShow[ep.tmdb_id]) byShow[ep.tmdb_id] = {
+                    episodes: [],
+                    card: {
+                        id: ep.tmdb_id,
+                        name: ep.title || "",
+                        original_name: ep.title || "",
+                        poster_path: toRelativePosterPath(ep.poster_path),
+                        source: "tmdb"
+                    }
+                };
+                byShow[ep.tmdb_id].episodes.push({
+                    air_date: ep.air_date,
+                    season_number: ep.season,
+                    episode_number: ep.episode,
+                    name: ep.episode_name || ""
+                });
+            });
+            Object.keys(byShow).forEach(function(sid) {
+                var id = parseInt(sid, 10);
+                cardsMap[id] = byShow[sid].card;
+                table.push({
+                    id: id,
+                    episodes: byShow[sid].episodes,
+                    next: null
+                });
+            });
+            done();
+        });
+    }
+    function wrapTimetableFactory(originalFactory) {
+        if (!originalFactory || originalFactory._npCalendarWrapped) return originalFactory;
+        function WrappedTimetable(object) {
+            originalFactory.call(this, object);
+            var self = this;
+            var realFill = this._fill;
+            if (typeof realFill === "function") this._fill = function(table, cardsMap) {
+                mergeNpCalendarIntoTimetable(table, cardsMap, function() {
+                    realFill.call(self, table, cardsMap);
+                });
+            };
+        }
+        WrappedTimetable._npCalendarWrapped = true;
+        WrappedTimetable.prototype = originalFactory.prototype;
+        return WrappedTimetable;
+    }
+    function patchNativeTimetable() {
+        if (!Lampa.Component || !Lampa.Component.add) return;
+        if (window._np_unwatched_timetable_patched) return;
+        window._np_unwatched_timetable_patched = true;
+        var originalAdd = Lampa.Component.add;
+        Lampa.Component.add = function(name, factory) {
+            if (name === "timetable") factory = wrapTimetableFactory(factory);
+            return originalAdd.call(this, name, factory);
+        };
+        if (Lampa.Component.get) {
+            var existing = Lampa.Component.get("timetable");
+            if (existing) Lampa.Component.add("timetable", existing);
+        }
+    }
     function updateMineMenuItem() {
         var token = getNpToken();
         var menuItem = $('.menu__item.selector .menu__text:contains("' + MINE_TITLE + '")').closest(".menu__item");
@@ -1513,6 +1643,7 @@
         addNpUnwatchedToCUB();
         patchActivityForNpUnwatched();
         addUnwatchedMainComponent();
+        patchNativeTimetable();
         loadProfileSettings();
         registerSettingsSafely();
         registerNMSync();
