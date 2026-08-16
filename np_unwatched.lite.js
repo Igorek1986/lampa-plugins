@@ -1,6 +1,6 @@
 (function() {
     "use strict";
-    var VERSION = "1.9.1";
+    var VERSION = "1.9.2";
     var DEBUG = false;
     function log(message, data) {
         if (DEBUG) console.log("[NPUnwatched] " + message, data !== void 0 ? data : "");
@@ -1261,6 +1261,34 @@
             }
         } else if (menuItem.length > 0) menuItem.remove();
     }
+    var _sursMineBtn = {
+        id: "np_mine",
+        title: MINE_TITLE,
+        icon: MINE_ICON,
+        action: function() {
+            Lampa.Activity.push({
+                url: "",
+                title: MINE_TITLE,
+                component: MINE_COMPONENT
+            });
+        }
+    };
+    function sursAddMineBtn() {
+        if (typeof window.surs_addExternalButton !== "function") return;
+        if (!getNpToken()) {
+            if (typeof window.surs_removeExternalButton === "function") window.surs_removeExternalButton(_sursMineBtn.id);
+            return;
+        }
+        var existing = window.surs_external_buttons && window.surs_external_buttons.some(function(b) {
+            return b.id === _sursMineBtn.id;
+        });
+        if (!existing) window.surs_addExternalButton(_sursMineBtn);
+    }
+    function registerSursMineBtn() {
+        if (window.plugin_custom_buttons_ready) sursAddMineBtn(); else Lampa.Listener.follow("custom_buttons", function(e) {
+            if (e.type === "ready") sursAddMineBtn();
+        });
+    }
     function onProfileChanged() {
         loadProfileSettings();
         processedRowCards = [];
@@ -1277,6 +1305,7 @@
         connectWS();
         addMineComponents();
         waitForNumparser(updateMineMenuItem);
+        registerSursMineBtn();
         Lampa.Listener.follow("profile", function(e) {
             if (e.type === "changed") onProfileChanged();
         });
