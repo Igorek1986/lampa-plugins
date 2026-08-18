@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    var VERSION = '1.0.7';
+    var VERSION = '1.0.8';
 
     var DEFAULT_ADD_THRESHOLD = '0';
     var DEFAULT_MIN_PROGRESS = 90;
@@ -377,22 +377,26 @@
                 Lampa.Storage.set(profileKeyFor('myshows_' + path, profileId), cacheData);
                 if (callback) callback(true);
             } else {
-                var network = new Lampa.Reguest();
-                network.native(uri, function(response) {
-                    if (response.success) {
+                // XMLHttpRequest напрямую (как в NP-ветке выше и в npSetStatus): через
+                // Lampa.Reguest().native() тело POST утекает в URL → 414 Request-URI Too Large.
+                var xhrLampac = new XMLHttpRequest();
+                xhrLampac.open('POST', uri, true);
+                xhrLampac.setRequestHeader('Content-Type', 'application/json');
+                xhrLampac.onload = function() {
+                    var response;
+                    try { response = JSON.parse(xhrLampac.responseText); } catch(e) { response = null; }
+                    if (response && response.success) {
                         if (callback) callback(true);
                     } else {
-                        Log.error('Storage error', response.msg);
+                        Log.error('Storage error', response && response.msg);
                         if (callback) callback(false);
                     }
-                }, function(error) {
+                };
+                xhrLampac.onerror = function() {
                     Log.error('Network error');
                     if (callback) callback(false);
-
-                }, data, {
-                    headers: JSON_HEADERS,
-                    method: 'POST'
-                });
+                };
+                xhrLampac.send(data);
             }
         } catch(e) {
             Log.error('Try error on saveCacheToServer', e.message);

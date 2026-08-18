@@ -1,6 +1,6 @@
 (function() {
     "use strict";
-    var VERSION = "1.0.7";
+    var VERSION = "1.0.8";
     var DEFAULT_ADD_THRESHOLD = "0";
     var DEFAULT_MIN_PROGRESS = 90;
     var API_URL = "https://myshows.me/v3/rpc/";
@@ -275,20 +275,27 @@
                 Lampa.Storage.set(profileKeyFor("myshows_" + path, profileId), cacheData);
                 if (callback) callback(true);
             } else {
-                var network = new Lampa.Reguest;
-                network.native(uri, function(response) {
-                    if (response.success) {
+                var xhrLampac = new XMLHttpRequest;
+                xhrLampac.open("POST", uri, true);
+                xhrLampac.setRequestHeader("Content-Type", "application/json");
+                xhrLampac.onload = function() {
+                    var response;
+                    try {
+                        response = JSON.parse(xhrLampac.responseText);
+                    } catch (e) {
+                        response = null;
+                    }
+                    if (response && response.success) {
                         if (callback) callback(true);
                     } else {
-                        response.msg;
+                        response && response.msg;
                         if (callback) callback(false);
                     }
-                }, function(error) {
+                };
+                xhrLampac.onerror = function() {
                     if (callback) callback(false);
-                }, data, {
-                    headers: JSON_HEADERS,
-                    method: "POST"
-                });
+                };
+                xhrLampac.send(data);
             }
         } catch (e) {
             e.message;
