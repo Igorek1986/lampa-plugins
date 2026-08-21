@@ -1,11 +1,37 @@
 (function () {
     'use strict';
 
-    var VERSION = '1.10.1';
+    var VERSION = '1.11.0';
+
+    // Флаг для других плагинов (см. full_hero.js): по нему можно решить, ждать
+    // ли событие np-unwatched-progress ниже, или сразу считать свой лёгкий
+    // локальный фолбэк (Timeline.watchedEpisode), если этого плагина нет.
+    window.np_unwatched_plugin = true;
 
     var DEBUG = false;
     function log(message, data) {
         if (DEBUG) console.log('[NPUnwatched] ' + message, data !== undefined ? data : '');
+    }
+
+    // =========================================================================
+    // Событие для сторонних плагинов (full_hero.js): готовый прогресс сериала на
+    // full-карточке — watched/aired/remaining/next episode, без необходимости
+    // дублировать вызов /unwatched/progress. found:false — «спросили, но нет
+    // данных» (не смотрели, или это фильм), это тоже полезный ответ — слушатель
+    // не должен ждать таймаут в этом случае.
+    function dispatchProgressEvent(cardId, progress) {
+        var detail = { card_id: cardId, found: !!progress };
+        if (progress) {
+            var marker = String(progress.progress_marker || '');
+            var parts = marker.split('/');
+            detail.watched = parseInt(parts[0], 10) || 0;
+            detail.aired = parseInt(parts[1], 10) || 0;
+            detail.remaining = progress.unwatched_count || 0;
+            detail.next_episode = progress.next_episode || null;
+        }
+        try {
+            document.dispatchEvent(new CustomEvent('np-unwatched-progress', { detail: detail }));
+        } catch (e) {}
     }
 
     // =========================================================================
@@ -680,6 +706,7 @@
             if (!posterEl) return;
             if (progress) renderFullCardBadges(posterEl, progress);
             else removeBadges(posterEl);
+            dispatchProgressEvent(cardId, progress);
         });
 
         scheduleEpisodeBadgeDecorate();
@@ -708,6 +735,7 @@
                 if (!posterEl) return;
                 if (progress) animateBadgeUpdate(posterEl, progress);
                 else removeBadges(posterEl);
+                dispatchProgressEvent(cardId, progress);
             });
         }, 1500);
 

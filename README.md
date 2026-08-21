@@ -13,6 +13,7 @@
 | **Status Serials** | `https://igorek1986.github.io/lampa-plugins/status.js` | [docs/status](docs/status.md) |
 | **MyShows** | `https://igorek1986.github.io/lampa-plugins/myshows.js` | [docs/myshows](docs/myshows.md) |
 | **Стильный интерфейс** | `https://igorek1986.github.io/lampa-plugins/int.js` | [docs/int](docs/int.md) |
+| **Full Hero** | `https://igorek1986.github.io/lampa-plugins/full_hero.js` | [docs/full_hero](docs/full_hero.md) |
 | **Reset Settings** | `https://igorek1986.github.io/lampa-plugins/reset.js` | [docs/reset](docs/reset.md) |
 
 ## Варианты файлов
