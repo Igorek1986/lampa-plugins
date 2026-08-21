@@ -5,7 +5,7 @@
     if (!Lampa.Maker || !Lampa.Maker.map || !Lampa.Utils) return;
     if (window.plugin_interface_ready_v3) return;
     window.plugin_interface_ready_v3 = true;
-    var VERSION = "1.0.0";
+    var VERSION = "1.0.1";
     var DEBUG = true;
     function log(message) {
         if (DEBUG) console.log("[Int] " + message);
@@ -415,7 +415,7 @@
         return logoUrlCache;
     }
     function logoEntryId(data) {
-        var type = data.name ? "tv" : "movie";
+        var type = data.media_type === "tv" || data.name ? "tv" : "movie";
         var language = Lampa.Storage.get("language");
         return type + "_" + data.id + "_" + language;
     }
@@ -450,7 +450,7 @@
             callback(cached);
             return;
         }
-        var type = data.name ? "tv" : "movie";
+        var type = data.media_type === "tv" || data.name ? "tv" : "movie";
         var language = Lampa.Storage.get("language");
         var url = Lampa.TMDB.api(type + "/" + data.id + "/images?api_key=" + Lampa.TMDB.key() + "&include_image_language=" + language + ",en,null");
         $.get(url, function(data_api) {
@@ -494,7 +494,7 @@
         if (!isBackgroundPanelActive()) return;
         if (!data || !data.id) return;
         if (!Lampa || !Lampa.Api || !Lampa.Api.sources || !Lampa.Api.sources.cub) return;
-        var type = data.name ? "tv" : "movie";
+        var type = data.media_type === "tv" || data.name ? "tv" : "movie";
         var cacheKey = "reactions_" + type + "_" + data.id;
         if (globalReactionsCache.hasOwnProperty(cacheKey)) return;
         Lampa.Api.sources.cub.reactionsGet({
@@ -860,7 +860,7 @@
     };
     InfoPanel.prototype.loadReactions = function(data) {
         var self = this;
-        var type = data.name ? "tv" : "movie";
+        var type = data.media_type === "tv" || data.name ? "tv" : "movie";
         var renderId = this.lastRenderId;
         var cacheKey = "reactions_" + type + "_" + data.id;
         var cached = globalReactionsCache[cacheKey];
