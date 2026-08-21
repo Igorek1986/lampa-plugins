@@ -2,7 +2,7 @@
     "use strict";
     if (window.profiles_plugin) return;
     window.profiles_plugin = true;
-    var VERSION = "1.0.3";
+    var VERSION = "1.1.0";
     window.__npClientId = window.__npClientId || (window.Lampa && Lampa.Utils && Lampa.Utils.uid ? Lampa.Utils.uid() : Date.now() + "_" + Math.random());
     if (!window.__NMSync) (function() {
         function _token() {
@@ -258,6 +258,36 @@
     }
     function apiUrl(path) {
         return BASE_URL + "/timecode/" + path + "?token=" + encodeURIComponent(getToken()) + "&client_id=" + encodeURIComponent(window.__npClientId || "");
+    }
+    function devicePluginsUrl(profileId) {
+        return BASE_URL + "/device/plugins?token=" + encodeURIComponent(getToken()) + (profileId ? "&profile_id=" + encodeURIComponent(profileId) : "");
+    }
+    function sortedPluginUrls(data) {
+        var plugins = data && data.plugins || [];
+        var urls = [];
+        for (var i = 0; i < plugins.length; i++) urls.push(plugins[i].url);
+        return urls.sort();
+    }
+    function sameUrlList(a, b) {
+        if (a.length !== b.length) return false;
+        for (var i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+        return true;
+    }
+    function reloadIfPluginsDiffer(newProfileId) {
+        if (!window.__lampacLoadedPluginUrls || !getToken()) return;
+        var xhr = new XMLHttpRequest;
+        xhr.open("GET", devicePluginsUrl(newProfileId), true);
+        xhr.onreadystatechange = function() {
+            if (xhr.readyState !== 4 || xhr.status !== 200) return;
+            try {
+                var newUrls = sortedPluginUrls(JSON.parse(xhr.responseText));
+                if (!sameUrlList(newUrls, window.__lampacLoadedPluginUrls)) {
+                    console.log("NP-Profiles", "plugin set differs for new profile, reloading page");
+                    window.location.reload();
+                }
+            } catch (e) {}
+        };
+        xhr.send();
     }
     function fetchProfiles(onDone, onFail) {
         fetch(apiUrl("profiles")).then(function(r) {
@@ -519,6 +549,7 @@
             Lampa.Storage.set(FAV_PREFIX + current.profile_id, Lampa.Storage.get("favorite", {}));
         }
         setActiveProfile(profile);
+        reloadIfPluginsDiffer(profile.profile_id);
         var _profileParams = profile && profile.params || {};
         if (window.__NMSync) window.__NMSync.pullAll(function() {
             Lampa.Listener.send("profile", {

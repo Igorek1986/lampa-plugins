@@ -35,7 +35,7 @@
     if (window.profiles_plugin) return;
     window.profiles_plugin = true;
 
-    var VERSION = '1.0.3';
+    var VERSION = '1.1.0';
 
     // Идентификатор ЭТОЙ вкладки/сессии — только в памяти, НЕ в Storage. Сюда
     // намеренно не годится persisted lampa_uid: один и тот же токен может быть
@@ -324,6 +324,61 @@
     function apiUrl(path) {
         return BASE_URL + '/timecode/' + path + '?token=' + encodeURIComponent(getToken()) +
             '&client_id=' + encodeURIComponent(window.__npClientId || '');
+    }
+
+    // =========================================================================
+    // Перезагрузка страницы при смене профиля — только если у профиля
+    // действительно другой набор плагинов
+    // =========================================================================
+
+    // lampainit-invc.js (bootstrap-модуль на устройстве) при первой загрузке
+    // страницы вставляет <script> для списка плагинов активного на тот момент
+    // профиля и кладёт этот список в window.__lampacLoadedPluginUrls. Плагины —
+    // это <script>, вставленные один раз; сменить их набор без перезагрузки
+    // страницы нельзя (putScriptAsync не выгружает уже исполненный скрипт).
+    // Поэтому при переключении профиля сверяем, отличается ли список плагинов
+    // НОВОГО профиля от уже загруженного, и делаем window.location.reload()
+    // только тогда, когда это реально нужно — а не при каждом переключении.
+    function devicePluginsUrl(profileId) {
+        return BASE_URL + '/device/plugins?token=' + encodeURIComponent(getToken()) +
+            (profileId ? '&profile_id=' + encodeURIComponent(profileId) : '');
+    }
+
+    function sortedPluginUrls(data) {
+        var plugins = (data && data.plugins) || [];
+        var urls = [];
+        for (var i = 0; i < plugins.length; i++) urls.push(plugins[i].url);
+        return urls.sort();
+    }
+
+    function sameUrlList(a, b) {
+        if (a.length !== b.length) return false;
+        for (var i = 0; i < a.length; i++) {
+            if (a[i] !== b[i]) return false;
+        }
+        return true;
+    }
+
+    // Не блокирует переключение — если сервер недоступен или bootstrap ещё
+    // не успел заполнить window.__lampacLoadedPluginUrls, просто ничего не
+    // перезагружаем (безопасный дефолт: возможно устаревший набор плагинов,
+    // но не хуже, чем было).
+    function reloadIfPluginsDiffer(newProfileId) {
+        if (!window.__lampacLoadedPluginUrls || !getToken()) return;
+
+        var xhr = new XMLHttpRequest();
+        xhr.open('GET', devicePluginsUrl(newProfileId), true);
+        xhr.onreadystatechange = function () {
+            if (xhr.readyState !== 4 || xhr.status !== 200) return;
+            try {
+                var newUrls = sortedPluginUrls(JSON.parse(xhr.responseText));
+                if (!sameUrlList(newUrls, window.__lampacLoadedPluginUrls)) {
+                    console.log('NP-Profiles', 'plugin set differs for new profile, reloading page');
+                    window.location.reload();
+                }
+            } catch (e) {}
+        };
+        xhr.send();
     }
 
     /** GET /timecode/profiles → {profiles: [{profile_id, name, timecodes_count}], limit} */
@@ -644,6 +699,7 @@
         }
 
         setActiveProfile(profile);
+        reloadIfPluginsDiffer(profile.profile_id);
 
         // Перечитываем настройки плагинов с сервера для нового профиля.
         // После завершения стреляем 'profile.changed' — плагины (myshows, np) вызовут
