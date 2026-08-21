@@ -5,7 +5,7 @@
     if (!Lampa.Maker || !Lampa.Maker.map || !Lampa.Utils) return;
     if (window.plugin_interface_ready_v3) return;
     window.plugin_interface_ready_v3 = true;
-    var VERSION = "1.0.1";
+    var VERSION = "1.0.2";
     var DEBUG = true;
     function log(message) {
         if (DEBUG) console.log("[Int] " + message);
@@ -154,7 +154,7 @@
                 }
                 var show_bg = Lampa.Storage.get("show_background", true);
                 var bg_resolution = Lampa.Storage.get("background_resolution", "original");
-                var backdropUrl = data && data.backdrop_path && show_bg ? Lampa.Api.img(data.backdrop_path, bg_resolution) : "";
+                var backdropUrl = show_bg ? resolveBackgroundUrl(data, bg_resolution) : "";
                 if (backdropUrl === this.backgroundLast) return;
                 this.backgroundTimer = setTimeout(function() {
                     if (!backdropUrl) {
@@ -398,12 +398,18 @@
             });
         }
     }
+    function resolveBackgroundUrl(data, resolution) {
+        if (!data) return "";
+        if (data.backdrop_path) return Lampa.Api.img(data.backdrop_path, resolution);
+        if (data.poster_path) return Lampa.Api.img(data.poster_path, resolution);
+        return "";
+    }
     function preloadBackdrop(data, priority) {
         if (!isBackgroundPanelActive()) return;
         if (!Lampa.Storage.get("show_background", true)) return;
-        if (!data || !data.backdrop_path) return;
+        if (!data || !data.backdrop_path && !data.poster_path) return;
         var bg_resolution = Lampa.Storage.get("background_resolution", "original");
-        var url = Lampa.Api.img(data.backdrop_path, bg_resolution);
+        var url = resolveBackgroundUrl(data, bg_resolution);
         if (!url || backdropPreloadCache[url]) return;
         var img = new Image;
         if (priority) img.fetchPriority = priority;
@@ -598,7 +604,7 @@
         var desc = this.html.find(".new-interface-info__description");
         desc.text(data.overview || Lampa.Lang.translate("full_notext"));
         clearTimeout(this.fadeTimer);
-        Lampa.Background.change(Lampa.Api.img(data.backdrop_path, "original"));
+        Lampa.Background.change(resolveBackgroundUrl(data, "original"));
         this.load(data);
         if (data && data.id && Lampa.Storage.get("interface_card_reactions", true)) {
             this.html.find(".full-start-new__reactions").empty();

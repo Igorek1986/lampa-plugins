@@ -9,7 +9,7 @@
 
 	window.plugin_interface_ready_v3 = true;
 
-	var VERSION = "1.0.1";
+	var VERSION = "1.0.2";
 	var DEBUG = true;
 	function log(message) {
 		if (DEBUG) console.log("[Int] " + message);
@@ -230,7 +230,7 @@
 
 				var show_bg = Lampa.Storage.get("show_background", true);
 				var bg_resolution = Lampa.Storage.get("background_resolution", "original");
-				var backdropUrl = data && data.backdrop_path && show_bg ? Lampa.Api.img(data.backdrop_path, bg_resolution) : "";
+				var backdropUrl = show_bg ? resolveBackgroundUrl(data, bg_resolution) : "";
 
 				log('bg request "' + title + '": ' + (backdropUrl || "(нет бэкдропа)"));
 
@@ -889,13 +889,23 @@
 		}
 	}
 
+	// backdrop_path бывает пустым (особенно у свежих/малоизвестных релизов) —
+	// тогда берём постер вместо фона, чтобы не оставлять карточку совсем без
+	// картинки. Используется и тут (прелоад), и в updateBackground (показ).
+	function resolveBackgroundUrl(data, resolution) {
+		if (!data) return "";
+		if (data.backdrop_path) return Lampa.Api.img(data.backdrop_path, resolution);
+		if (data.poster_path) return Lampa.Api.img(data.poster_path, resolution);
+		return "";
+	}
+
 	function preloadBackdrop(data, priority) {
 		if (!isBackgroundPanelActive()) return;
 		if (!Lampa.Storage.get("show_background", true)) return;
-		if (!data || !data.backdrop_path) return;
+		if (!data || (!data.backdrop_path && !data.poster_path)) return;
 
 		var bg_resolution = Lampa.Storage.get("background_resolution", "original");
-		var url = Lampa.Api.img(data.backdrop_path, bg_resolution);
+		var url = resolveBackgroundUrl(data, bg_resolution);
 		if (!url || backdropPreloadCache[url]) return;
 
 		var img = new Image();
@@ -1156,7 +1166,7 @@
 
 		clearTimeout(this.fadeTimer);
 
-		Lampa.Background.change(Lampa.Api.img(data.backdrop_path, "original"));
+		Lampa.Background.change(resolveBackgroundUrl(data, "original"));
 
 		this.load(data);
 
