@@ -1,6 +1,6 @@
 (function() {
     "use strict";
-    var VERSION = "1.1.1";
+    var VERSION = "1.1.2";
     var DEBUG = false;
     function log(message, data) {
         if (DEBUG) console.log("[SerialStatus] " + message, data !== void 0 ? data : "");
@@ -73,10 +73,14 @@
         Lampa.Storage.set(BASE_KEY, storableValue(getProfileSetting(BASE_KEY, GLOBAL_DEFAULT)), true);
         Lampa.Storage.set(STYLE_KEY, getProfileSetting(STYLE_KEY, "1"), true);
         applyStatusStyleAttr();
+        applyStatusEnabledAttr();
     }
     function applyStatusStyleAttr() {
         var v = getProfileSetting(STYLE_KEY, "1").toString();
         if (v === "2") document.body.setAttribute("data-status-badge-style", v); else document.body.removeAttribute("data-status-badge-style");
+    }
+    function applyStatusEnabledAttr() {
+        if (isPluginEnabled()) document.body.setAttribute("data-status-enabled", "1"); else document.body.removeAttribute("data-status-enabled");
     }
     function isPluginEnabled() {
         return getProfileSetting(BASE_KEY, GLOBAL_DEFAULT);
@@ -165,6 +169,7 @@
             },
             onChange: function(value) {
                 setProfileSetting(BASE_KEY, value === true || value === "true");
+                applyStatusEnabledAttr();
                 getProfileId();
             }
         });

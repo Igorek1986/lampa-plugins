@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    var VERSION = '1.11.0';
+    var VERSION = '1.11.1';
 
     // Флаг для других плагинов (см. full_hero.js): по нему можно решить, ждать
     // ли событие np-unwatched-progress ниже, или сразу считать свой лёгкий
@@ -57,13 +57,6 @@
         '    padding: 0.2em 0.4em; font-size: 1.2em; border-radius: 1em 0 0 1em;',
         '    font-weight: bold; z-index: 2;',
         '    background: rgba(0,0,0,0.5); color: #fff; transition: all 0.3s ease;',
-        '}',
-        // Только карточки (главная/каталог/поиск) — угол бейджа должен повторять
-        // угол самой карточки (border-radius: 1em у .card, у бейджа font-size
-        // 1.2em → 0.83em ≈ 1em карточки). На .full-start-new__poster (страница
-        // фильма) остаётся дефолт выше.
-        '.card .np-unwatched-remaining {',
-        '    border-radius: 0 0.83em 0 1em;',
         '}',
         // status.js (вариант 2) занимает правый верхний угол статусом сериала —
         // счётчик остатка сдвигаем ниже него. На постере status.js вешает
@@ -121,6 +114,20 @@
         '.full-start-new__poster .np-unwatched-progress { bottom: 0.5em; }',
         '.full-start-new__poster .np-unwatched-next     { bottom: 2em; }',
         '.full-start-new__poster .np-unwatched-remaining { top: 1em; }',
+        // Скругление угла бейджа под угол карточки/постера (border-radius: 1em
+        // у обоих) — только когда статусы сериалов (status.js) выключены: иначе
+        // верхний правый угол может быть занят меткой статуса (вариант 2) и
+        // скруглённый бейдж там не к месту. status.js ставит data-status-enabled
+        // на <body>, пока включён.
+        'body:not([data-status-enabled]) .card .np-unwatched-remaining,',
+        'body:not([data-status-enabled]) .full-start-new__poster .np-unwatched-remaining {',
+        '    border-radius: 0 0.83em 0 1em;',
+        '}',
+        // При выключенных статусах верхний правый угол постера свободен —
+        // поднимаем бейдж вплотную к краю (без дефолтного отступа top: 1em).
+        'body:not([data-status-enabled]) .full-start-new__poster .np-unwatched-remaining {',
+        '    top: 0;',
+        '}',
         'body.true--mobile.orientation--portrait .full-start-new__poster .np-unwatched-progress  { bottom: 15em; }',
         'body.true--mobile.orientation--portrait .full-start-new__poster .np-unwatched-next       { bottom: 17em; }',
         'body.true--mobile.orientation--landscape .full-start-new__poster .np-unwatched-progress  { bottom: 2.5em; }',

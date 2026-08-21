@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    var VERSION = '1.1.1';
+    var VERSION = '1.1.2';
 
     var DEBUG = false;
 
@@ -166,6 +166,7 @@
         Lampa.Storage.set(STYLE_KEY, getProfileSetting(STYLE_KEY, '1'), true);
 
         applyStatusStyleAttr();
+        applyStatusEnabledAttr();
     }
 
     // Вариант расположения меток: '1' — классический (столбиком слева),
@@ -174,6 +175,14 @@
         var v = getProfileSetting(STYLE_KEY, '1').toString();
         if (v === '2') document.body.setAttribute('data-status-badge-style', v);
         else document.body.removeAttribute('data-status-badge-style');
+    }
+
+    // Атрибут на <body>, когда статусы сериалов включены — другие плагины
+    // (np_unwatched.js: скругление угла бейджа «осталось») читают его,
+    // чтобы понять, занят ли верхний правый угол постера/карточки нашей меткой.
+    function applyStatusEnabledAttr() {
+        if (isPluginEnabled()) document.body.setAttribute('data-status-enabled', '1');
+        else document.body.removeAttribute('data-status-enabled');
     }
 
     function isPluginEnabled() {
@@ -307,6 +316,7 @@
             },
             onChange: function (value) {
                 setProfileSetting(BASE_KEY, value === true || value === 'true');
+                applyStatusEnabledAttr();
                 log('Setting changed, profile: ' + getProfileId());
             },
         });
