@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    var VERSION = '1.10.0';
+    var VERSION = '1.10.1';
 
     var DEBUG = false;
     function log(message, data) {
@@ -31,6 +31,13 @@
         '    padding: 0.2em 0.4em; font-size: 1.2em; border-radius: 1em 0 0 1em;',
         '    font-weight: bold; z-index: 2;',
         '    background: rgba(0,0,0,0.5); color: #fff; transition: all 0.3s ease;',
+        '}',
+        // Только карточки (главная/каталог/поиск) — угол бейджа должен повторять
+        // угол самой карточки (border-radius: 1em у .card, у бейджа font-size
+        // 1.2em → 0.83em ≈ 1em карточки). На .full-start-new__poster (страница
+        // фильма) остаётся дефолт выше.
+        '.card .np-unwatched-remaining {',
+        '    border-radius: 0 0.83em 0 1em;',
         '}',
         // status.js (вариант 2) занимает правый верхний угол статусом сериала —
         // счётчик остатка сдвигаем ниже него. На постере status.js вешает
