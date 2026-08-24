@@ -1,6 +1,6 @@
 (function() {
     "use strict";
-    var VERSION = "1.12.0";
+    var VERSION = "1.13.0";
     window.np_unwatched_plugin = true;
     var DEBUG = false;
     function log(message, data) {
@@ -517,7 +517,7 @@
         myshows: "later"
     }, {
         status: "stopped",
-        title: "Перестал смотреть",
+        title: "Брошено",
         color: "#FF9800",
         icon: ICON_MINUS,
         myshows: "cancelled"
@@ -540,6 +540,11 @@
         color: "#2196F3",
         icon: ICON_CHECK,
         myshows: "later"
+    }, {
+        status: "stopped",
+        title: "Брошено",
+        color: "#FF9800",
+        icon: ICON_MINUS
     }, {
         status: "not_watching",
         title: "Не смотрю",
@@ -600,7 +605,7 @@
         return !!(window.MyShows && window.MyShows.isLoggedIn && window.MyShows.isLoggedIn() && window.MyShows.setStatus);
     }
     function pushToMyShows(movie, myshowsStatus, isMovie) {
-        if (!myShowsAvailable()) return;
+        if (!myshowsStatus || !myShowsAvailable()) return;
         window.MyShows.setStatus(movie, myshowsStatus, isMovie, function() {});
     }
     function markMovieWatchedTimecode(movie, cardId) {

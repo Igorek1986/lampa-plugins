@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    var VERSION = '1.12.0';
+    var VERSION = '1.13.0';
 
     // Флаг для других плагинов (см. full_hero.js): по нему можно решить, ждать
     // ли событие np-unwatched-progress ниже, или сразу считать свой лёгкий
@@ -751,7 +751,7 @@
 
     // =========================================================================
     // Кнопки статуса на полной карточке (Смотрю/Буду смотреть/Брошено/Не смотрю,
-    // для фильмов — Просмотрел/Буду смотреть/Не смотрю). Пишут в наш subjective_statuses
+    // для фильмов — Просмотрел/Буду смотреть/Брошено/Не смотрю). Пишут в наш subjective_statuses
     // (GET/PUT /timecode/status) — та же система, что и кнопки на вебе (CardDetailPage.tsx).
     // Опционально дублируют статус в MyShows через window.MyShows.setStatus (см. myshows.js),
     // если он подключён и залогинен — без собственного резолвинга MyShows id.
@@ -764,15 +764,19 @@
 
     // status — наш ключ (subjective_statuses), myshows — словарь MyShows для той же кнопки
     // (сериалы: watching/later/cancelled/remove; фильмы: finished/later/remove — см. myshows.js createMyShowsButtons).
+    // У фильмов нет статуса 'stopped' в опциях myshows (MyShows не различает "брошено"
+    // для фильмов — только watched/later/remove), поэтому у нашей кнопки "Брошено" поле
+    // myshows не задано — pushToMyShows() тогда просто ничего не шлёт в MyShows.
     var TV_STATUS_OPTIONS = [
         { status: 'watching',     title: 'Смотрю',            color: '#4CAF50', icon: ICON_EYE,   myshows: 'watching' },
         { status: 'planned',      title: 'Буду смотреть',      color: '#2196F3', icon: ICON_CHECK, myshows: 'later' },
-        { status: 'stopped',      title: 'Перестал смотреть', color: '#FF9800', icon: ICON_MINUS, myshows: 'cancelled' },
+        { status: 'stopped',      title: 'Брошено',           color: '#FF9800', icon: ICON_MINUS, myshows: 'cancelled' },
         { status: 'not_watching', title: 'Не смотрю',          color: '#F44336', icon: ICON_CROSS, myshows: 'remove' }
     ];
     var MOVIE_STATUS_OPTIONS = [
         { status: 'watched',      title: 'Просмотрел',    color: '#4CAF50', icon: ICON_EYE,   myshows: 'finished' },
         { status: 'planned',      title: 'Буду смотреть', color: '#2196F3', icon: ICON_CHECK, myshows: 'later' },
+        { status: 'stopped',      title: 'Брошено',       color: '#FF9800', icon: ICON_MINUS },
         { status: 'not_watching', title: 'Не смотрю',      color: '#F44336', icon: ICON_CROSS, myshows: 'remove' }
     ];
 
@@ -824,7 +828,7 @@
     }
 
     function pushToMyShows(movie, myshowsStatus, isMovie) {
-        if (!myShowsAvailable()) return;
+        if (!myshowsStatus || !myShowsAvailable()) return;
         window.MyShows.setStatus(movie, myshowsStatus, isMovie, function () {});
     }
 
