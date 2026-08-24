@@ -1,6 +1,6 @@
 (function() {
     "use strict";
-    var VERSION = "1.11.1";
+    var VERSION = "1.12.0";
     window.np_unwatched_plugin = true;
     var DEBUG = false;
     function log(message, data) {
@@ -1275,11 +1275,14 @@
         status: "favorite",
         title: "Избранное"
     }, {
-        status: "watching",
-        title: "Смотрю"
+        status: "continues",
+        title: "Продолжить просмотр"
     }, {
         status: "planned",
         title: "Буду смотреть"
+    }, {
+        status: "watching",
+        title: "Смотрю"
     }, {
         status: "completed",
         title: "Просмотрел"
@@ -1298,6 +1301,20 @@
         fetch(mediaLibraryUrl(status, page, perPage)).then(function(r) {
             return r.json();
         }).then(onSuccess).catch(onError || function() {});
+    }
+    function continuesUrl(page, perPage) {
+        var url = getNpBaseUrl() + "/continues?token=" + encodeURIComponent(getNpToken()) + "&page=" + (page || 1) + "&per_page=" + (perPage || 20);
+        var profileId = getProfileId();
+        if (profileId) url += "&profile_id=" + encodeURIComponent(profileId);
+        return url;
+    }
+    function fetchContinues(page, perPage, onSuccess, onError) {
+        fetch(continuesUrl(page, perPage)).then(function(r) {
+            return r.json();
+        }).then(onSuccess).catch(onError || function() {});
+    }
+    function fetchMineRow(status, page, perPage, onSuccess, onError) {
+        if (status === "continues") fetchContinues(page, perPage, onSuccess, onError); else fetchMediaLibrary(status, page, perPage, onSuccess, onError);
     }
     function openMineCard(data) {
         Lampa.Activity.push({
@@ -1329,7 +1346,7 @@
                         self.activity.loader(false);
                     }
                     MINE_ROWS.forEach(function(row, index) {
-                        fetchMediaLibrary(row.status, 1, 20, function(data) {
+                        fetchMineRow(row.status, 1, 20, function(data) {
                             var results = data && data.results || [];
                             if (results.length) lines[index] = {
                                 title: row.title,
@@ -1383,7 +1400,7 @@
                 onCreate: function() {
                     this.activity.loader(true);
                     var self = this;
-                    fetchMediaLibrary(object.status, object.page || 1, 20, function(data) {
+                    fetchMineRow(object.status, object.page || 1, 20, function(data) {
                         self.build({
                             results: data && data.results || [],
                             total_pages: data && data.total_pages || 1
@@ -1395,7 +1412,7 @@
                     });
                 },
                 onNext: function(resolve, reject) {
-                    fetchMediaLibrary(object.status, object.page, 20, function(data) {
+                    fetchMineRow(object.status, object.page, 20, function(data) {
                         resolve({
                             results: data && data.results || [],
                             total_pages: data && data.total_pages || 1

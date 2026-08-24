@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    var VERSION = '1.11.1';
+    var VERSION = '1.12.0';
 
     // Флаг для других плагинов (см. full_hero.js): по нему можно решить, ждать
     // ли событие np-unwatched-progress ниже, или сразу считать свой лёгкий
@@ -1678,8 +1678,9 @@
     var MINE_TITLE = 'Моё NP';
     var MINE_ROWS = [
         { status: 'favorite',  title: 'Избранное' },
-        { status: 'watching',  title: 'Смотрю' },
+        { status: 'continues', title: 'Продолжить просмотр' },
         { status: 'planned',   title: 'Буду смотреть' },
+        { status: 'watching',  title: 'Смотрю' },
         { status: 'completed', title: 'Просмотрел' },
         { status: 'stopped',   title: 'Брошено' }
     ];
@@ -1700,6 +1701,29 @@
             .then(function (r) { return r.json(); })
             .then(onSuccess)
             .catch(onError || function () {});
+    }
+
+    // «Продолжить просмотр» — не subjective_statuses, а прогресс по таймкодам
+    // (карточки, где просмотр начат, но не достиг watched_threshold из БД),
+    // отдаётся отдельным эндпоинтом /continues (см. handleContinues/GetContinues).
+    function continuesUrl(page, perPage) {
+        var url = getNpBaseUrl() + '/continues?token=' + encodeURIComponent(getNpToken()) +
+            '&page=' + (page || 1) + '&per_page=' + (perPage || 20);
+        var profileId = getProfileId();
+        if (profileId) url += '&profile_id=' + encodeURIComponent(profileId);
+        return url;
+    }
+
+    function fetchContinues(page, perPage, onSuccess, onError) {
+        fetch(continuesUrl(page, perPage))
+            .then(function (r) { return r.json(); })
+            .then(onSuccess)
+            .catch(onError || function () {});
+    }
+
+    function fetchMineRow(status, page, perPage, onSuccess, onError) {
+        if (status === 'continues') fetchContinues(page, perPage, onSuccess, onError);
+        else fetchMediaLibrary(status, page, perPage, onSuccess, onError);
     }
 
     function openMineCard(data) {
@@ -1741,7 +1765,7 @@
                     }
 
                     MINE_ROWS.forEach(function (row, index) {
-                        fetchMediaLibrary(row.status, 1, 20, function (data) {
+                        fetchMineRow(row.status, 1, 20, function (data) {
                             var results = (data && data.results) || [];
                             if (results.length) {
                                 lines[index] = {
@@ -1797,7 +1821,7 @@
                 onCreate: function () {
                     this.activity.loader(true);
                     var self = this;
-                    fetchMediaLibrary(object.status, object.page || 1, 20, function (data) {
+                    fetchMineRow(object.status, object.page || 1, 20, function (data) {
                         self.build({ results: (data && data.results) || [], total_pages: (data && data.total_pages) || 1 });
                         self.activity.loader(false);
                     }, function () {
@@ -1806,7 +1830,7 @@
                     });
                 },
                 onNext: function (resolve, reject) {
-                    fetchMediaLibrary(object.status, object.page, 20, function (data) {
+                    fetchMineRow(object.status, object.page, 20, function (data) {
                         resolve({ results: (data && data.results) || [], total_pages: (data && data.total_pages) || 1 });
                     }, reject);
                 },
