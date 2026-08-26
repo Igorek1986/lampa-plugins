@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    var VERSION = '1.13.0';
+    var VERSION = '1.14.0';
 
     // Флаг для других плагинов (см. full_hero.js): по нему можно решить, ждать
     // ли событие np-unwatched-progress ниже, или сразу считать свой лёгкий
@@ -887,13 +887,20 @@
             });
         }
 
+        var currentActiveStatus = 'not_watching';
+
         options.forEach(function (opt) {
             var btn = $('<div class="full-start__button selector np-status-btn" data-np-status="' + opt.status + '">' + opt.icon + '<span>' + opt.title + '</span></div>');
             btn.on('hover:enter', function () {
                 if (!isSameFullCardOpen(movie)) return;
+                // Карточка уже в этом статусе — повторный запрос бесполезен (см. аналогичный
+                // guard в myshows.js), только подсветим активную кнопку.
+                if (opt.status === currentActiveStatus) { applyActive(opt.status); return; }
                 applyActive(opt.status);
                 setSubjectiveStatus(cardId, opt.status, function (ok) {
                     if (!ok) { Lampa.Noty.show('Ошибка установки статуса'); return; }
+                    currentActiveStatus = opt.status;
+                    Lampa.Noty.show('Статус "' + opt.title + '" установлен');
                     // Убираем/обновляем карточку в «Непросмотренные» и других уже
                     // отрисованных списках сразу, не дожидаясь WS/следующего reload
                     // (фильмам бейджи "Непросмотренные" не касаются — там просто нет
@@ -919,7 +926,8 @@
         // ничего не пишется (как на вебе, см. CardDetailPage.tsx) — сравнение локальное.
         fetchSubjectiveStatus(cardId, function (status) {
             if (!isSameFullCardOpen(movie)) return;
-            applyActive(status || 'not_watching');
+            currentActiveStatus = status || 'not_watching';
+            applyActive(currentActiveStatus);
         });
 
         if (window.Lampa && window.Lampa.Controller) {
@@ -2020,7 +2028,7 @@
         fetchCalendarMonth(next.getFullYear(), next.getMonth() + 1, function (eps) { results = results.concat(eps); done(); });
     }
 
-    // /calendar отдаёт poster_path уже полным URL (http://image.tmdb.org/t/p/w342/...),
+    // /calendar отдаёт poster_path уже полным URL (http://image.tmdb.org/t/p/w500/...),
     // а и нативный timetable-рендер, и myshows.js ждут относительный TMDB-путь
     // (сами добавляют t/p/wNNN/ спереди) — обрезаем размерный сегмент обратно.
     function toRelativePosterPath(url) {

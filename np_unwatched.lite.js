@@ -1,6 +1,6 @@
 (function() {
     "use strict";
-    var VERSION = "1.13.0";
+    var VERSION = "1.14.0";
     window.np_unwatched_plugin = true;
     var DEBUG = false;
     function log(message, data) {
@@ -657,16 +657,23 @@
                 }).removeClass("np-status-active");
             });
         }
+        var currentActiveStatus = "not_watching";
         options.forEach(function(opt) {
             var btn = $('<div class="full-start__button selector np-status-btn" data-np-status="' + opt.status + '">' + opt.icon + "<span>" + opt.title + "</span></div>");
             btn.on("hover:enter", function() {
                 if (!isSameFullCardOpen(movie)) return;
+                if (opt.status === currentActiveStatus) {
+                    applyActive(opt.status);
+                    return;
+                }
                 applyActive(opt.status);
                 setSubjectiveStatus(cardId, opt.status, function(ok) {
                     if (!ok) {
                         Lampa.Noty.show("Ошибка установки статуса");
                         return;
                     }
+                    currentActiveStatus = opt.status;
+                    Lampa.Noty.show('Статус "' + opt.title + '" установлен');
                     onStatusChanged(cardId, opt.status);
                 });
                 pushToMyShows(movie, opt.myshows, isMovie);
@@ -678,7 +685,8 @@
         });
         fetchSubjectiveStatus(cardId, function(status) {
             if (!isSameFullCardOpen(movie)) return;
-            applyActive(status || "not_watching");
+            currentActiveStatus = status || "not_watching";
+            applyActive(currentActiveStatus);
         });
         if (window.Lampa && window.Lampa.Controller) {
             var allButtons = container.find("> *").filter(function() {
