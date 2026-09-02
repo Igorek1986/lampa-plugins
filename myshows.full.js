@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    var VERSION = '1.0.8';
+    var VERSION = '1.0.9';
 
     var DEFAULT_ADD_THRESHOLD = '0';
     var DEFAULT_MIN_PROGRESS = 90;
@@ -404,9 +404,18 @@
         }
     }
 
-    var _SERVER_CACHE_VERSION = 2; // bump при изменениях логики myshowsId-маппинга
+    var _SERVER_CACHE_VERSION = 5; // bump при изменениях логики myshowsId-маппинга
     var _SERVER_CACHE_VER_KEY = 'myshows_server_cache_ver';
     var _SERVER_CACHE_PATHS   = ['unwatched_serials', 'serial_status', 'movie_status', 'watchlist', 'watched', 'cancelled'];
+
+    // Одноразовый флаг: сразу после сброса версии кэша getTMDBDetails должен
+    // игнорировать cachedShows из ЕЩЁ ОДНОГО (вложенного) loadCacheFromServer —
+    // иначе для Lampac/NP-режимов (где кэш живёт на бэкенде, а не в Lampa.Storage)
+    // этот второй вызов молча прочитает старый файл (маркер версии уже обновлён
+    // первым вызовом, поэтому сам _checkServerCacheVersion его не блокирует) и
+    // переиспользует старый tmdb_id по myshowsId вместо повторного поиска —
+    // старая карточка навсегда переживёт бамп версии.
+    var _skipCachedShowsOnce = false;
 
     function _checkServerCacheVersion() {
         var stored = parseInt(Lampa.Storage.get(_SERVER_CACHE_VER_KEY) || '0');
@@ -416,6 +425,14 @@
         });
         Lampa.Storage.set(_SERVER_CACHE_VER_KEY, _SERVER_CACHE_VERSION);
         Lampa.Storage.set('myshows_tmdb_cards', {});
+        // _tmdbCardCache уже загружен в память из старого Storage к этому моменту —
+        // без явной очистки объекта старые записи переживут ещё одну сессию.
+        if (typeof _tmdbCardCache !== 'undefined') {
+            for (var k in _tmdbCardCache) {
+                if (_tmdbCardCache.hasOwnProperty(k)) delete _tmdbCardCache[k];
+            }
+        }
+        _skipCachedShowsOnce = true;
         Log.info('Server cache cleared (version bump: ' + stored + ' → ' + _SERVER_CACHE_VERSION + ')');
         return false;
     }
@@ -1976,6 +1993,9 @@
                     Log.info('[MS-TT] saveCacheToServer unwatched_serials called, shows:', result.shows.length, 't=', Date.now() - _msttT0, 'ms');
                     saveCacheToServer({ shows: result.shows }, 'unwatched_serials', function(ok) {
                         Log.info('[MS-TT] saveCacheToServer callback ok:', ok, '_onUnwatchedSaved:', !!_onUnwatchedSaved, 't=', Date.now() - _msttT0, 'ms');
+                        // Свежие (пересчитанные без доверия старому кешу) данные точно
+                        // долетели до бэкенда — теперь можно снова доверять cachedShows.
+                        if (ok) _skipCachedShowsOnce = false;
                         _fireUnwatchedSaved(result.shows);
                     }, startProfile);
 
@@ -2992,7 +3012,17 @@
         };
 
         loadCacheFromServer('unwatched_serials', 'shows', function(cache) {
-            var cachedShows = cache && cache.shows ? cache.shows : [];
+            // Флаг НЕ сбрасываем здесь: на холодном старте initMyShowsCaches() и
+            // открытие секции "Непросмотренные" могут запустить getTMDBDetails
+            // параллельно несколькими независимыми цепочками. Если сбрасывать
+            // флаг сразу по первому чтению, вторая (чуть более поздняя) цепочка
+            // его уже не увидит, прочитает ещё не перезаписанный старый кеш и
+            // пересохранит его поверх правильного результата первой цепочки.
+            // Сбрасываем только после успешного сохранения свежих данных — см. ниже.
+            var cachedShows = (cache && cache.shows && !_skipCachedShowsOnce) ? cache.shows : [];
+            if (_skipCachedShowsOnce) {
+                Log.info('[DEBUG] Пропускаем cachedShows (после сброса версии кэша, до подтверждённого сохранения)');
+            }
 
             Log.info('[DEBUG] Шоу в кэше:', cachedShows.length);
             cachedShows.forEach(function(show, idx) {
@@ -3197,9 +3227,38 @@
             return a.indexOf(q) === i;
         });
 
+        var bestUnverified = null; // первый результат первой непустой выдачи — резерв, если точного совпадения нет нигде
+
+        // TMDB может на первое место в поиске поставить более популярный, но другой
+        // сериал (омонимы/похожие названия) — берём первый результат, чьё name/original_name
+        // после нормализации реально совпадает с одним из наших запросов (+ год ±1).
+        function findVerifiedMatch(results) {
+            for (var r = 0; r < results.length; r++) {
+                var res = results[r];
+                var resName = normalizeForComparison(res.name || '');
+                var resOrig = normalizeForComparison(res.original_name || '');
+                var titleOk = false;
+                for (var t = 0; t < searchAttempts.length; t++) {
+                    var qn = normalizeForComparison(searchAttempts[t]);
+                    if (qn && (qn === resName || qn === resOrig)) { titleOk = true; break; }
+                }
+                if (!titleOk) continue;
+
+                var resYear = extractYear(res);
+                var yearOk = !currentShow.year || !resYear || Math.abs(parseInt(resYear) - parseInt(currentShow.year)) <= 1;
+                if (yearOk) return res;
+            }
+            return null;
+        }
+
         function attemptSearch(attemptIndex, withYear) {
             if (attemptIndex >= searchAttempts.length) {
-                status.append('tmdb_' + index, null);
+                if (bestUnverified) {
+                    Log.info('[DEBUG] Нет точного совпадения названия — используем лучшую догадку: "' + bestUnverified.name + '"');
+                    enrichTMDBShow(bestUnverified, currentShow, index, status);
+                } else {
+                    status.append('tmdb_' + index, null);
+                }
                 callback();
                 return;
             }
@@ -3212,7 +3271,11 @@
 
             if (withYear && currentShow.year &&
                 currentShow.year > 1900 && currentShow.year < 2100) {
-                searchUrl += '&year=' + currentShow.year;
+                // TMDB игнорирует &year= для search/tv (это параметр search/movie) — без
+                // &first_air_date_year= год-фильтр молча не применяется, и при омонимах/
+                // похожих названиях (напр. "Farzi") TMDB может вернуть в первых позициях
+                // совсем другой сериал другого года.
+                searchUrl += '&first_air_date_year=' + currentShow.year;
             }
 
             Log.info('[DEBUG] TMDB запрос: "' + query + '" (с годом: ' + withYear + ')');
@@ -3220,16 +3283,21 @@
             var network = new Lampa.Reguest();
             network.silent(Lampa.TMDB.api(searchUrl), function (searchResponse) {
                 if (searchResponse && searchResponse.results && searchResponse.results.length) {
-                    Log.info('[DEBUG] Найдено: "' + searchResponse.results[0].name + '" для "' + query + '"');
-                    enrichTMDBShow(searchResponse.results[0], currentShow, index, status);
-                    callback();
-                } else {
-                    // Пробуем другие варианты
-                    if (withYear) {
-                        attemptSearch(attemptIndex, false);
-                    } else {
-                        attemptSearch(attemptIndex + 1, true);
+                    if (!bestUnverified) bestUnverified = searchResponse.results[0];
+
+                    var match = findVerifiedMatch(searchResponse.results);
+                    if (match) {
+                        Log.info('[DEBUG] Найдено: "' + match.name + '" для "' + query + '"');
+                        enrichTMDBShow(match, currentShow, index, status);
+                        callback();
+                        return;
                     }
+                }
+                // Пробуем другие варианты
+                if (withYear) {
+                    attemptSearch(attemptIndex, false);
+                } else {
+                    attemptSearch(attemptIndex + 1, true);
                 }
             }, function(error) {
                 Log.error('[DEBUG] Ошибка поиска для "' + query + '":', error);
@@ -7415,47 +7483,91 @@
 
                 var attemptIndex = 0;
                 var found = false;
+                var bestUnverified = null; // первый результат первой непустой выдачи — последний резерв
+
+                function acceptResult(result, unverified) {
+                    found = true;
+                    var enriched = result;
+                    enriched.myshowsId = currentItem.myshowsId;
+                    enriched.watchStatus = currentItem.watchStatus;
+                    enriched.type = currentItem.type === 'movie' ? 'movie' : 'tv';
+
+                    if (enriched.type === 'tv') {
+                        enriched.last_episode_date = enriched.first_air_date;
+                        enriched.release_date = enriched.first_air_date || '';
+                    }
+                    enriched.release_year = extractYear(enriched);
+
+                    _saveCardToCache(currentItem.myshowsId, enriched);
+                    data.results.push(enriched);
+                    if (unverified) {
+                        Log.info('getTMDBDetailsSimple: no exact title match for', currentItem.title, '— using best guess', enriched.title || enriched.name);
+                    } else {
+                        Log.info('getTMDBDetailsSimple: Found', enriched.title || enriched.name, 'for MyShows ID:', currentItem.myshowsId);
+                    }
+                    status.append('item_' + index, {});
+                }
+
+                // Ищем среди результатов TMDB-поиска тот, чьё title/original_title
+                // совпадает (после нормализации) с одним из наших запросов — иначе
+                // TMDB может на первое место поставить популярный, но не тот сериал
+                // (например при омонимах/похожих названиях), и это title-совпадение
+                // потом улетит в БД (myshows_items — общая для всех пользователей NP).
+                function findVerifiedMatch(results) {
+                    for (var r = 0; r < results.length; r++) {
+                        var res = results[r];
+                        var resTitle = normalizeForComparison(res.title || res.name || '');
+                        var resOrig  = normalizeForComparison(res.original_title || res.original_name || '');
+                        var titleOk = false;
+                        for (var t = 0; t < titles.length; t++) {
+                            var qn = normalizeForComparison(titles[t]);
+                            if (qn && (qn === resTitle || qn === resOrig)) { titleOk = true; break; }
+                        }
+                        if (!titleOk) continue;
+
+                        var resYear = extractYear(res);
+                        var yearOk = !currentItem.year || !resYear || Math.abs(parseInt(resYear) - parseInt(currentItem.year)) <= 1;
+                        if (yearOk) return res;
+                    }
+                    return null;
+                }
 
                 function tryAttempt() {
                     if (found || attemptIndex >= attempts.length) {
-                        // Все попытки исчерпаны
-                        status.append('item_' + index, {});
+                        // Все попытки исчерпаны — если точного совпадения не нашлось,
+                        // используем первый результат самой первой непустой выдачи (как раньше)
+                        if (!found && bestUnverified) {
+                            acceptResult(bestUnverified, true);
+                        } else if (!found) {
+                            status.append('item_' + index, {});
+                        }
                         return;
                     }
 
                     var attempt = attempts[attemptIndex];
-                    var endpoint = currentItem.type === 'movie' ? 'search/movie' : 'search/tv';
+                    var isMovie = currentItem.type === 'movie';
+                    var endpoint = isMovie ? 'search/movie' : 'search/tv';
+                    // TMDB: search/movie принимает &year=, search/tv — только
+                    // &first_air_date_year= (иначе год-фильтр молча игнорируется).
+                    var yearParam = isMovie ? 'year' : 'first_air_date_year';
                     var searchUrl = endpoint +
                         '?api_key=' + Lampa.TMDB.key() +
                         '&query=' + encodeURIComponent(attempt.query) +
-                        (attempt.year ? '&year=' + attempt.year : '') +
+                        (attempt.year ? '&' + yearParam + '=' + attempt.year : '') +
                         '&language=' + Lampa.Storage.get('tmdb_lang', 'ru');
 
                     var network = new Lampa.Reguest();
                     network.silent(Lampa.TMDB.api(searchUrl), function(response) {
                         if (!found && response && response.results && response.results.length > 0) {
-                            found = true;
-                            var enriched = response.results[0];
-                            enriched.myshowsId = currentItem.myshowsId;
-                            enriched.watchStatus = currentItem.watchStatus;
-                            enriched.type = currentItem.type === 'movie' ? 'movie' : 'tv';
+                            if (!bestUnverified) bestUnverified = response.results[0];
 
-                            if (enriched.type === 'tv') {
-                                enriched.last_episode_date = enriched.first_air_date;
-                                enriched.release_date = enriched.first_air_date || '';
-                            }
-                            enriched.release_year = extractYear(enriched);
-
-                            _saveCardToCache(currentItem.myshowsId, enriched);
-                            data.results.push(enriched);
-                            Log.info('getTMDBDetailsSimple: Found', enriched.title || enriched.name, 'for MyShows ID:', currentItem.myshowsId);
+                            var match = findVerifiedMatch(response.results);
+                            if (match) acceptResult(match, false);
                         }
 
                         if (!found) {
                             attemptIndex++;
                             tryAttempt();
-                        } else {
-                            status.append('item_' + index, {});
                         }
                     }, function(error) {
                         Log.info('getTMDBDetailsSimple: Search error for', currentItem.title, ':', error);

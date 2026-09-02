@@ -1,6 +1,6 @@
 (function() {
     "use strict";
-    var VERSION = "1.0.8";
+    var VERSION = "1.0.9";
     var DEFAULT_ADD_THRESHOLD = "0";
     var DEFAULT_MIN_PROGRESS = 90;
     var API_URL = "https://myshows.me/v3/rpc/";
@@ -302,9 +302,10 @@
             if (callback) callback(false);
         }
     }
-    var _SERVER_CACHE_VERSION = 2;
+    var _SERVER_CACHE_VERSION = 5;
     var _SERVER_CACHE_VER_KEY = "myshows_server_cache_ver";
     var _SERVER_CACHE_PATHS = [ "unwatched_serials", "serial_status", "movie_status", "watchlist", "watched", "cancelled" ];
+    var _skipCachedShowsOnce = false;
     function _checkServerCacheVersion() {
         var stored = parseInt(Lampa.Storage.get(_SERVER_CACHE_VER_KEY) || "0");
         if (stored === _SERVER_CACHE_VERSION) return true;
@@ -313,6 +314,8 @@
         });
         Lampa.Storage.set(_SERVER_CACHE_VER_KEY, _SERVER_CACHE_VERSION);
         Lampa.Storage.set("myshows_tmdb_cards", {});
+        if (typeof _tmdbCardCache !== "undefined") for (var k in _tmdbCardCache) if (_tmdbCardCache.hasOwnProperty(k)) delete _tmdbCardCache[k];
+        _skipCachedShowsOnce = true;
         return false;
     }
     function isNpConfigured() {
@@ -1426,6 +1429,7 @@
                         shows: result.shows
                     }, "unwatched_serials", function(ok) {
                         Date.now();
+                        if (ok) _skipCachedShowsOnce = false;
                         _fireUnwatchedSaved(result.shows);
                     }, startProfile);
                     if (sameProfile) _populateProgressMap(result.shows);
@@ -2053,7 +2057,8 @@
             });
         };
         loadCacheFromServer("unwatched_serials", "shows", function(cache) {
-            var cachedShows = cache && cache.shows ? cache.shows : [];
+            var cachedShows = cache && cache.shows && !_skipCachedShowsOnce ? cache.shows : [];
+            if (_skipCachedShowsOnce) ;
             cachedShows.length;
             cachedShows.forEach(function(show, idx) {
                 show.name, show.id;
@@ -2219,22 +2224,52 @@
         searchAttempts = searchAttempts.filter(function(q, i, a) {
             return a.indexOf(q) === i;
         });
+        var bestUnverified = null;
+        function findVerifiedMatch(results) {
+            for (var r = 0; r < results.length; r++) {
+                var res = results[r];
+                var resName = normalizeForComparison(res.name || "");
+                var resOrig = normalizeForComparison(res.original_name || "");
+                var titleOk = false;
+                for (var t = 0; t < searchAttempts.length; t++) {
+                    var qn = normalizeForComparison(searchAttempts[t]);
+                    if (qn && (qn === resName || qn === resOrig)) {
+                        titleOk = true;
+                        break;
+                    }
+                }
+                if (!titleOk) continue;
+                var resYear = extractYear(res);
+                var yearOk = !currentShow.year || !resYear || Math.abs(parseInt(resYear) - parseInt(currentShow.year)) <= 1;
+                if (yearOk) return res;
+            }
+            return null;
+        }
         function attemptSearch(attemptIndex, withYear) {
             if (attemptIndex >= searchAttempts.length) {
-                status.append("tmdb_" + index, null);
+                if (bestUnverified) {
+                    bestUnverified.name;
+                    enrichTMDBShow(bestUnverified, currentShow, index, status);
+                } else status.append("tmdb_" + index, null);
                 callback();
                 return;
             }
             var query = searchAttempts[attemptIndex];
             var searchUrl = "search/tv" + "?api_key=" + Lampa.TMDB.key() + "&query=" + encodeURIComponent(query) + "&language=" + Lampa.Storage.get("tmdb_lang", "ru");
-            if (withYear && currentShow.year && currentShow.year > 1900 && currentShow.year < 2100) searchUrl += "&year=" + currentShow.year;
+            if (withYear && currentShow.year && currentShow.year > 1900 && currentShow.year < 2100) searchUrl += "&first_air_date_year=" + currentShow.year;
             var network = new Lampa.Reguest;
             network.silent(Lampa.TMDB.api(searchUrl), function(searchResponse) {
                 if (searchResponse && searchResponse.results && searchResponse.results.length) {
-                    searchResponse.results[0].name;
-                    enrichTMDBShow(searchResponse.results[0], currentShow, index, status);
-                    callback();
-                } else if (withYear) attemptSearch(attemptIndex, false); else attemptSearch(attemptIndex + 1, true);
+                    if (!bestUnverified) bestUnverified = searchResponse.results[0];
+                    var match = findVerifiedMatch(searchResponse.results);
+                    if (match) {
+                        match.name;
+                        enrichTMDBShow(match, currentShow, index, status);
+                        callback();
+                        return;
+                    }
+                }
+                if (withYear) attemptSearch(attemptIndex, false); else attemptSearch(attemptIndex + 1, true);
             }, function(error) {
                 if (withYear) attemptSearch(attemptIndex, false); else attemptSearch(attemptIndex + 1, true);
             });
@@ -4877,35 +4912,65 @@
             });
             var attemptIndex = 0;
             var found = false;
+            var bestUnverified = null;
+            function acceptResult(result, unverified) {
+                found = true;
+                var enriched = result;
+                enriched.myshowsId = currentItem.myshowsId;
+                enriched.watchStatus = currentItem.watchStatus;
+                enriched.type = currentItem.type === "movie" ? "movie" : "tv";
+                if (enriched.type === "tv") {
+                    enriched.last_episode_date = enriched.first_air_date;
+                    enriched.release_date = enriched.first_air_date || "";
+                }
+                enriched.release_year = extractYear(enriched);
+                _saveCardToCache(currentItem.myshowsId, enriched);
+                data.results.push(enriched);
+                if (unverified) currentItem.title, enriched.title || enriched.name; else enriched.title || enriched.name, 
+                currentItem.myshowsId;
+                status.append("item_" + index, {});
+            }
+            function findVerifiedMatch(results) {
+                for (var r = 0; r < results.length; r++) {
+                    var res = results[r];
+                    var resTitle = normalizeForComparison(res.title || res.name || "");
+                    var resOrig = normalizeForComparison(res.original_title || res.original_name || "");
+                    var titleOk = false;
+                    for (var t = 0; t < titles.length; t++) {
+                        var qn = normalizeForComparison(titles[t]);
+                        if (qn && (qn === resTitle || qn === resOrig)) {
+                            titleOk = true;
+                            break;
+                        }
+                    }
+                    if (!titleOk) continue;
+                    var resYear = extractYear(res);
+                    var yearOk = !currentItem.year || !resYear || Math.abs(parseInt(resYear) - parseInt(currentItem.year)) <= 1;
+                    if (yearOk) return res;
+                }
+                return null;
+            }
             function tryAttempt() {
                 if (found || attemptIndex >= attempts.length) {
-                    status.append("item_" + index, {});
+                    if (!found && bestUnverified) acceptResult(bestUnverified, true); else if (!found) status.append("item_" + index, {});
                     return;
                 }
                 var attempt = attempts[attemptIndex];
-                var endpoint = currentItem.type === "movie" ? "search/movie" : "search/tv";
-                var searchUrl = endpoint + "?api_key=" + Lampa.TMDB.key() + "&query=" + encodeURIComponent(attempt.query) + (attempt.year ? "&year=" + attempt.year : "") + "&language=" + Lampa.Storage.get("tmdb_lang", "ru");
+                var isMovie = currentItem.type === "movie";
+                var endpoint = isMovie ? "search/movie" : "search/tv";
+                var yearParam = isMovie ? "year" : "first_air_date_year";
+                var searchUrl = endpoint + "?api_key=" + Lampa.TMDB.key() + "&query=" + encodeURIComponent(attempt.query) + (attempt.year ? "&" + yearParam + "=" + attempt.year : "") + "&language=" + Lampa.Storage.get("tmdb_lang", "ru");
                 var network = new Lampa.Reguest;
                 network.silent(Lampa.TMDB.api(searchUrl), function(response) {
                     if (!found && response && response.results && response.results.length > 0) {
-                        found = true;
-                        var enriched = response.results[0];
-                        enriched.myshowsId = currentItem.myshowsId;
-                        enriched.watchStatus = currentItem.watchStatus;
-                        enriched.type = currentItem.type === "movie" ? "movie" : "tv";
-                        if (enriched.type === "tv") {
-                            enriched.last_episode_date = enriched.first_air_date;
-                            enriched.release_date = enriched.first_air_date || "";
-                        }
-                        enriched.release_year = extractYear(enriched);
-                        _saveCardToCache(currentItem.myshowsId, enriched);
-                        data.results.push(enriched);
-                        enriched.title || enriched.name, currentItem.myshowsId;
+                        if (!bestUnverified) bestUnverified = response.results[0];
+                        var match = findVerifiedMatch(response.results);
+                        if (match) acceptResult(match, false);
                     }
                     if (!found) {
                         attemptIndex++;
                         tryAttempt();
-                    } else status.append("item_" + index, {});
+                    }
                 }, function(error) {
                     currentItem.title;
                     attemptIndex++;
