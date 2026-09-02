@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    var VERSION = '1.0.9';
+    var VERSION = '1.0.10';
 
     var DEFAULT_ADD_THRESHOLD = '0';
     var DEFAULT_MIN_PROGRESS = 90;
@@ -4855,6 +4855,24 @@
         }
     }
 
+    // Активность (страница), которой принадлежит parentSection, сейчас на экране?
+    // Controller.collectionSet/collectionFocus работают через ГЛОБАЛЬНЫЙ Navigator —
+    // Navigator.setCollection() внутри всегда вызывает unfocus() (navigator.js:568),
+    // то есть даже голый collectionSet() снимает фокус с того, что реально активно
+    // прямо сейчас (например, кнопок открытой full-карточки), если позвать его для
+    // ФОНОВОЙ секции — а removeCompletedCard ниже почти всегда зовётся именно в
+    // такой момент (статус меняют, находясь ВНУТРИ full, секция на Главной в фоне).
+    // Без этой проверки — то же самое, что и было починено в np_unwatched.js:
+    // хайджек чужого Navigator плюс (после возврата назад) откат фокуса на первую
+    // карточку, потому что коллекция строки была подменена, пока она была в фоне.
+    function isRowActivityForeground(parentSection) {
+        var active = window.Lampa && Lampa.Activity && Lampa.Activity.active && Lampa.Activity.active();
+        if (!active || !active.activity || !active.activity.render) return false;
+        var root = active.activity.render(true);
+        root = root && (root[0] || root);
+        return !!(root && parentSection && root.contains(parentSection));
+    }
+
     function removeCompletedCard(cardElement, showName, parentSection, cardIndex) {
         // Контейнер карточек: на «Еще» (категория) это не .items-line — берём parentNode.
         if (!parentSection) parentSection = cardElement.parentNode;
@@ -4874,6 +4892,8 @@
             }
         }
 
+        var foreground = isRowActivityForeground(parentSection);
+
         // Добавляем анимацию исчезновения
         cardElement.style.transition = 'opacity 0.5s ease, transform 0.5s ease';
         cardElement.style.opacity = '0';
@@ -4886,12 +4906,26 @@
 
                 // Восстанавливаем фокус только если удаляемая карточка была в фокусе
                 if (nextCard && window.Lampa && window.Lampa.Controller) {
-                    setTimeout(function() {
-                        Lampa.Controller.collectionSet(parentSection);
-                        Lampa.Controller.collectionFocus(nextCard, parentSection);
-                    }, 50);
-                } else if (isCurrentlyFocused) {
-                    // Если была в фокусе, но нет следующей карточки, обновляем коллекцию
+                    if (foreground) {
+                        setTimeout(function() {
+                            Lampa.Controller.collectionSet(parentSection);
+                            Lampa.Controller.collectionFocus(nextCard, parentSection);
+                        }, 50);
+                    } else if (window.Lampa.Utils) {
+                        // Секция сейчас в фоне (typично — открыта full-карточка) — вместо
+                        // Controller.collectionSet/collectionFocus (хайджек глобального
+                        // Navigator, см. isRowActivityForeground) просто диспатчим то же
+                        // событие, которым Lampa сама помечает фокус (core/controller.js:
+                        // focus() → Utils.trigger(target,'hover:focus')). Слушатель навешан
+                        // на этот DOM-узел ещё при создании карточки самой линией/категорией
+                        // (items.js) — событие перепривяжет её собственный this.last, не
+                        // трогая чужой Navigator. Когда пользователь реально вернётся назад,
+                        // toggle() секции перечитает this.last и найдёт живой соседний узел.
+                        Lampa.Utils.trigger(nextCard, 'hover:focus');
+                    }
+                } else if (isCurrentlyFocused && foreground) {
+                    // Если была в фокусе, но нет следующей карточки, обновляем коллекцию —
+                    // только на переднем плане (иначе тот же хайджек, что и выше).
                     setTimeout(function() {
                         if (window.Lampa && window.Lampa.Controller) {
                             Lampa.Controller.collectionSet(parentSection);

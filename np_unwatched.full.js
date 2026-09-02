@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    var VERSION = '1.14.0';
+    var VERSION = '1.15.0';
 
     // Флаг для других плагинов (см. full_hero.js): по нему можно решить, ждать
     // ли событие np-unwatched-progress ниже, или сразу считать свой лёгкий
@@ -571,6 +571,13 @@
     // них отдельных запросов — используем то, что уже знаем.
     var knownProgress = {};
 
+    // Инстанс строки «Непросмотренные» на нативной Главной (см. trackUnwatchedLine
+    // ниже) — через него живую карточку можно добавить штатным путём (createAndAppend
+    // кладёт её в this.items, навигация её видит), по образцу _myShowsLine в myshows.js.
+    // Не сбрасывается на destroy специально — insertNewCardIntoUnwatchedSection сама
+    // проверяет document.body.contains(dom) и безопасно не срабатывает на устаревшую.
+    var _unwatchedLine = null;
+
     function addBadgesToRowCard(cardHtml) {
         if (!isPluginEnabled()) return;
 
@@ -642,21 +649,61 @@
         }
     }
 
-    // Живое удаление карточки со страницы «Непросмотренные», когда досмотрели
-    // последнюю вышедшую серию — по образцу removeCompletedCard в myshows.js:
-    // fade-out + удаление из DOM, с переносом фокуса на соседнюю карточку, если
-    // удаляемая была в фокусе.
-    function removeCompletedRowCard(cardEl) {
+    // Активность (страница), которой принадлежит parent, сейчас на экране? Проверено
+    // на dev/lampa-source: Controller.collectionSet/collectionFocus работают через
+    // ГЛОБАЛЬНЫЙ Navigator/active — вызов их для строки в фоне (например, пока открыта
+    // 'full') на секунду подменяет коллекцию активности переднего плана вместо того,
+    // чтобы просто починить фокус строки. Так же делает removeCompletedCard в
+    // myshows.js — тот же баг, просто незаметный, пока не разбираешь причину.
+    function isRowActivityForeground(parent) {
+        var active = window.Lampa && Lampa.Activity && Lampa.Activity.active && Lampa.Activity.active();
+        if (!active || !active.activity || !active.activity.render) return false;
+        var root = active.activity.render(true);
+        root = root && (root[0] || root);
+        return !!(root && parent && root.contains(parent));
+    }
+
+    // Живое удаление карточки из строки (на Главной «Непросмотренные», на «Моё NP»
+    // любая из статусных строк) — по образцу removeCompletedCard в myshows.js:
+    // fade-out + удаление из DOM, с переносом фокуса на соседнюю карточку
+    // (предпочтительно слева, иначе справа), если удаляемая была в фокусе.
+    // `line` — инстанс строки-владельца (для «Непросмотренные» это _unwatchedLine,
+    // для «Моё NP» — соответствующий элемент _mineLines), используется только для
+    // определения/переноса фокуса, к самому удалению карточки не относится.
+    //
+    // Статус чаще всего меняют, находясь ВНУТРИ полной карточки — то есть строка
+    // на Главной в этот момент в фоне, не на экране. Controller.collectionFocus
+    // здесь не поможет (см. isRowActivityForeground выше): вместо неё просто
+    // диспатчим то же 'hover:focus', которым Lampa сама помечает активный элемент
+    // строки (core/controller.js: focus() → Utils.trigger(target,'hover:focus')) —
+    // это перепривязывает this.last у самого объекта строки (items/line/module/
+    // items.js), не трогая чужой Navigator. Когда пользователь реально вернётся
+    // назад, toggle() строки перечитает this.last и найдёт уже живой соседний
+    // узел вместо мёртвого — без этого Lampa молча откатывается на первую карточку
+    // (controller.js: target.offsetParent===null → target=false → colection[0]).
+    function removeCompletedRowCard(cardEl, line) {
         var parent = cardEl.parentNode;
         if (!parent) return;
 
-        var wasFocused = cardEl.classList.contains('focus');
         var siblings = [].slice.call(parent.querySelectorAll('.card'));
         var idx = siblings.indexOf(cardEl);
-        var nextFocus = null;
-        if (wasFocused) {
-            nextFocus = idx > 0 ? siblings[idx - 1] : siblings[idx + 1];
-        }
+        var nextFocus = idx > 0 ? siblings[idx - 1] : siblings[idx + 1];
+
+        // .focus — класс, который Lampa вешает только на TV-платформе (см. комментарий
+        // выше), поэтому дополнительно сверяемся с this.last самой строки — он не
+        // зависит от платформы и обновляется на каждый hover:focus/touch/enter.
+        // this.last — «сырой» DOM-узел в актуальном движке (items.js: render =
+        // item.render(true), которое отдаёт голый this.html, не jQuery-обёртку), но в
+        // легаси-line.js это тоже голый target — сравнение через .last[0] всегда было
+        // undefined===cardEl (false), из-за чего эта ветка НИКОГДА не срабатывала на
+        // не-TV платформах (где и .focus класса тоже нет) — фокус после возврата назад
+        // откатывался на первую карточку. Разворачиваем на случай, если .last всё же
+        // окажется jQuery-объектом (jquery-проп есть только у него, не у DOM-узла).
+        var lastEl = line && line.last;
+        lastEl = lastEl && (lastEl.jquery ? lastEl[0] : lastEl);
+        var wasFocused = cardEl.classList.contains('focus') || lastEl === cardEl;
+
+        var foreground = isRowActivityForeground(parent);
 
         cardEl.style.transition = 'opacity 0.5s ease';
         cardEl.style.opacity = '0';
@@ -664,15 +711,60 @@
         setTimeout(function () {
             if (!cardEl.parentNode) return;
             cardEl.remove();
-            // Коллекцию (для навигации с клавиатуры/пульта) пересобираем только если
-            // удалённая карточка реально была в фокусе — иначе не трогаем чужой фокус.
-            if (wasFocused && window.Lampa && Lampa.Controller) {
+
+            if (!wasFocused || !nextFocus) return;
+
+            if (foreground && window.Lampa && Lampa.Controller) {
                 setTimeout(function () {
                     Lampa.Controller.collectionSet(parent);
-                    if (nextFocus) Lampa.Controller.collectionFocus(nextFocus, parent);
+                    Lampa.Controller.collectionFocus(nextFocus, parent);
                 }, 50);
+            } else if (window.Lampa && Lampa.Utils) {
+                Lampa.Utils.trigger(nextFocus, 'hover:focus');
+                // Страховка: диспатч выше обновляет this.last строки как побочный эффект
+                // (items.js слушает то же событие) — но это опирается на то, что слушатель
+                // всё ещё навешан именно так в текущей сборке Lampa. Пишем то же поле
+                // напрямую — это именно то, что toggle() строки читает при реальном
+                // возврате назад (line/base.js: collectionFocus(this.last || false, ...)),
+                // так надёжнее, чем полагаться только на цепочку событий.
+                if (line) line.last = nextFocus;
             }
         }, 500);
+    }
+
+    // Общая логика вставки карточки в произвольную line-строку (createAndAppend →
+    // this.items, навигация её видит) — используется и «Непросмотренные», и
+    // строками «Моё NP». cardIdFn вычисляет сравнимый id у уже отрисованных карточек
+    // для дубль-проверки — у разных строк разный формат card_data (cardIdOf для
+    // «Непросмотренные» всегда «_tv», mineCardId для «Моё NP» — по media_type).
+    function insertCardIntoLine(line, cardId, cardIdFn, cardData) {
+        if (!line || !line.emit || !line.render || !line.items) return;
+
+        var html = line.render(true);
+        var dom = html && (html[0] || html);
+        if (!dom || !document.body.contains(dom)) return;
+
+        var existing = dom.querySelectorAll('.card');
+        for (var i = 0; i < existing.length; i++) {
+            var data = existing[i].card_data || existing[i].data;
+            if (data && cardIdFn(data) === cardId) return; // дубль — уже добавлена
+        }
+
+        try {
+            // НЕ пушим в line.data.results — иначе ленивый onScroll (results.slice
+            // (items.length)) создаст карточку повторно из этой записи (тот же манёвр,
+            // что и insertViaLine в myshows.js). createAndAppend и так кладёт её в
+            // this.items — бейджи/дальнейшие обновления найдут её через обычный обход
+            // .card в DOM.
+            line.emit('createAndAppend', cardData);
+
+            var item = line.items[line.items.length - 1];
+            var el = item && item.render && item.render(true);
+            var elDom = el && (el[0] || el);
+            if (elDom) elDom.card_data = cardData;
+        } catch (e) {
+            log('insertCardIntoLine error: ' + e);
+        }
     }
 
     // =========================================================================
@@ -901,11 +993,12 @@
                     if (!ok) { Lampa.Noty.show('Ошибка установки статуса'); return; }
                     currentActiveStatus = opt.status;
                     Lampa.Noty.show('Статус "' + opt.title + '" установлен');
-                    // Убираем/обновляем карточку в «Непросмотренные» и других уже
-                    // отрисованных списках сразу, не дожидаясь WS/следующего reload
-                    // (фильмам бейджи "Непросмотренные" не касаются — там просто нет
-                    // совпадающих карточек по id, вызов безвреден).
-                    onStatusChanged(cardId, opt.status);
+                    // Убираем/обновляем/добавляем карточку в «Непросмотренные» и в
+                    // строках «Моё NP» сразу, не дожидаясь WS/следующего reload. movie
+                    // передаём всегда (не только для сериалов) — нужен для «Моё NP»,
+                    // где статусные строки есть и у фильмов; «Непросмотренные» внутри
+                    // onStatusChanged сама фильтрует по cardId (только «_tv»).
+                    onStatusChanged(cardId, opt.status, movie);
                 });
                 pushToMyShows(movie, opt.myshows, isMovie);
                 // "Просмотрел" для фильма без правки movie.js: без реального проигрывания
@@ -1445,17 +1538,44 @@
 
             var cardView = cardElement.querySelector('.card__view');
             if (cardView) removeBadges(cardView);
-            if (data.unwatched_count !== undefined) removeCompletedRowCard(cardElement);
+            if (data.unwatched_count !== undefined) removeCompletedRowCard(cardElement, _unwatchedLine);
         }
+    }
+
+    // Живая вставка новой карточки в уже открытую строку «Непросмотренные» на
+    // Главной — когда статус сериала меняют на «Смотрю» из полной карточки, а потом
+    // жмут «назад»: Lampa не перезапускает .main() для уже отрисованной строки (см.
+    // #69 в CLAUDE.md — там же описано зеркальное "живое удаление", которое уже было).
+    // Проще, чем insertNewCardIntoMyShowsSection в myshows.js: карточку строим прямо
+    // из уже открытого TMDB-объекта movie — ходить за метаданными второй раз не нужно.
+    function insertNewCardIntoUnwatchedSection(cardId, movie, progress) {
+        var cardData = {};
+        for (var key in movie) { if (movie.hasOwnProperty(key)) cardData[key] = movie[key]; }
+        cardData.unwatched_count = progress.unwatched_count;
+        cardData.progress_marker = progress.progress_marker;
+        cardData.next_episode = progress.next_episode;
+        insertCardIntoLine(_unwatchedLine, cardId, cardIdOf, cardData);
     }
 
     // Общая точка для локального клика по кнопке статуса и WS-события с другого
     // устройства того же профиля — статус снова "Смотрю" обновляет бейджи (если
-    // прогресс нашёлся), любой другой статус убирает карточку отовсюду на экране.
-    function onStatusChanged(cardId, status) {
+    // прогресс нашёлся) и вставляет карточку в «Непросмотренные», если её ещё не
+    // было на экране; любой другой статус убирает карточку оттуда. movie передаётся
+    // только локальным кликом (см. renderStatusButtons) — WS-событие содержит
+    // только card_id/status, без метаданных для вставки, поэтому там возможно
+    // только обновление/удаление уже присутствующих карточек.
+    function onStatusChanged(cardId, status, movie) {
+        // «Моё NP» — единая колонка статуса на сервере, значит новый статус разом
+        // исключает членство карточки во всех остальных статусных строках; работает
+        // для и фильмов, и сериалов (в отличие от «Непросмотренные» ниже).
+        syncMineRows(cardId, movie, status);
+
         if (status === 'watching') {
+            if (cardId.slice(-3) !== '_tv') return; // «Непросмотренные» — только сериалы
             fetchProgress(cardId, function (progress) {
-                if (progress) updateBadgesEverywhere(cardId, progress);
+                if (!progress) return;
+                updateBadgesEverywhere(cardId, progress);
+                if (movie) insertNewCardIntoUnwatchedSection(cardId, movie, progress);
             });
         } else {
             removeCardEverywhere(cardId);
@@ -1512,7 +1632,7 @@
             removeBadges(container);
             var cardEl = container.closest ? container.closest('.card') : null;
             if (cardEl && cardEl.card_data && cardEl.card_data.unwatched_count !== undefined) {
-                removeCompletedRowCard(cardEl);
+                removeCompletedRowCard(cardEl, _unwatchedLine);
             }
             return;
         }
@@ -1859,6 +1979,89 @@
     }
 
     // =========================================================================
+    // Живое добавление/удаление на странице «Моё NP» — зеркало того, что уже
+    // сделано для «Непросмотренные» выше, но для всех статусных строк разом
+    // (Буду смотреть/Смотрю/Просмотрел/Брошено). «Продолжить просмотр» и
+    // «Избранное» сюда не входят — их членство определяется не subjective_status
+    // (таймкоды/проценты и отдельный bookmark-блок Lampa соответственно), нашими
+    // кнопками статуса не меняется, поэтому живой синхронизации не требует.
+    // =========================================================================
+
+    // Статус (что шлём в PUT /timecode/status) → ключ строки в MINE_ROWS. 'watched' —
+    // кнопка "Просмотрел" у фильмов; у сериалов "Просмотрел" не выставляется кликом
+    // (сервер переводит сериал в completed сам, по факту досмотра всех серий) — для
+    // такого перехода живой синхронизации нет, как и раньше не было для 'unwatched'.
+    var MINE_ROW_STATUS_MAP = { watching: 'watching', planned: 'planned', stopped: 'stopped', watched: 'completed' };
+
+    // Инстансы строк «Моё NP» по статусу — тем же способом, что и _unwatchedLine
+    // (Listener.follow('line', ...) по заголовку), но сразу под все MINE_ROWS.
+    var _mineLines = {};
+
+    function trackMineLines() {
+        var titleToStatus = {};
+        MINE_ROWS.forEach(function (row) { titleToStatus[row.title] = row.status; });
+
+        Lampa.Listener.follow('line', function (event) {
+            if (!event.data || event.type !== 'create') return;
+            var status = titleToStatus[event.data.title];
+            if (status) _mineLines[status] = event.line || null;
+        });
+    }
+
+    // card_id в формате «Моё NP» — карточки оттуда (/media-library) всегда несут
+    // media_type явным полем (см. toMediaItem на бэкенде); isTvShow — фолбэк только
+    // для карточек, которые мы сами только что собрали из TMDB-объекта movie.
+    function mineCardId(data) {
+        if (!data || data.id === undefined || data.id === null) return '';
+        return data.id + '_' + (data.media_type || (isTvShow(data) ? 'tv' : 'movie'));
+    }
+
+    function removeCardFromLine(line, cardId) {
+        if (!line) return;
+        var html;
+        try { html = line.render(true); } catch (e) { return; }
+        var dom = html && (html[0] || html);
+        if (!dom) return;
+
+        var cards = dom.querySelectorAll('.card');
+        for (var i = 0; i < cards.length; i++) {
+            var el = cards[i];
+            var data = el.card_data || el.data;
+            if (data && mineCardId(data) === cardId) removeCompletedRowCard(el, line);
+        }
+    }
+
+    // Единая точка входа из onStatusChanged — статус в subjective_statuses один на
+    // карточку, значит новый статус разом исключает членство во всех остальных
+    // статусных строках «Моё NP»: убираем из всех, кроме целевой, и добавляем в
+    // целевую (если она уже отрисована и статус вообще на неё отображается).
+    // movie может отсутствовать (WS-событие с другого устройства без метаданных) —
+    // тогда только удаление из строк, без вставки, как и для «Непросмотренные».
+    function syncMineRows(cardId, movie, status) {
+        var targetStatus = MINE_ROW_STATUS_MAP[status] || null;
+
+        for (var rowStatus in _mineLines) {
+            if (!_mineLines.hasOwnProperty(rowStatus)) continue;
+            if (rowStatus === targetStatus) continue;
+            removeCardFromLine(_mineLines[rowStatus], cardId);
+        }
+
+        if (!targetStatus || !movie) return;
+        var line = _mineLines[targetStatus];
+        if (!line) return;
+
+        var cardData = {};
+        for (var key in movie) { if (movie.hasOwnProperty(key)) cardData[key] = movie[key]; }
+        // Нативные TMDB-объекты movie не несут media_type (см. комментарий у
+        // toMediaItem на бэкенде) — выставляем явно, иначе повторный mineCardId на
+        // этой же свежесозданной карточке не совпадёт сам с собой при следующей
+        // смене статуса.
+        cardData.media_type = cardId.slice(-3) === '_tv' ? 'tv' : 'movie';
+
+        insertCardIntoLine(line, cardId, mineCardId, cardData);
+    }
+
+    // =========================================================================
     // Строка «Непросмотренные» на нативной Главной (источники TMDB/CUB) — по
     // образцу addMyShowsToTMDB()/addMyShowsToCUB() в myshows.js, но без его
     // MyShows-кеширования: /unwatched уже отдаёт карточки в готовом Lampa-формате
@@ -1949,6 +2152,18 @@
                 addNpUnwatchedData(data, oncomplite);
             }, onerror);
         };
+    }
+
+    // Запоминаем инстанс строки «Непросмотренные», как только Lampa её создаёт —
+    // через него insertNewCardIntoUnwatchedSection добавляет карточку штатным путём
+    // (по образцу Listener.follow('line', ...) в myshows.js, который делает то же
+    // самое для своей строки «MyShows»).
+    function trackUnwatchedLine() {
+        Lampa.Listener.follow('line', function (event) {
+            if (event.data && event.data.title === 'Непросмотренные' && event.type === 'create') {
+                _unwatchedLine = event.line || null;
+            }
+        });
     }
 
     function addUnwatchedMainComponent() {
@@ -2193,6 +2408,8 @@
         addNpUnwatchedToCUB();
         patchActivityForNpUnwatched();
         addUnwatchedMainComponent();
+        trackUnwatchedLine();
+        trackMineLines();
         patchNativeTimetable();
 
         loadProfileSettings();

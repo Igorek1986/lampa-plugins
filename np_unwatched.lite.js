@@ -1,6 +1,6 @@
 (function() {
     "use strict";
-    var VERSION = "1.14.0";
+    var VERSION = "1.15.0";
     window.np_unwatched_plugin = true;
     var DEBUG = false;
     function log(message, data) {
@@ -376,6 +376,7 @@
     }
     var processedRowCards = [];
     var knownProgress = {};
+    var _unwatchedLine = null;
     function addBadgesToRowCard(cardHtml) {
         if (!isPluginEnabled()) return;
         var cardElement = cardHtml && cardHtml.get ? cardHtml.get(0) : cardHtml && cardHtml[0] ? cardHtml[0] : cardHtml;
@@ -430,24 +431,55 @@
             }, 400);
         })(old[i]);
     }
-    function removeCompletedRowCard(cardEl) {
+    function isRowActivityForeground(parent) {
+        var active = window.Lampa && Lampa.Activity && Lampa.Activity.active && Lampa.Activity.active();
+        if (!active || !active.activity || !active.activity.render) return false;
+        var root = active.activity.render(true);
+        root = root && (root[0] || root);
+        return !!(root && parent && root.contains(parent));
+    }
+    function removeCompletedRowCard(cardEl, line) {
         var parent = cardEl.parentNode;
         if (!parent) return;
-        var wasFocused = cardEl.classList.contains("focus");
         var siblings = [].slice.call(parent.querySelectorAll(".card"));
         var idx = siblings.indexOf(cardEl);
-        var nextFocus = null;
-        if (wasFocused) nextFocus = idx > 0 ? siblings[idx - 1] : siblings[idx + 1];
+        var nextFocus = idx > 0 ? siblings[idx - 1] : siblings[idx + 1];
+        var lastEl = line && line.last;
+        lastEl = lastEl && (lastEl.jquery ? lastEl[0] : lastEl);
+        var wasFocused = cardEl.classList.contains("focus") || lastEl === cardEl;
+        var foreground = isRowActivityForeground(parent);
         cardEl.style.transition = "opacity 0.5s ease";
         cardEl.style.opacity = "0";
         setTimeout(function() {
             if (!cardEl.parentNode) return;
             cardEl.remove();
-            if (wasFocused && window.Lampa && Lampa.Controller) setTimeout(function() {
+            if (!wasFocused || !nextFocus) return;
+            if (foreground && window.Lampa && Lampa.Controller) setTimeout(function() {
                 Lampa.Controller.collectionSet(parent);
-                if (nextFocus) Lampa.Controller.collectionFocus(nextFocus, parent);
-            }, 50);
+                Lampa.Controller.collectionFocus(nextFocus, parent);
+            }, 50); else if (window.Lampa && Lampa.Utils) {
+                Lampa.Utils.trigger(nextFocus, "hover:focus");
+                if (line) line.last = nextFocus;
+            }
         }, 500);
+    }
+    function insertCardIntoLine(line, cardId, cardIdFn, cardData) {
+        if (!line || !line.emit || !line.render || !line.items) return;
+        var html = line.render(true);
+        var dom = html && (html[0] || html);
+        if (!dom || !document.body.contains(dom)) return;
+        var existing = dom.querySelectorAll(".card");
+        for (var i = 0; i < existing.length; i++) {
+            var data = existing[i].card_data || existing[i].data;
+            if (data && cardIdFn(data) === cardId) return;
+        }
+        try {
+            line.emit("createAndAppend", cardData);
+            var item = line.items[line.items.length - 1];
+            var el = item && item.render && item.render(true);
+            var elDom = el && (el[0] || el);
+            if (elDom) elDom.card_data = cardData;
+        } catch (e) {}
     }
     function isSameFullCardOpen(card) {
         if (!card || !card.id) return true;
@@ -674,7 +706,7 @@
                     }
                     currentActiveStatus = opt.status;
                     Lampa.Noty.show('Статус "' + opt.title + '" установлен');
-                    onStatusChanged(cardId, opt.status);
+                    onStatusChanged(cardId, opt.status, movie);
                 });
                 pushToMyShows(movie, opt.myshows, isMovie);
                 if (isMovie && opt.status === "watched") markMovieWatchedTimecode(movie, cardId);
@@ -1062,13 +1094,27 @@
             if (!data || cardIdOf(data) !== cardId) continue;
             var cardView = cardElement.querySelector(".card__view");
             if (cardView) removeBadges(cardView);
-            if (data.unwatched_count !== void 0) removeCompletedRowCard(cardElement);
+            if (data.unwatched_count !== void 0) removeCompletedRowCard(cardElement, _unwatchedLine);
         }
     }
-    function onStatusChanged(cardId, status) {
-        if (status === "watching") fetchProgress(cardId, function(progress) {
-            if (progress) updateBadgesEverywhere(cardId, progress);
-        }); else removeCardEverywhere(cardId);
+    function insertNewCardIntoUnwatchedSection(cardId, movie, progress) {
+        var cardData = {};
+        for (var key in movie) if (movie.hasOwnProperty(key)) cardData[key] = movie[key];
+        cardData.unwatched_count = progress.unwatched_count;
+        cardData.progress_marker = progress.progress_marker;
+        cardData.next_episode = progress.next_episode;
+        insertCardIntoLine(_unwatchedLine, cardId, cardIdOf, cardData);
+    }
+    function onStatusChanged(cardId, status, movie) {
+        syncMineRows(cardId, movie, status);
+        if (status === "watching") {
+            if (cardId.slice(-3) !== "_tv") return;
+            fetchProgress(cardId, function(progress) {
+                if (!progress) return;
+                updateBadgesEverywhere(cardId, progress);
+                if (movie) insertNewCardIntoUnwatchedSection(cardId, movie, progress);
+            });
+        } else removeCardEverywhere(cardId);
     }
     function updateBadgesEverywhere(cardId, progress) {
         if (cardId) knownProgress[cardId] = progress;
@@ -1099,7 +1145,7 @@
         if (progress.unwatched_count <= 0) {
             removeBadges(container);
             var cardEl = container.closest ? container.closest(".card") : null;
-            if (cardEl && cardEl.card_data && cardEl.card_data.unwatched_count !== void 0) removeCompletedRowCard(cardEl);
+            if (cardEl && cardEl.card_data && cardEl.card_data.unwatched_count !== void 0) removeCompletedRowCard(cardEl, _unwatchedLine);
             return;
         }
         if (isTrue(getProfileSetting(REMAINING_KEY, true))) if (remainingEl) animateCounter(remainingEl, parseInt(remainingEl.textContent, 10) || 0, progress.unwatched_count); else {
@@ -1446,6 +1492,60 @@
             return comp;
         });
     }
+    var MINE_ROW_STATUS_MAP = {
+        watching: "watching",
+        planned: "planned",
+        stopped: "stopped",
+        watched: "completed"
+    };
+    var _mineLines = {};
+    function trackMineLines() {
+        var titleToStatus = {};
+        MINE_ROWS.forEach(function(row) {
+            titleToStatus[row.title] = row.status;
+        });
+        Lampa.Listener.follow("line", function(event) {
+            if (!event.data || event.type !== "create") return;
+            var status = titleToStatus[event.data.title];
+            if (status) _mineLines[status] = event.line || null;
+        });
+    }
+    function mineCardId(data) {
+        if (!data || data.id === void 0 || data.id === null) return "";
+        return data.id + "_" + (data.media_type || (isTvShow(data) ? "tv" : "movie"));
+    }
+    function removeCardFromLine(line, cardId) {
+        if (!line) return;
+        var html;
+        try {
+            html = line.render(true);
+        } catch (e) {
+            return;
+        }
+        var dom = html && (html[0] || html);
+        if (!dom) return;
+        var cards = dom.querySelectorAll(".card");
+        for (var i = 0; i < cards.length; i++) {
+            var el = cards[i];
+            var data = el.card_data || el.data;
+            if (data && mineCardId(data) === cardId) removeCompletedRowCard(el, line);
+        }
+    }
+    function syncMineRows(cardId, movie, status) {
+        var targetStatus = MINE_ROW_STATUS_MAP[status] || null;
+        for (var rowStatus in _mineLines) {
+            if (!_mineLines.hasOwnProperty(rowStatus)) continue;
+            if (rowStatus === targetStatus) continue;
+            removeCardFromLine(_mineLines[rowStatus], cardId);
+        }
+        if (!targetStatus || !movie) return;
+        var line = _mineLines[targetStatus];
+        if (!line) return;
+        var cardData = {};
+        for (var key in movie) if (movie.hasOwnProperty(key)) cardData[key] = movie[key];
+        cardData.media_type = cardId.slice(-3) === "_tv" ? "tv" : "movie";
+        insertCardIntoLine(line, cardId, mineCardId, cardData);
+    }
     var UNWATCHED_MAIN_COMPONENT = "np_unwatched_full";
     var UNWATCHED_MAIN_PAGE_SIZE = 20;
     function unwatchedMainUrl(page, perPage) {
@@ -1513,6 +1613,11 @@
                 addNpUnwatchedData(data, oncomplite);
             }, onerror);
         };
+    }
+    function trackUnwatchedLine() {
+        Lampa.Listener.follow("line", function(event) {
+            if (event.data && event.data.title === "Непросмотренные" && event.type === "create") _unwatchedLine = event.line || null;
+        });
     }
     function addUnwatchedMainComponent() {
         Lampa.Component.add(UNWATCHED_MAIN_COMPONENT, function(object) {
@@ -1727,6 +1832,8 @@
         addNpUnwatchedToCUB();
         patchActivityForNpUnwatched();
         addUnwatchedMainComponent();
+        trackUnwatchedLine();
+        trackMineLines();
         patchNativeTimetable();
         loadProfileSettings();
         registerSettingsSafely();

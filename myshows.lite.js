@@ -1,6 +1,6 @@
 (function() {
     "use strict";
-    var VERSION = "1.0.9";
+    var VERSION = "1.0.10";
     var DEFAULT_ADD_THRESHOLD = "0";
     var DEFAULT_MIN_PROGRESS = 90;
     var API_URL = "https://myshows.me/v3/rpc/";
@@ -3189,6 +3189,13 @@
             }
         }
     }
+    function isRowActivityForeground(parentSection) {
+        var active = window.Lampa && Lampa.Activity && Lampa.Activity.active && Lampa.Activity.active();
+        if (!active || !active.activity || !active.activity.render) return false;
+        var root = active.activity.render(true);
+        root = root && (root[0] || root);
+        return !!(root && parentSection && root.contains(parentSection));
+    }
     function removeCompletedCard(cardElement, showName, parentSection, cardIndex) {
         if (!parentSection) parentSection = cardElement.parentNode;
         var isCurrentlyFocused = cardElement.classList.contains("focus");
@@ -3197,15 +3204,18 @@
             var allCards = parentSection.querySelectorAll(".card");
             if (cardIndex > 0) nextCard = allCards[cardIndex - 1]; else if (cardIndex < allCards.length - 1) nextCard = allCards[cardIndex + 1];
         }
+        var foreground = isRowActivityForeground(parentSection);
         cardElement.style.transition = "opacity 0.5s ease, transform 0.5s ease";
         cardElement.style.opacity = "0";
         setTimeout(function() {
             if (cardElement && cardElement.parentNode) {
                 cardElement.remove();
-                if (nextCard && window.Lampa && window.Lampa.Controller) setTimeout(function() {
-                    Lampa.Controller.collectionSet(parentSection);
-                    Lampa.Controller.collectionFocus(nextCard, parentSection);
-                }, 50); else if (isCurrentlyFocused) setTimeout(function() {
+                if (nextCard && window.Lampa && window.Lampa.Controller) {
+                    if (foreground) setTimeout(function() {
+                        Lampa.Controller.collectionSet(parentSection);
+                        Lampa.Controller.collectionFocus(nextCard, parentSection);
+                    }, 50); else if (window.Lampa.Utils) Lampa.Utils.trigger(nextCard, "hover:focus");
+                } else if (isCurrentlyFocused && foreground) setTimeout(function() {
                     if (window.Lampa && window.Lampa.Controller) Lampa.Controller.collectionSet(parentSection);
                 }, 50);
             }
