@@ -60,6 +60,22 @@ Automatic sync of watched series and movies with MyShows.me
 - 💾 Local data caching to reduce API requests. Cache lifetime (7-90 days)  
 - 🔄 Sync of watched movies and series with Lampac. Requires the [TimecodeUser](https://github.com/Igorek1986/lampa-plugins/tree/main/module/TimecodeUser) module  
 
+🧩 Public JS API for other plugins  
+The plugin exports `window.MyShows` — other Lampa plugins can use it without duplicating MyShows ID resolution and authentication:
+
+- `isLoggedIn()` — whether the current profile is logged in to MyShows.
+- `setStatus(cardData, status, isMovie, callback)` — set a card's status on MyShows without your own ID resolution (by IMDB/Kinopoisk ID or title+year). `cardData` is a regular Lampa/TMDB card object (`id`, `imdb_id`/`kinopoisk_id`, `title`/`name`, release date). Series statuses: `watching`/`later`/`cancelled`/`remove`; movie statuses: `finished`/`later`/`remove`. `callback(success)` fires after the MyShows request completes.
+- `openPage()` — open the "MyShows" section (unwatched series) as a Lampa activity.
+- `getUnwatchedShowsWithDetails(callback)` — get the list of unwatched series with details (progress, next episode, etc.).
+
+Check availability and login before calling:
+```js
+if (window.MyShows && window.MyShows.isLoggedIn && window.MyShows.isLoggedIn()) {
+    window.MyShows.setStatus(cardData, 'watching', false, function (success) { /* ... */ });
+}
+```
+See np_unwatched.js (full-card status buttons) for a live usage example.
+
 📌 How it works  
 - On watch start:  
 

@@ -60,6 +60,22 @@ title: MyShows — Lampa Plugins
 - 💾 Локальное кэширование данных для уменьшения запросов к API.  Время жизни кеша (7-90 дней)  
 - 🔄 Синхронизация просмотренных фильмов и сериалов с Lampac. Требудется модуль [TimecodeUser](https://github.com/Igorek1986/lampa-plugins/tree/main/module/TimecodeUser)
 
+🧩 Публичный JS API для других плагинов  
+Плагин экспортирует `window.MyShows` — им можно пользоваться из других Lampa-плагинов, не дублируя резолвинг ID и авторизацию MyShows:
+
+- `isLoggedIn()` — залогинен ли текущий профиль в MyShows.
+- `setStatus(cardData, status, isMovie, callback)` — выставить статус карточки в MyShows без собственного резолвинга ID (по IMDB/Kinopoisk ID или названию+году). `cardData` — обычная карточка Lampa/TMDB (`id`, `imdb_id`/`kinopoisk_id`, `title`/`name`, дата выхода). Статусы для сериалов: `watching`/`later`/`cancelled`/`remove`; для фильмов: `finished`/`later`/`remove`. `callback(success)` вызывается после запроса к MyShows.
+- `openPage()` — открыть раздел «MyShows» (непросмотренные сериалы) как активность Lampa.
+- `getUnwatchedShowsWithDetails(callback)` — получить список непросмотренных сериалов с деталями (прогресс, следующая серия и т.д.).
+
+Перед вызовом проверяйте доступность плагина и авторизацию:
+```js
+if (window.MyShows && window.MyShows.isLoggedIn && window.MyShows.isLoggedIn()) {
+    window.MyShows.setStatus(cardData, 'watching', false, function (success) { /* ... */ });
+}
+```
+Живой пример использования — кнопки статуса на полной карточке в np_unwatched.js.
+
 📌 Как это работает  
 - При старте просмотра:  
 
