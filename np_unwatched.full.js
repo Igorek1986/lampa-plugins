@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    var VERSION = '1.15.0';
+    var VERSION = '1.16.0';
 
     // Флаг для других плагинов (см. full_hero.js): по нему можно решить, ждать
     // ли событие np-unwatched-progress ниже, или сразу считать свой лёгкий
@@ -762,6 +762,14 @@
             var el = item && item.render && item.render(true);
             var elDom = el && (el[0] || el);
             if (elDom) elDom.card_data = cardData;
+            // Постер грузится лениво по DOM-событию 'visible' (наблюдатель
+            // видимости где-то в ядре Lampa, см. card/module/card.js: onVisible
+            // выставляет img.src) — свежедобавленная карточка не обязательно
+            // сразу попадает под наблюдение (особенно если это конец строки, за
+            // пределами видимой области), и постер оставался пустым до первого
+            // скролла. Форсируем сами — то же самое, что newCard.visible() в
+            // insertNewCardIntoMyShowsSection (myshows.js).
+            if (item && item.visible) item.visible();
         } catch (e) {
             log('insertCardIntoLine error: ' + e);
         }
@@ -949,6 +957,17 @@
         }).catch(function () {});
     }
 
+    // Единственный источник истины "какой статус сейчас у открытой карточки" —
+    // раньше это была переменная currentActiveStatus внутри closure
+    // renderStatusButtons, которую обновлял только сам клик. Когда подсветку
+    // перекрашивал внешний источник (refreshStatusButtonsSmooth/ForCard — WS с
+    // другого устройства/веба, возврат из плеера), currentActiveStatus не
+    // менялась: следующий клик сверялся с устаревшим значением и либо ошибочно
+    // считал уже физически другой статус "тем же самым" (кнопка красилась, но
+    // setSubjectiveStatus не вызывался вовсе), либо наоборот. cardId в паре —
+    // чтобы смена карточки сама сбрасывала актуальность (не требует явного reset).
+    var _openCardStatus = { cardId: null, status: 'not_watching' };
+
     function renderStatusButtons(event) {
         if (!getNpToken()) return;
         if (!isTrue(getProfileSetting(STATUS_BUTTONS_KEY, true))) return;
@@ -979,19 +998,18 @@
             });
         }
 
-        var currentActiveStatus = 'not_watching';
-
         options.forEach(function (opt) {
             var btn = $('<div class="full-start__button selector np-status-btn" data-np-status="' + opt.status + '">' + opt.icon + '<span>' + opt.title + '</span></div>');
             btn.on('hover:enter', function () {
                 if (!isSameFullCardOpen(movie)) return;
                 // Карточка уже в этом статусе — повторный запрос бесполезен (см. аналогичный
                 // guard в myshows.js), только подсветим активную кнопку.
-                if (opt.status === currentActiveStatus) { applyActive(opt.status); return; }
+                if (_openCardStatus.cardId === cardId && opt.status === _openCardStatus.status) { applyActive(opt.status); return; }
                 applyActive(opt.status);
                 setSubjectiveStatus(cardId, opt.status, function (ok) {
                     if (!ok) { Lampa.Noty.show('Ошибка установки статуса'); return; }
-                    currentActiveStatus = opt.status;
+                    _openCardStatus.cardId = cardId;
+                    _openCardStatus.status = opt.status;
                     Lampa.Noty.show('Статус "' + opt.title + '" установлен');
                     // Убираем/обновляем/добавляем карточку в «Непросмотренные» и в
                     // строках «Моё NP» сразу, не дожидаясь WS/следующего reload. movie
@@ -1019,8 +1037,9 @@
         // ничего не пишется (как на вебе, см. CardDetailPage.tsx) — сравнение локальное.
         fetchSubjectiveStatus(cardId, function (status) {
             if (!isSameFullCardOpen(movie)) return;
-            currentActiveStatus = status || 'not_watching';
-            applyActive(currentActiveStatus);
+            _openCardStatus.cardId = cardId;
+            _openCardStatus.status = status || 'not_watching';
+            applyActive(_openCardStatus.status);
         });
 
         if (window.Lampa && window.Lampa.Controller) {
@@ -1056,6 +1075,8 @@
         fetchSubjectiveStatus(cardId, function (status) {
             if (!isSameFullCardOpen(movie)) return;
             var activeStatus = status || 'not_watching';
+            _openCardStatus.cardId = cardId;
+            _openCardStatus.status = activeStatus;
             for (var i = 0; i < btnEls.length; i++) {
                 var el = btnEls[i];
                 var st = el.getAttribute('data-np-status');
@@ -1075,6 +1096,18 @@
                 }
             }
         });
+    }
+
+    // Тот же рефреш, но по cardId вместо объекта movie — источник события
+    // (WS с другого устройства/веба через onStatusChanged) не несёт TMDB-данных,
+    // только card_id. Достаём открытую карточку сами и сверяем id.
+    function refreshStatusButtonsForCard(cardId) {
+        var active = Lampa.Activity.active && Lampa.Activity.active();
+        if (!active || active.component !== 'full') return;
+        var openCard = active.card_data || active.card || active.movie;
+        if (!openCard) return;
+        if (statusCardId(openCard, isMovieFullCard(openCard)) !== cardId) return;
+        refreshStatusButtonsSmooth(openCard);
     }
 
     // =========================================================================
@@ -1477,11 +1510,53 @@
     // Статус поменяли с другого устройства/вкладки того же профиля (см. кнопки
     // статуса на полной карточке ниже) — тот же путь, что и локальный клик,
     // см. onStatusChanged.
+    // WS несёт только card_id/status, без метаданных карточки — для УДАЛЕНИЯ
+    // из «Непросмотренные»/«Моё NP» этого хватает, но для ВСТАВКИ новой карточки
+    // нужен movie-объект (постер/название и т.п.), которого тут нет. Достаём
+    // его с нашего же бэкенда (он уже хранит все карточки в media_cards) и
+    // приводим к форме, которую ждут остальные функции вставки — id вместо
+    // tmdb_id, name/original_name у сериалов вместо title (то же соглашение,
+    // что описано у toMediaItem на бэкенде: media_type отдельным полем на
+    // движке Lampa не используется, тип определяется по наличию name).
+    function fetchCardAsMovie(cardId, callback) {
+        var base = getNpBaseUrl();
+        if (!base) { callback(null); return; }
+        fetch(base + '/api/media-card/' + encodeURIComponent(cardId))
+            .then(function (r) { return r.ok ? r.json() : null; })
+            .then(function (data) {
+                if (!data || !data.tmdb_id) { callback(null); return; }
+                var isTv = data.media_type === 'tv';
+                callback({
+                    id: data.tmdb_id,
+                    title: data.title,
+                    original_title: data.original_title,
+                    name: isTv ? data.title : undefined,
+                    original_name: isTv ? data.original_title : undefined,
+                    poster_path: data.poster_path,
+                    backdrop_path: data.backdrop_path,
+                    release_date: data.release_date,
+                    first_air_date: data.first_air_date,
+                    overview: data.overview,
+                    vote_average: data.vote_average,
+                    genres: data.genres,
+                    number_of_seasons: data.number_of_seasons,
+                    seasons: data.seasons,
+                });
+            })
+            .catch(function () { callback(null); });
+    }
+
     function onWsStatus(msg) {
         var myProfile = getProfileId();
         if (String(msg.profile_id || '') !== String(myProfile || '')) return;
         if (!msg.card_id) return;
-        onStatusChanged(msg.card_id, msg.status || '');
+        var status = msg.status || '';
+        // Пустой статус ("Не смотрю"/сброшен) — только удаление, метаданные
+        // для этого не нужны, не тратим лишний запрос.
+        if (!status) { onStatusChanged(msg.card_id, status); return; }
+        fetchCardAsMovie(msg.card_id, function (movie) {
+            onStatusChanged(msg.card_id, status, movie);
+        });
     }
 
     // Сервер шлёт это раз в сутки, в момент пересечения aired_cutoff (см.
@@ -1570,6 +1645,13 @@
         // для и фильмов, и сериалов (в отличие от «Непросмотренные» ниже).
         syncMineRows(cardId, movie, status);
 
+        // Если сейчас открыта именно эта карточка — подсветка кнопок статуса
+        // синхронизируется с сервером сама (актуально для WS-события с другого
+        // устройства/веба и для смены статуса на вебе, пока в Lampa открыта та же
+        // карточка); для локального клика тоже безвредно — просто лишний раз
+        // сверяет уже применённую подсветку с сервером.
+        refreshStatusButtonsForCard(cardId);
+
         if (status === 'watching') {
             if (cardId.slice(-3) !== '_tv') return; // «Непросмотренные» — только сериалы
             fetchProgress(cardId, function (progress) {
@@ -1592,6 +1674,10 @@
             if (openCard && cardIdOf(openCard) === cardId) {
                 var posterEl = document.querySelector('.full-start-new__poster');
                 if (posterEl) animateBadgeUpdate(posterEl, progress);
+                // full_hero.js слушает это, пока карточка открыта, чтобы двигать свою
+                // полосу прогресса живьём — без этого она застревала на значении из
+                // момента открытия карточки при обновлении с другого устройства/веба.
+                dispatchProgressEvent(cardId, progress);
             }
         } else if (active && active.movie && cardIdOf(active.movie) === cardId) {
             // Торренты/Онлайн для этого же сериала — обновляем метку сразу,

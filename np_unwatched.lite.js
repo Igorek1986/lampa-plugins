@@ -1,6 +1,6 @@
 (function() {
     "use strict";
-    var VERSION = "1.15.0";
+    var VERSION = "1.16.0";
     window.np_unwatched_plugin = true;
     var DEBUG = false;
     function log(message, data) {
@@ -479,6 +479,7 @@
             var el = item && item.render && item.render(true);
             var elDom = el && (el[0] || el);
             if (elDom) elDom.card_data = cardData;
+            if (item && item.visible) item.visible();
         } catch (e) {}
     }
     function isSameFullCardOpen(card) {
@@ -665,6 +666,10 @@
             })
         }).catch(function() {});
     }
+    var _openCardStatus = {
+        cardId: null,
+        status: "not_watching"
+    };
     function renderStatusButtons(event) {
         if (!getNpToken()) return;
         if (!isTrue(getProfileSetting(STATUS_BUTTONS_KEY, true))) return;
@@ -689,12 +694,11 @@
                 }).removeClass("np-status-active");
             });
         }
-        var currentActiveStatus = "not_watching";
         options.forEach(function(opt) {
             var btn = $('<div class="full-start__button selector np-status-btn" data-np-status="' + opt.status + '">' + opt.icon + "<span>" + opt.title + "</span></div>");
             btn.on("hover:enter", function() {
                 if (!isSameFullCardOpen(movie)) return;
-                if (opt.status === currentActiveStatus) {
+                if (_openCardStatus.cardId === cardId && opt.status === _openCardStatus.status) {
                     applyActive(opt.status);
                     return;
                 }
@@ -704,7 +708,8 @@
                         Lampa.Noty.show("Ошибка установки статуса");
                         return;
                     }
-                    currentActiveStatus = opt.status;
+                    _openCardStatus.cardId = cardId;
+                    _openCardStatus.status = opt.status;
                     Lampa.Noty.show('Статус "' + opt.title + '" установлен');
                     onStatusChanged(cardId, opt.status, movie);
                 });
@@ -717,8 +722,9 @@
         });
         fetchSubjectiveStatus(cardId, function(status) {
             if (!isSameFullCardOpen(movie)) return;
-            currentActiveStatus = status || "not_watching";
-            applyActive(currentActiveStatus);
+            _openCardStatus.cardId = cardId;
+            _openCardStatus.status = status || "not_watching";
+            applyActive(_openCardStatus.status);
         });
         if (window.Lampa && window.Lampa.Controller) {
             var allButtons = container.find("> *").filter(function() {
@@ -745,6 +751,8 @@
         fetchSubjectiveStatus(cardId, function(status) {
             if (!isSameFullCardOpen(movie)) return;
             var activeStatus = status || "not_watching";
+            _openCardStatus.cardId = cardId;
+            _openCardStatus.status = activeStatus;
             for (var i = 0; i < btnEls.length; i++) {
                 var el = btnEls[i];
                 var st = el.getAttribute("data-np-status");
@@ -767,6 +775,14 @@
                 }
             }
         });
+    }
+    function refreshStatusButtonsForCard(cardId) {
+        var active = Lampa.Activity.active && Lampa.Activity.active();
+        if (!active || active.component !== "full") return;
+        var openCard = active.card_data || active.card || active.movie;
+        if (!openCard) return;
+        if (statusCardId(openCard, isMovieFullCard(openCard)) !== cardId) return;
+        refreshStatusButtonsSmooth(openCard);
     }
     function addNextEpisodeToExplorer(movie) {
         if (!movie || !movie.id) return;
@@ -1051,11 +1067,52 @@
             percent: data.percent || 0
         });
     }
+    function fetchCardAsMovie(cardId, callback) {
+        var base = getNpBaseUrl();
+        if (!base) {
+            callback(null);
+            return;
+        }
+        fetch(base + "/api/media-card/" + encodeURIComponent(cardId)).then(function(r) {
+            return r.ok ? r.json() : null;
+        }).then(function(data) {
+            if (!data || !data.tmdb_id) {
+                callback(null);
+                return;
+            }
+            var isTv = data.media_type === "tv";
+            callback({
+                id: data.tmdb_id,
+                title: data.title,
+                original_title: data.original_title,
+                name: isTv ? data.title : void 0,
+                original_name: isTv ? data.original_title : void 0,
+                poster_path: data.poster_path,
+                backdrop_path: data.backdrop_path,
+                release_date: data.release_date,
+                first_air_date: data.first_air_date,
+                overview: data.overview,
+                vote_average: data.vote_average,
+                genres: data.genres,
+                number_of_seasons: data.number_of_seasons,
+                seasons: data.seasons
+            });
+        }).catch(function() {
+            callback(null);
+        });
+    }
     function onWsStatus(msg) {
         var myProfile = getProfileId();
         if (String(msg.profile_id || "") !== String(myProfile || "")) return;
         if (!msg.card_id) return;
-        onStatusChanged(msg.card_id, msg.status || "");
+        var status = msg.status || "";
+        if (!status) {
+            onStatusChanged(msg.card_id, status);
+            return;
+        }
+        fetchCardAsMovie(msg.card_id, function(movie) {
+            onStatusChanged(msg.card_id, status, movie);
+        });
     }
     function onUnwatchedStale() {
         if (!isPluginEnabled()) return;
@@ -1107,6 +1164,7 @@
     }
     function onStatusChanged(cardId, status, movie) {
         syncMineRows(cardId, movie, status);
+        refreshStatusButtonsForCard(cardId);
         if (status === "watching") {
             if (cardId.slice(-3) !== "_tv") return;
             fetchProgress(cardId, function(progress) {
@@ -1124,6 +1182,7 @@
             if (openCard && cardIdOf(openCard) === cardId) {
                 var posterEl = document.querySelector(".full-start-new__poster");
                 if (posterEl) animateBadgeUpdate(posterEl, progress);
+                dispatchProgressEvent(cardId, progress);
             }
         } else if (active && active.movie && cardIdOf(active.movie) === cardId) addNextEpisodeToExplorer(active.movie);
         var cards = document.querySelectorAll(".card");

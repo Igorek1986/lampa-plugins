@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    var VERSION = '1.0.0';
+    var VERSION = '1.0.1';
 
     window.full_hero_plugin = true;
 
@@ -266,6 +266,32 @@
     // "доливается" от старого значения к новому, вместо мигания. Тот же
     // ре-рендер используется и при первом открытии (после явного clear), и
     // при мягком обновлении по возврату в уже открытую карточку.
+    // Подписка на np-unwatched-progress держится, пока открыта ЭТА ЖЕ карточка —
+    // np_unwatched.js шлёт это событие не только сразу после открытия, но и
+    // живьём при любом обновлении прогресса, пока карточка на экране (в т.ч.
+    // когда таймкод/статус меняют с другого устройства или веба через WS).
+    // Раньше подписка снималась после первого же ответа — полоса прогресса
+    // навсегда застревала на значении из момента открытия карточки. Один
+    // слушатель на всё приложение (не по одному на каждый refreshProgress) —
+    // повторные вызовы (возврат из плеера) просто переиспользуют его, без
+    // накопления дублей.
+    var _liveProgressCardId = null;
+    function onLiveProgressEvent(e) {
+        if (!e.detail || e.detail.card_id !== _liveProgressCardId) return;
+        var active = Lampa.Activity.active && Lampa.Activity.active();
+        var openCard = active && (active.card_data || active.card || active.movie);
+        if (!openCard || cardIdOf(openCard) !== _liveProgressCardId) {
+            document.removeEventListener('np-unwatched-progress', onLiveProgressEvent);
+            _liveProgressCardId = null;
+            return;
+        }
+        if (e.detail.found) {
+            renderProgress(e.detail.watched, e.detail.aired, e.detail.remaining, e.detail.next_episode);
+        } else {
+            localFallback(openCard);
+        }
+    }
+
     function refreshProgress(movie) {
         if (!isTvShow(movie)) {
             movieFallback(movie);
@@ -273,28 +299,26 @@
         }
 
         var cardId = cardIdOf(movie);
-        var done = false;
-
-        function onEvent(e) {
-            if (!e.detail || e.detail.card_id !== cardId) return;
-            document.removeEventListener('np-unwatched-progress', onEvent);
-            done = true;
-            if (!isSameFullCardOpen(movie)) return;
-            if (e.detail.found) {
-                renderProgress(e.detail.watched, e.detail.aired, e.detail.remaining, e.detail.next_episode);
-            } else {
-                localFallback(movie);
-            }
-        }
+        var gotAnswer = false;
 
         // np_unwatched.js уже умеет считать это через сервер (учитывает даты
         // выхода, синхронизацию между устройствами) — если он есть, ждём его
         // событие вместо того, чтобы считать грубее самим.
         if (window.np_unwatched_plugin) {
-            document.addEventListener('np-unwatched-progress', onEvent);
+            if (_liveProgressCardId !== cardId) {
+                document.removeEventListener('np-unwatched-progress', onLiveProgressEvent);
+                _liveProgressCardId = cardId;
+                document.addEventListener('np-unwatched-progress', onLiveProgressEvent);
+            }
+            var onceHandler = function (e) {
+                if (!e.detail || e.detail.card_id !== cardId) return;
+                gotAnswer = true;
+                document.removeEventListener('np-unwatched-progress', onceHandler);
+            };
+            document.addEventListener('np-unwatched-progress', onceHandler);
             setTimeout(function () {
-                if (done) return;
-                document.removeEventListener('np-unwatched-progress', onEvent);
+                document.removeEventListener('np-unwatched-progress', onceHandler);
+                if (gotAnswer || !isSameFullCardOpen(movie)) return;
                 localFallback(movie);
             }, EVENT_TIMEOUT);
         } else {

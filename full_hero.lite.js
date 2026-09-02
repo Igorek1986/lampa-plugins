@@ -1,6 +1,6 @@
 (function() {
     "use strict";
-    var VERSION = "1.0.0";
+    var VERSION = "1.0.1";
     window.full_hero_plugin = true;
     var DEBUG = false;
     function log(message, data) {
@@ -118,25 +118,40 @@
         var remaining = data.duration && data.time ? data.duration - data.time : 0;
         renderMovieProgress(data.percent, data.time, remaining);
     }
+    var _liveProgressCardId = null;
+    function onLiveProgressEvent(e) {
+        if (!e.detail || e.detail.card_id !== _liveProgressCardId) return;
+        var active = Lampa.Activity.active && Lampa.Activity.active();
+        var openCard = active && (active.card_data || active.card || active.movie);
+        if (!openCard || cardIdOf(openCard) !== _liveProgressCardId) {
+            document.removeEventListener("np-unwatched-progress", onLiveProgressEvent);
+            _liveProgressCardId = null;
+            return;
+        }
+        if (e.detail.found) renderProgress(e.detail.watched, e.detail.aired, e.detail.remaining, e.detail.next_episode); else localFallback(openCard);
+    }
     function refreshProgress(movie) {
         if (!isTvShow(movie)) {
             movieFallback(movie);
             return;
         }
         var cardId = cardIdOf(movie);
-        var done = false;
-        function onEvent(e) {
-            if (!e.detail || e.detail.card_id !== cardId) return;
-            document.removeEventListener("np-unwatched-progress", onEvent);
-            done = true;
-            if (!isSameFullCardOpen(movie)) return;
-            if (e.detail.found) renderProgress(e.detail.watched, e.detail.aired, e.detail.remaining, e.detail.next_episode); else localFallback(movie);
-        }
+        var gotAnswer = false;
         if (window.np_unwatched_plugin) {
-            document.addEventListener("np-unwatched-progress", onEvent);
+            if (_liveProgressCardId !== cardId) {
+                document.removeEventListener("np-unwatched-progress", onLiveProgressEvent);
+                _liveProgressCardId = cardId;
+                document.addEventListener("np-unwatched-progress", onLiveProgressEvent);
+            }
+            var onceHandler = function(e) {
+                if (!e.detail || e.detail.card_id !== cardId) return;
+                gotAnswer = true;
+                document.removeEventListener("np-unwatched-progress", onceHandler);
+            };
+            document.addEventListener("np-unwatched-progress", onceHandler);
             setTimeout(function() {
-                if (done) return;
-                document.removeEventListener("np-unwatched-progress", onEvent);
+                document.removeEventListener("np-unwatched-progress", onceHandler);
+                if (gotAnswer || !isSameFullCardOpen(movie)) return;
                 localFallback(movie);
             }, EVENT_TIMEOUT);
         } else localFallback(movie);
