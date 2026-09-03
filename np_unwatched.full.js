@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    var VERSION = '1.17.1';
+    var VERSION = '1.17.2';
 
     // Флаг для других плагинов (см. full_hero.js): по нему можно решить, ждать
     // ли событие np-unwatched-progress ниже, или сразу считать свой лёгкий
@@ -737,7 +737,21 @@
     // строками «Моё NP». cardIdFn вычисляет сравнимый id у уже отрисованных карточек
     // для дубль-проверки — у разных строк разный формат card_data (cardIdOf для
     // «Непросмотренные» всегда «_tv», mineCardId для «Моё NP» — по media_type).
-    function insertCardIntoLine(line, cardId, cardIdFn, cardData) {
+    //
+    // orderedIds (необязательно) — эталонный порядок id с сервера (свежий
+    // /unwatched, уже отсортированный по np_unwatched_sort_order): если передан,
+    // карточка встаёт в DOM перед первой уже отрисованной карточкой, чья позиция
+    // в orderedIds дальше, чем у cardId (т.е. на своё место по текущей
+    // сортировке), а не всегда в конец строки. Двигаем только сам новый DOM-узел —
+    // остальные уже отрисованные карточки не переставляем (не хотим дёргать
+    // фокус/скролл ради карточек, которые и так были на экране), поэтому
+    // результат — «встала правильно относительно того, что видно сейчас», а не
+    // гарантированно идеальный порядок всей строки целиком (в частности, за
+    // пределами ещё не подгруженного лениво хвоста). line.items намеренно не
+    // переставляем следом за DOM — используется только для active-индекса
+    // подсветки/скролла (line/module/items.js: this.active = this.items.indexOf(item)),
+    // который самокорректируется при следующем hover:focus, не более.
+    function insertCardIntoLine(line, cardId, cardIdFn, cardData, orderedIds) {
         if (!line || !line.emit || !line.render || !line.items) return;
 
         var html = line.render(true);
@@ -745,9 +759,16 @@
         if (!dom || !document.body.contains(dom)) return;
 
         var existing = dom.querySelectorAll('.card');
+        var beforeEl = null;
+        var targetPos = orderedIds ? orderedIds.indexOf(cardId) : -1;
         for (var i = 0; i < existing.length; i++) {
             var data = existing[i].card_data || existing[i].data;
-            if (data && cardIdFn(data) === cardId) return; // дубль — уже добавлена
+            if (!data) continue;
+            var existingId = cardIdFn(data);
+            if (existingId === cardId) return; // дубль — уже добавлена
+            if (beforeEl || targetPos === -1) continue;
+            var pos = orderedIds.indexOf(existingId);
+            if (pos !== -1 && pos > targetPos) beforeEl = existing[i];
         }
 
         try {
@@ -761,7 +782,12 @@
             var item = line.items[line.items.length - 1];
             var el = item && item.render && item.render(true);
             var elDom = el && (el[0] || el);
-            if (elDom) elDom.card_data = cardData;
+            if (elDom) {
+                elDom.card_data = cardData;
+                if (beforeEl && beforeEl.parentNode === elDom.parentNode) {
+                    elDom.parentNode.insertBefore(elDom, beforeEl);
+                }
+            }
             // Постер грузится лениво по DOM-событию 'visible' (наблюдатель
             // видимости где-то в ядре Lampa, см. card/module/card.js: onVisible
             // выставляет img.src) — свежедобавленная карточка не обязательно
@@ -1626,17 +1652,22 @@
             if (!json || !json.results) return;
 
             var freshIds = {};
+            var orderedIds = [];
             for (var i = 0; i < json.results.length; i++) {
-                var cardData = json.results[i];
+                var id = cardIdOf(json.results[i]);
+                if (id) orderedIds.push(id);
+            }
+            for (var j = 0; j < json.results.length; j++) {
+                var cardData = json.results[j];
                 var cardId = cardIdOf(cardData);
                 if (!cardId) continue;
                 freshIds[cardId] = true;
-                insertCardIntoLine(_unwatchedLine, cardId, cardIdOf, cardData);
+                insertCardIntoLine(_unwatchedLine, cardId, cardIdOf, cardData, orderedIds);
             }
 
             var existing = dom.querySelectorAll('.card');
-            for (var j = 0; j < existing.length; j++) {
-                var el = existing[j];
+            for (var k = 0; k < existing.length; k++) {
+                var el = existing[k];
                 var existingData = el.card_data || el.data;
                 var existingId = existingData && cardIdOf(existingData);
                 if (existingId && !freshIds[existingId]) removeCompletedRowCard(el, _unwatchedLine);
@@ -1676,7 +1707,24 @@
         cardData.unwatched_count = progress.unwatched_count;
         cardData.progress_marker = progress.progress_marker;
         cardData.next_episode = progress.next_episode;
-        insertCardIntoLine(_unwatchedLine, cardId, cardIdOf, cardData);
+
+        // Свежий порядок с сервера — чтобы карточка встала на своё место по
+        // текущей сортировке (np_unwatched_sort_order), а не всегда в конец
+        // строки (см. комментарий у insertCardIntoLine). Один лёгкий запрос на
+        // каждое реальное изменение статуса — не на каждую видимую карточку.
+        fetchUnwatchedMain(1, UNWATCHED_MAIN_PAGE_SIZE, function (json) {
+            var orderedIds = null;
+            if (json && json.results) {
+                orderedIds = [];
+                for (var i = 0; i < json.results.length; i++) {
+                    var id = cardIdOf(json.results[i]);
+                    if (id) orderedIds.push(id);
+                }
+            }
+            insertCardIntoLine(_unwatchedLine, cardId, cardIdOf, cardData, orderedIds);
+        }, function () {
+            insertCardIntoLine(_unwatchedLine, cardId, cardIdOf, cardData);
+        });
     }
 
     // Общая точка для локального клика по кнопке статуса и WS-события с другого

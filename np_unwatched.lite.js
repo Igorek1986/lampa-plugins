@@ -1,6 +1,6 @@
 (function() {
     "use strict";
-    var VERSION = "1.17.1";
+    var VERSION = "1.17.2";
     window.np_unwatched_plugin = true;
     var DEBUG = false;
     function log(message, data) {
@@ -463,22 +463,32 @@
             }
         }, 500);
     }
-    function insertCardIntoLine(line, cardId, cardIdFn, cardData) {
+    function insertCardIntoLine(line, cardId, cardIdFn, cardData, orderedIds) {
         if (!line || !line.emit || !line.render || !line.items) return;
         var html = line.render(true);
         var dom = html && (html[0] || html);
         if (!dom || !document.body.contains(dom)) return;
         var existing = dom.querySelectorAll(".card");
+        var beforeEl = null;
+        var targetPos = orderedIds ? orderedIds.indexOf(cardId) : -1;
         for (var i = 0; i < existing.length; i++) {
             var data = existing[i].card_data || existing[i].data;
-            if (data && cardIdFn(data) === cardId) return;
+            if (!data) continue;
+            var existingId = cardIdFn(data);
+            if (existingId === cardId) return;
+            if (beforeEl || targetPos === -1) continue;
+            var pos = orderedIds.indexOf(existingId);
+            if (pos !== -1 && pos > targetPos) beforeEl = existing[i];
         }
         try {
             line.emit("createAndAppend", cardData);
             var item = line.items[line.items.length - 1];
             var el = item && item.render && item.render(true);
             var elDom = el && (el[0] || el);
-            if (elDom) elDom.card_data = cardData;
+            if (elDom) {
+                elDom.card_data = cardData;
+                if (beforeEl && beforeEl.parentNode === elDom.parentNode) elDom.parentNode.insertBefore(elDom, beforeEl);
+            }
             if (item && item.visible) item.visible();
         } catch (e) {}
     }
@@ -1151,16 +1161,21 @@
         fetchUnwatchedMain(1, UNWATCHED_MAIN_PAGE_SIZE, function(json) {
             if (!json || !json.results) return;
             var freshIds = {};
+            var orderedIds = [];
             for (var i = 0; i < json.results.length; i++) {
-                var cardData = json.results[i];
+                var id = cardIdOf(json.results[i]);
+                if (id) orderedIds.push(id);
+            }
+            for (var j = 0; j < json.results.length; j++) {
+                var cardData = json.results[j];
                 var cardId = cardIdOf(cardData);
                 if (!cardId) continue;
                 freshIds[cardId] = true;
-                insertCardIntoLine(_unwatchedLine, cardId, cardIdOf, cardData);
+                insertCardIntoLine(_unwatchedLine, cardId, cardIdOf, cardData, orderedIds);
             }
             var existing = dom.querySelectorAll(".card");
-            for (var j = 0; j < existing.length; j++) {
-                var el = existing[j];
+            for (var k = 0; k < existing.length; k++) {
+                var el = existing[k];
                 var existingData = el.card_data || el.data;
                 var existingId = existingData && cardIdOf(existingData);
                 if (existingId && !freshIds[existingId]) removeCompletedRowCard(el, _unwatchedLine);
@@ -1185,7 +1200,19 @@
         cardData.unwatched_count = progress.unwatched_count;
         cardData.progress_marker = progress.progress_marker;
         cardData.next_episode = progress.next_episode;
-        insertCardIntoLine(_unwatchedLine, cardId, cardIdOf, cardData);
+        fetchUnwatchedMain(1, UNWATCHED_MAIN_PAGE_SIZE, function(json) {
+            var orderedIds = null;
+            if (json && json.results) {
+                orderedIds = [];
+                for (var i = 0; i < json.results.length; i++) {
+                    var id = cardIdOf(json.results[i]);
+                    if (id) orderedIds.push(id);
+                }
+            }
+            insertCardIntoLine(_unwatchedLine, cardId, cardIdOf, cardData, orderedIds);
+        }, function() {
+            insertCardIntoLine(_unwatchedLine, cardId, cardIdOf, cardData);
+        });
     }
     function onStatusChanged(cardId, status, movie) {
         syncMineRows(cardId, movie, status);
