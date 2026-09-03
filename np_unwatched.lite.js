@@ -1,6 +1,6 @@
 (function() {
     "use strict";
-    var VERSION = "1.16.0";
+    var VERSION = "1.17.1";
     window.np_unwatched_plugin = true;
     var DEBUG = false;
     function log(message, data) {
@@ -1141,6 +1141,31 @@
                 });
             })(cardId);
         }
+        syncUnwatchedRow();
+    }
+    function syncUnwatchedRow() {
+        if (!_unwatchedLine || !_unwatchedLine.render) return;
+        var html = _unwatchedLine.render(true);
+        var dom = html && (html[0] || html);
+        if (!dom || !document.body.contains(dom)) return;
+        fetchUnwatchedMain(1, UNWATCHED_MAIN_PAGE_SIZE, function(json) {
+            if (!json || !json.results) return;
+            var freshIds = {};
+            for (var i = 0; i < json.results.length; i++) {
+                var cardData = json.results[i];
+                var cardId = cardIdOf(cardData);
+                if (!cardId) continue;
+                freshIds[cardId] = true;
+                insertCardIntoLine(_unwatchedLine, cardId, cardIdOf, cardData);
+            }
+            var existing = dom.querySelectorAll(".card");
+            for (var j = 0; j < existing.length; j++) {
+                var el = existing[j];
+                var existingData = el.card_data || el.data;
+                var existingId = existingData && cardIdOf(existingData);
+                if (existingId && !freshIds[existingId]) removeCompletedRowCard(el, _unwatchedLine);
+            }
+        });
     }
     function removeCardEverywhere(cardId) {
         delete knownProgress[cardId];
