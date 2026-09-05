@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    var VERSION = '1.0.1';
+    var VERSION = '1.0.2';
 
     window.full_hero_plugin = true;
 
@@ -35,6 +35,23 @@
         '    display: none !important;',
         '}',
 
+        // Год/страна (изначально .full-start-new__head целиком), перенесённые
+        // под название — см. moveYearCountryAfterTitle. Рейтинг/PG/статус
+        // остаются в head наверху (у него своя стилизация ниже).
+        // margin-top: 0 — на десктопе .full-start-new__right это flex-column
+        // (см. правило ниже), а там margin соседних элементов НЕ схлопывается
+        // как в обычном block-потоке: margin-bottom названия (0.2em от его
+        // же огромного font-size 4em, то есть уже сам по себе не маленький)
+        // суммировался бы с margin-top меты, а не схлопывался с ним — отсюда
+        // непропорционально большой отступ. Отступ снизу оставляем — им же
+        // отделяем название+год/страну от описания.
+        '.fh-meta {',
+        '    color: rgba(255,255,255,.6); font-size: 1.2em;',
+        '    display: flex; align-items: center; flex-wrap: wrap; gap: 0.6em;',
+        '    margin: 0 0 0.5em;',
+        '}',
+        '.fh-meta span { color: #fff; }',
+
         // Краткое описание под названием — тизер (обрезка в 3 строки), полный
         // текст остаётся ниже в "Подробно".
         '.fh-descr {',
@@ -51,10 +68,9 @@
         '    margin-bottom: 0.8em;',
         '}',
 
-        // Рейтинг/PG/статус — на одну строку с "2022, США" (см. moveRateLineToHead).
-        // "2022, США" сам по себе может быть из двух отдельных узлов (год,
-        // страна) — space-between их тоже растащил бы, поэтому раздвигаем
-        // только rate-line через margin-left: auto, остальное в normal flow.
+        // .full-start-new__head после переноса года/страны в .fh-meta
+        // (см. moveYearCountryAfterTitle) содержит только rate-line —
+        // margin-left: auto прижимает его к правому краю строки.
         '.full-start-new__head {',
         '    display: flex; align-items: center;',
         '    flex-wrap: wrap; gap: 0.8em;',
@@ -63,8 +79,9 @@
         '    margin-left: auto;',
         '}',
 
-        // .full-start-new__head (год/страна/рейтинг) прижат к самому верху,
-        // всё остальное (название, тизер, реакции, прогресс, кнопки) — единой
+        // .full-start-new__head (рейтинг/PG/статус) прижат к самому верху,
+        // всё остальное (название, год/страна, тизер, реакции, прогресс,
+        // кнопки) — единой
         // группой к низу героя, как постеры в int.js. Только на широких
         // экранах (там же, где скрыт маленький постер и есть простор по высоте).
         // У самой Lampa .full-start-new__body { align-items: flex-end } — расчёт
@@ -380,12 +397,33 @@
         img.src = Lampa.Api.img(movie.poster_path, 'w1280');
     }
 
-    // Рейтинг/PG/статус — на одну строку с "2022, США" (.full-start-new__head),
-    // справа. Не полим, оба элемента уже есть на момент 'complite'.
+    // Год/страна изначально и есть весь .full-start-new__head (без обёртки —
+    // просто текстовые/span-узлы, см. src/components/full/start.js в
+    // dev/lampa-source). Забираем их оттуда в .fh-meta сразу после названия,
+    // а в head остаётся место для рейтинга (см. moveRateLineToHead).
+    function moveYearCountryAfterTitle() {
+        var head = document.querySelector('.full-start-new__head');
+        var right = document.querySelector('.full-start-new__right');
+        if (!head || !right) return;
+        if (right.querySelector('.fh-meta')) return; // уже перенесено
+
+        var meta = document.createElement('div');
+        meta.className = 'fh-meta';
+        while (head.firstChild) meta.appendChild(head.firstChild);
+
+        var title = right.querySelector('.full-start-new__title');
+        if (title) title.parentNode.insertBefore(meta, title.nextSibling);
+        else right.insertBefore(meta, right.firstChild);
+    }
+
+    // Рейтинг/PG/статус — то, что остаётся в .full-start-new__head после
+    // переноса года/страны, прижимается наверх (см. CSS выше). Не полим,
+    // оба элемента уже есть на момент 'complite'.
     function moveRateLineToHead() {
         var head = document.querySelector('.full-start-new__head');
         var rateLine = document.querySelector('.full-start-new__rate-line');
         if (!head || !rateLine) return;
+        moveYearCountryAfterTitle();
         head.appendChild(rateLine);
     }
 
@@ -413,8 +451,9 @@
         for (var i = 0; i < old.length; i++) old[i].remove();
 
         var tagline = right.querySelector('.full-start-new__tagline');
+        var meta = right.querySelector('.fh-meta');
         var title = right.querySelector('.full-start-new__title');
-        var anchorAfter = tagline || title;
+        var anchorAfter = tagline || meta || title;
         var text = descrTextEl.textContent.trim();
         if (anchorAfter && text) {
             var el = document.createElement('div');

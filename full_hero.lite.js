@@ -1,13 +1,13 @@
 (function() {
     "use strict";
-    var VERSION = "1.0.1";
+    var VERSION = "1.0.2";
     window.full_hero_plugin = true;
     var DEBUG = false;
     function log(message, data) {
         if (DEBUG) console.log("[FullHero] " + message, data !== void 0 ? data : "");
     }
     var style = document.createElement("style");
-    style.textContent = [ "@media screen and (min-width: 767px) {", "    .full-start-new__left { display: none; }", "}", ".full-start-new__poster .np-unwatched-progress,", ".full-start-new__poster .np-unwatched-remaining,", ".full-start-new__poster .np-unwatched-next,", ".full-start-new__poster .serial-status__type,", ".full-start-new__poster .serial-status__status {", "    display: none !important;", "}", ".fh-descr {", "    color: rgba(255,255,255,.75); font-size: 1em; line-height: 1.4;", "    margin: 0.6em 0 1em; max-width: 46em;", "}", ".full-descr__text { display: none; }", ".full-descr__left > .full-start-new__details {", "    margin-bottom: 0.8em;", "}", ".full-start-new__head {", "    display: flex; align-items: center;", "    flex-wrap: wrap; gap: 0.8em;", "}", ".full-start-new__head .full-start-new__rate-line {", "    margin-left: auto;", "}", "@media screen and (min-width: 767px) {", "    .full-start-new__body { align-items: stretch; }", "    .full-start-new__right { display: flex; flex-direction: column; }", "    .full-start-new__title { margin-top: auto; }", "}", ".fh-progress-wrap {", "    max-height: 0; margin-top: 0; margin-bottom: 0; opacity: 0; overflow: hidden;", "    transition: max-height 0.4s ease, margin 0.4s ease, opacity 0.3s ease;", "}", ".fh-progress-wrap--show {", "    max-height: 6em; margin-top: 1.1em; margin-bottom: 1.1em; opacity: 1;", "}", ".fh-progress-text {", "    color: rgba(255,255,255,.75); font-size: 1em; font-weight: 500; margin-bottom: 0.5em;", "    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;", "}", ".fh-progress-bar {", "    position: relative; height: 0.25em; border-radius: 0.25em;", "    background: rgba(255,255,255,.15); overflow: hidden;", "}", ".fh-progress-bar > div {", "    position: absolute; left: 0; top: 0; bottom: 0; width: 0;", "    background: #fff; border-radius: 0.25em; transition: width 0.4s ease;", "}", ".full-start-new__buttons .np-status-btn svg path,", ".full-start-new__buttons .np-status-btn svg circle {", "    stroke-width: 2.4;", "}", ".full-start-new__reactions .reaction {", "    height: 2.6em; box-sizing: border-box;", "}" ].join("\n");
+    style.textContent = [ "@media screen and (min-width: 767px) {", "    .full-start-new__left { display: none; }", "}", ".full-start-new__poster .np-unwatched-progress,", ".full-start-new__poster .np-unwatched-remaining,", ".full-start-new__poster .np-unwatched-next,", ".full-start-new__poster .serial-status__type,", ".full-start-new__poster .serial-status__status {", "    display: none !important;", "}", ".fh-meta {", "    color: rgba(255,255,255,.6); font-size: 1.2em;", "    display: flex; align-items: center; flex-wrap: wrap; gap: 0.6em;", "    margin: 0 0 0.5em;", "}", ".fh-meta span { color: #fff; }", ".fh-descr {", "    color: rgba(255,255,255,.75); font-size: 1em; line-height: 1.4;", "    margin: 0.6em 0 1em; max-width: 46em;", "}", ".full-descr__text { display: none; }", ".full-descr__left > .full-start-new__details {", "    margin-bottom: 0.8em;", "}", ".full-start-new__head {", "    display: flex; align-items: center;", "    flex-wrap: wrap; gap: 0.8em;", "}", ".full-start-new__head .full-start-new__rate-line {", "    margin-left: auto;", "}", "@media screen and (min-width: 767px) {", "    .full-start-new__body { align-items: stretch; }", "    .full-start-new__right { display: flex; flex-direction: column; }", "    .full-start-new__title { margin-top: auto; }", "}", ".fh-progress-wrap {", "    max-height: 0; margin-top: 0; margin-bottom: 0; opacity: 0; overflow: hidden;", "    transition: max-height 0.4s ease, margin 0.4s ease, opacity 0.3s ease;", "}", ".fh-progress-wrap--show {", "    max-height: 6em; margin-top: 1.1em; margin-bottom: 1.1em; opacity: 1;", "}", ".fh-progress-text {", "    color: rgba(255,255,255,.75); font-size: 1em; font-weight: 500; margin-bottom: 0.5em;", "    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;", "}", ".fh-progress-bar {", "    position: relative; height: 0.25em; border-radius: 0.25em;", "    background: rgba(255,255,255,.15); overflow: hidden;", "}", ".fh-progress-bar > div {", "    position: absolute; left: 0; top: 0; bottom: 0; width: 0;", "    background: #fff; border-radius: 0.25em; transition: width 0.4s ease;", "}", ".full-start-new__buttons .np-status-btn svg path,", ".full-start-new__buttons .np-status-btn svg circle {", "    stroke-width: 2.4;", "}", ".full-start-new__reactions .reaction {", "    height: 2.6em; box-sizing: border-box;", "}" ].join("\n");
     document.head.appendChild(style);
     var WATCH_THRESHOLD = 90;
     var EVENT_TIMEOUT = 1500;
@@ -186,10 +186,22 @@
         };
         img.src = Lampa.Api.img(movie.poster_path, "w1280");
     }
+    function moveYearCountryAfterTitle() {
+        var head = document.querySelector(".full-start-new__head");
+        var right = document.querySelector(".full-start-new__right");
+        if (!head || !right) return;
+        if (right.querySelector(".fh-meta")) return;
+        var meta = document.createElement("div");
+        meta.className = "fh-meta";
+        while (head.firstChild) meta.appendChild(head.firstChild);
+        var title = right.querySelector(".full-start-new__title");
+        if (title) title.parentNode.insertBefore(meta, title.nextSibling); else right.insertBefore(meta, right.firstChild);
+    }
     function moveRateLineToHead() {
         var head = document.querySelector(".full-start-new__head");
         var rateLine = document.querySelector(".full-start-new__rate-line");
         if (!head || !rateLine) return;
+        moveYearCountryAfterTitle();
         head.appendChild(rateLine);
     }
     function decorateDescr(attempt) {
@@ -207,8 +219,9 @@
         var old = document.querySelectorAll(".fh-descr");
         for (var i = 0; i < old.length; i++) old[i].remove();
         var tagline = right.querySelector(".full-start-new__tagline");
+        var meta = right.querySelector(".fh-meta");
         var title = right.querySelector(".full-start-new__title");
-        var anchorAfter = tagline || title;
+        var anchorAfter = tagline || meta || title;
         var text = descrTextEl.textContent.trim();
         if (anchorAfter && text) {
             var el = document.createElement("div");
