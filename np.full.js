@@ -1,7 +1,7 @@
  (function () {
     'use strict';
 
-    var VERSION = '1.0.9';
+    var VERSION = '1.0.10';
 
     var DEFAULT_SOURCE_NAME = 'NUMParser';
     var SOURCE_NAME = Lampa.Storage.get('numparser_source_name', DEFAULT_SOURCE_NAME);
@@ -1408,14 +1408,19 @@
     // возврате в Lampa). Дедуп/агрегация — на бэкенде: max_percent за день берётся как
     // GREATEST по всем событиям (см. store.RecordPlayEvent), так что клиенту копить
     // ничего не нужно — послать можно хоть на каждом тике.
-    function sendViewEvent(cardId, percent) {
+    // duration (сек, из road.duration в onTimelineUpdate) — реальная длительность
+    // видео от плеера, не обязателен. Бэкенд использует его, чтобы самокорректировать
+    // runtime/episode_run_time карточки (MaybeUpdateRuntimeFromPlayer), если он
+    // отличается от того, что есть в БД — см. dev/instance-sync.md.
+    function sendViewEvent(cardId, percent, duration) {
         if (percent < 30 || !BASE_URL) return;
         var uid = getProfileId() || Lampa.Storage.field('lampa_uid');
         if (!uid) return;
-        fetch(BASE_URL + '/api/view?card_id=' + encodeURIComponent(cardId) +
+        var url = BASE_URL + '/api/view?card_id=' + encodeURIComponent(cardId) +
               '&percent=' + percent +
-              '&uid=' + encodeURIComponent(uid), { method: 'POST' })
-            .catch(function () {});
+              '&uid=' + encodeURIComponent(uid);
+        if (duration > 0) url += '&duration=' + Math.round(duration);
+        fetch(url, { method: 'POST' }).catch(function () {});
     }
 
     function getCurrentCard() {
@@ -1494,7 +1499,7 @@
 
         // Play-событие для «Популярного» — шлём независимо от активации/токена/соединения
         // (IS_NP=true только после активации, а просмотры нужно учитывать и без неё).
-        sendViewEvent(cardId, percent);
+        sendViewEvent(cardId, percent, duration);
 
         // Синхронизация таймкодов — только при активном NP-соединении и токене.
         if (!window.IS_NP) {

@@ -1,6 +1,6 @@
 (function() {
     "use strict";
-    var VERSION = "1.0.9";
+    var VERSION = "1.0.10";
     var DEFAULT_SOURCE_NAME = "NUMParser";
     var SOURCE_NAME = Lampa.Storage.get("numparser_source_name", DEFAULT_SOURCE_NAME);
     var newName = SOURCE_NAME;
@@ -1130,11 +1130,13 @@
     var _timecodeInterceptorActive = false;
     var _lastSentTimecodes = {};
     var SYNC_THROTTLE_MS = 15e3;
-    function sendViewEvent(cardId, percent) {
+    function sendViewEvent(cardId, percent, duration) {
         if (percent < 30 || !BASE_URL) return;
         var uid = getProfileId() || Lampa.Storage.field("lampa_uid");
         if (!uid) return;
-        fetch(BASE_URL + "/api/view?card_id=" + encodeURIComponent(cardId) + "&percent=" + percent + "&uid=" + encodeURIComponent(uid), {
+        var url = BASE_URL + "/api/view?card_id=" + encodeURIComponent(cardId) + "&percent=" + percent + "&uid=" + encodeURIComponent(uid);
+        if (duration > 0) url += "&duration=" + Math.round(duration);
+        fetch(url, {
             method: "POST"
         }).catch(function() {});
     }
@@ -1168,7 +1170,7 @@
         var duration = Math.round(road.duration || 0);
         var mt = card.media_type || (card.isMovie ? "movie" : "tv");
         var cardId = String(card.id) + "_" + mt;
-        sendViewEvent(cardId, percent);
+        sendViewEvent(cardId, percent, duration);
         if (!window.IS_NP) return;
         var token = Lampa.Storage.get("numparser_api_key", "");
         if (!token) return;
