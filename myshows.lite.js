@@ -1,6 +1,6 @@
 (function() {
     "use strict";
-    var VERSION = "1.0.10";
+    var VERSION = "1.0.11";
     var DEFAULT_ADD_THRESHOLD = "0";
     var DEFAULT_MIN_PROGRESS = 90;
     var API_URL = "https://myshows.me/v3/rpc/";
@@ -1805,6 +1805,7 @@
             ensureHashMap(card, token, function(map) {
                 var entry = map[mapKey];
                 var episodeId = entry && entry.episodeId ? entry.episodeId : entry;
+                var airDate = entry && entry.airDate;
                 if (episodeId) ;
                 if (!episodeId) {
                     var fullMap = Lampa.Storage.get(MAP_KEY, {});
@@ -1813,23 +1814,36 @@
                     ensureHashMap(card, token, function(newMap) {
                         var newEntry = newMap[mapKey];
                         var newEpisodeId = newEntry && newEntry.episodeId ? newEntry.episodeId : newEntry;
-                        if (newEpisodeId) processEpisode(newEpisodeId, hash, percent, card, token, minProgress, addThreshold); else {
+                        if (newEpisodeId) processEpisode(newEpisodeId, hash, percent, card, token, minProgress, addThreshold, newEntry && newEntry.airDate); else {
                             var episodes_hash = EPISODES_CACHE[tmdbKey] || EPISODES_CACHE[card.original_name || card.original_title || card.title];
                             var episodeId = null;
+                            var hitAirDate = null;
                             if (episodes_hash) {
                                 var hit = episodes_hash[mapKey];
-                                if (hit && String(hit.tmdbId) === tmdbKey && hit.hash == hash) episodeId = hit.episodeId;
+                                if (hit && String(hit.tmdbId) === tmdbKey && hit.hash == hash) {
+                                    episodeId = hit.episodeId;
+                                    hitAirDate = hit.airDate;
+                                }
                             }
-                            if (episodeId) processEpisode(episodeId, hash, percent, card, token, minProgress, addThreshold);
+                            if (episodeId) processEpisode(episodeId, hash, percent, card, token, minProgress, addThreshold, hitAirDate);
                         }
                     });
                     return;
                 }
-                processEpisode(episodeId, hash, percent, card, token, minProgress, addThreshold);
+                processEpisode(episodeId, hash, percent, card, token, minProgress, addThreshold, airDate);
             });
         }
     }
-    function processEpisode(episodeId, hash, percent, card, token, minProgress, addThreshold) {
+    function isAirDateTodayOrFuture(airDate) {
+        if (!airDate) return false;
+        var d = new Date(airDate);
+        if (isNaN(d.getTime())) return false;
+        var today = new Date;
+        d.setHours(0, 0, 0, 0);
+        today.setHours(0, 0, 0, 0);
+        return d.getTime() >= today.getTime();
+    }
+    function processEpisode(episodeId, hash, percent, card, token, minProgress, addThreshold, airDate) {
         var originalName = card.original_name || card.original_title || card.title;
         var firstEpisodeHash = Lampa.Utils.hash("11" + originalName);
         var currentStatus = getCardStatusCache(card.id, false);
@@ -1866,7 +1880,7 @@
                     applyEpisodeMarkLocally(card, episodeId, true);
                 });
             };
-            if (currentStatus === "watching") isEpisodeUnwatched(episodeId, function(unwatched, known) {
+            if (currentStatus === "watching") if (isAirDateTodayOrFuture(airDate)) markEpisode("airDate сегодня/в будущем — список непросмотренных недостоверен"); else isEpisodeUnwatched(episodeId, function(unwatched, known) {
                 if (known && !unwatched) {
                     checkedEpisodes[episodeId] = true;
                     return;

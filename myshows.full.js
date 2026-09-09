@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    var VERSION = '1.0.10';
+    var VERSION = '1.0.11';
 
     var DEFAULT_ADD_THRESHOLD = '0';
     var DEFAULT_MIN_PROGRESS = 90;
@@ -2596,6 +2596,7 @@
             ensureHashMap(card, token, function(map) {
                 var entry = map[mapKey];
                 var episodeId = entry && entry.episodeId ? entry.episodeId : entry;
+                var airDate = entry && entry.airDate;
 
                 if (episodeId) {
                     Log.info('episodeId есть в Local Storage', episodeId);
@@ -2617,11 +2618,12 @@
                         var newEntry = newMap[mapKey];
                         var newEpisodeId = newEntry && newEntry.episodeId ? newEntry.episodeId : newEntry;
                         if (newEpisodeId) {
-                            processEpisode(newEpisodeId, hash, percent, card, token, minProgress, addThreshold);
+                            processEpisode(newEpisodeId, hash, percent, card, token, minProgress, addThreshold, newEntry && newEntry.airDate);
                         } else {
                             Log.info('Нет newEpisodeId — ищем в EPISODES_CACHE');
                             var episodes_hash = EPISODES_CACHE[tmdbKey] || EPISODES_CACHE[card.original_name || card.original_title || card.title];
                             var episodeId = null;
+                            var hitAirDate = null;
 
                             if (episodes_hash) {
                                 Log.info('episodes_hash', episodes_hash);
@@ -2629,12 +2631,13 @@
                                 var hit = episodes_hash[mapKey];
                                 if (hit && String(hit.tmdbId) === tmdbKey && hit.hash == hash) {
                                     episodeId = hit.episodeId;
+                                    hitAirDate = hit.airDate;
                                     Log.info('Найден episodeId:', episodeId);
                                 }
                             }
 
                             if (episodeId) {
-                                processEpisode(episodeId, hash, percent, card, token, minProgress, addThreshold);
+                                processEpisode(episodeId, hash, percent, card, token, minProgress, addThreshold, hitAirDate);
                             } else {
                                 Log.warn('❌ Не найден episodeId даже в EPISODES_CACHE для хеша:', hash);
                             }
@@ -2644,12 +2647,28 @@
                 }
                  Log.info('CheckEpisode episodeId', episodeId);
 
-                processEpisode(episodeId, hash, percent, card, token, minProgress, addThreshold);
+                processEpisode(episodeId, hash, percent, card, token, minProgress, addThreshold, airDate);
             });
         }
     }
 
-    function processEpisode(episodeId, hash, percent, card, token, minProgress, addThreshold) {
+    // Сравнение по календарному дню (не по точному времени): MyShows отдаёт lists.EpisodesUnwatched
+    // только по сериям, чья airDate уже наступила НА ИХ сервере. Если airDate сегодня или в будущем,
+    // список непросмотренных её никогда не покажет ("не найдена в списке" тут ≠ "уже отмечена") —
+    // список недостоверен для такой серии. День (а не точное время) — с запасом на рассинхрон часов
+    // клиент/сервер и задержку обновления списка на MyShows; лишний CheckEpisode безвреден (идемпотентен),
+    // а редкий кейс "пересмотрели в тот же день" ничем не грозит.
+    function isAirDateTodayOrFuture(airDate) {
+        if (!airDate) return false;
+        var d = new Date(airDate);
+        if (isNaN(d.getTime())) return false;
+        var today = new Date();
+        d.setHours(0, 0, 0, 0);
+        today.setHours(0, 0, 0, 0);
+        return d.getTime() >= today.getTime();
+    }
+
+    function processEpisode(episodeId, hash, percent, card, token, minProgress, addThreshold, airDate) {
 
         var originalName = card.original_name || card.original_title || card.title;
         var firstEpisodeHash = Lampa.Utils.hash('11' + originalName);
@@ -2729,16 +2748,23 @@
             };
 
             if (currentStatus === 'watching') {
-                // Статус "Смотрю": список непросмотренных авторитетен.
-                // Нет серии в списке (известно) → уже отмечена, пропускаем. Кэш недоступен → отмечаем.
-                isEpisodeUnwatched(episodeId, function(unwatched, known) {
-                    if (known && !unwatched) {
-                        checkedEpisodes[episodeId] = true;
-                        Log.info('[MS-guard] episodeId ' + episodeId + ' нет в непросмотренных (статус Смотрю) — уже отмечен, пропускаем');
-                        return;
-                    }
-                    markEpisode(known ? 'есть в непросмотренных' : 'список непросмотренных недоступен');
-                });
+                if (isAirDateTodayOrFuture(airDate)) {
+                    // airDate серии на MyShows ещё не в прошлом — их список непросмотренных
+                    // такую серию не покажет никогда (не значит "уже отмечена"), поэтому
+                    // проверять список бессмысленно — отмечаем напрямую.
+                    markEpisode('airDate сегодня/в будущем — список непросмотренных недостоверен');
+                } else {
+                    // Статус "Смотрю": список непросмотренных авторитетен.
+                    // Нет серии в списке (известно) → уже отмечена, пропускаем. Кэш недоступен → отмечаем.
+                    isEpisodeUnwatched(episodeId, function(unwatched, known) {
+                        if (known && !unwatched) {
+                            checkedEpisodes[episodeId] = true;
+                            Log.info('[MS-guard] episodeId ' + episodeId + ' нет в непросмотренных (статус Смотрю) — уже отмечен, пропускаем');
+                            return;
+                        }
+                        markEpisode(known ? 'есть в непросмотренных' : 'список непросмотренных недоступен');
+                    });
+                }
             } else {
                 // later/cancelled/remove/нет статуса — список непросмотренных не релевантен.
                 Log.info('[MS-guard] статус "' + currentStatus + '" не "Смотрю" → отмечаем серию без проверки списка непросмотренных');
