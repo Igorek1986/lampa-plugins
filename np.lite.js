@@ -1,6 +1,6 @@
 (function() {
     "use strict";
-    var VERSION = "1.0.10";
+    var VERSION = "1.0.11";
     var DEFAULT_SOURCE_NAME = "NUMParser";
     var SOURCE_NAME = Lampa.Storage.get("numparser_source_name", DEFAULT_SOURCE_NAME);
     var newName = SOURCE_NAME;
@@ -1130,15 +1130,46 @@
     var _timecodeInterceptorActive = false;
     var _lastSentTimecodes = {};
     var SYNC_THROTTLE_MS = 15e3;
-    function sendViewEvent(cardId, percent, duration) {
-        if (percent < 30 || !BASE_URL) return;
+    function sendViewEvent(cardId, percent, duration, season, episode) {
+        if (!BASE_URL) return;
+        if (percent < 30 && !(duration > 0)) return;
         var uid = getProfileId() || Lampa.Storage.field("lampa_uid");
         if (!uid) return;
         var url = BASE_URL + "/api/view?card_id=" + encodeURIComponent(cardId) + "&percent=" + percent + "&uid=" + encodeURIComponent(uid);
         if (duration > 0) url += "&duration=" + Math.round(duration);
+        if (season > 0 && episode > 0) url += "&season=" + season + "&episode=" + episode;
         fetch(url, {
             method: "POST"
         }).catch(function() {});
+    }
+    var _episodeHashMapCache = {};
+    function ensureEpisodeHashMap(cardId, callback) {
+        var cached = _episodeHashMapCache[cardId];
+        if (cached) {
+            callback(cached);
+            return;
+        }
+        if (!BASE_URL) {
+            callback({});
+            return;
+        }
+        fetch(BASE_URL + "/api/episodes?card_id=" + encodeURIComponent(cardId)).then(function(r) {
+            return r.json();
+        }).then(function(data) {
+            var map = {};
+            var eps = data && data.episodes || [];
+            for (var i = 0; i < eps.length; i++) {
+                var e = eps[i];
+                if (e.hash) map[e.hash] = {
+                    season: e.season,
+                    episode: e.episode
+                };
+            }
+            _episodeHashMapCache[cardId] = map;
+            callback(map);
+        }).catch(function() {
+            callback({});
+        });
     }
     function getCurrentCard() {
         var card = Lampa.Activity && Lampa.Activity.active && Lampa.Activity.active() && (Lampa.Activity.active().card_data || Lampa.Activity.active().card || Lampa.Activity.active().movie) || null;
@@ -1157,6 +1188,30 @@
             if (window.Lampa && Lampa.Timeline && Lampa.Timeline.listener) Lampa.Timeline.listener.follow("update", onTimelineUpdate); else setTimeout(tryAttach, 1e3);
         }
         tryAttach();
+        setupEarlyDurationReport();
+    }
+    function setupEarlyDurationReport() {
+        function tryAttach() {
+            if (window.Lampa && Lampa.Player && Lampa.Player.listener) Lampa.Player.listener.follow("start", onPlayerStart); else setTimeout(tryAttach, 1e3);
+        }
+        tryAttach();
+    }
+    function onPlayerStart(data) {
+        if (!data || !data.timeline || !data.timeline.hash) return;
+        var card = getCurrentCard();
+        if (!card || !card.id) return;
+        var mt = card.media_type || (card.isMovie ? "movie" : "tv");
+        var cardId = String(card.id) + "_" + mt;
+        var season = data.season, episode = data.episode;
+        var tries = 0;
+        var timer = setInterval(function() {
+            tries++;
+            var dur = data.timeline && data.timeline.duration;
+            if (dur > 0) {
+                clearInterval(timer);
+                sendViewEvent(cardId, data.timeline.percent || 0, dur, season, episode);
+            } else if (tries >= 15) clearInterval(timer);
+        }, 1e3);
     }
     function onTimelineUpdate(data) {
         if (window.__npRemoteTimelineUpdate) return;
@@ -1170,7 +1225,10 @@
         var duration = Math.round(road.duration || 0);
         var mt = card.media_type || (card.isMovie ? "movie" : "tv");
         var cardId = String(card.id) + "_" + mt;
-        sendViewEvent(cardId, percent, duration);
+        if (mt === "tv") ensureEpisodeHashMap(cardId, function(map) {
+            var info = map[hash];
+            sendViewEvent(cardId, percent, duration, info && info.season, info && info.episode);
+        }); else sendViewEvent(cardId, percent, duration);
         if (!window.IS_NP) return;
         var token = Lampa.Storage.get("numparser_api_key", "");
         if (!token) return;

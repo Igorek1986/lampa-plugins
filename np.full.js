@@ -1,7 +1,7 @@
  (function () {
     'use strict';
 
-    var VERSION = '1.0.10';
+    var VERSION = '1.0.11';
 
     var DEFAULT_SOURCE_NAME = 'NUMParser';
     var SOURCE_NAME = Lampa.Storage.get('numparser_source_name', DEFAULT_SOURCE_NAME);
@@ -1412,15 +1412,56 @@
     // видео от плеера, не обязателен. Бэкенд использует его, чтобы самокорректировать
     // runtime/episode_run_time карточки (MaybeUpdateRuntimeFromPlayer), если он
     // отличается от того, что есть в БД — см. dev/instance-sync.md.
-    function sendViewEvent(cardId, percent, duration) {
-        if (percent < 30 || !BASE_URL) return;
+    //
+    // percent>=30 — порог именно для «Популярного» (RecordPlayEvent на бэкенде
+    // и так же им ограничен — не «засчитывать» пару секунд как просмотр).
+    // Коррекция длительности этим порогом не ограничена: реальный duration
+    // известен намного раньше 30% и бэкенду для самокоррекции percent не
+    // нужен вообще — поэтому пропускаем вызов, только если нет ВООБЩЕ
+    // ничего полезного (ни высокого percent, ни известной длительности).
+    function sendViewEvent(cardId, percent, duration, season, episode) {
+        if (!BASE_URL) return;
+        if (percent < 30 && !(duration > 0)) return;
         var uid = getProfileId() || Lampa.Storage.field('lampa_uid');
         if (!uid) return;
         var url = BASE_URL + '/api/view?card_id=' + encodeURIComponent(cardId) +
               '&percent=' + percent +
               '&uid=' + encodeURIComponent(uid);
         if (duration > 0) url += '&duration=' + Math.round(duration);
+        if (season > 0 && episode > 0) url += '&season=' + season + '&episode=' + episode;
         fetch(url, { method: 'POST' }).catch(function () {});
+    }
+
+    // Сезон/серия для конкретного Timeline-события — резолвятся по hash, а НЕ
+    // из Lampa.Player.playdata(). playdata() — это то, что было при запуске
+    // плеера, и для одиночного эпизода этого достаточно, но при просмотре
+    // нескольких серий подряд во внешнем плеере нативный код (см.
+    // dev/lampa-app MainActivity.kt: resultPlayer/updatePreviousItemsCompletion)
+    // шлёт Lampa.Timeline.update(hash, ...) по КАЖДОЙ серии батча, ни разу не
+    // трогая playdata() — она осталась бы на первой серии плейлиста, и мы бы
+    // приписали реальную длительность последней серии первой. Резолвим hash →
+    // {season, episode} через /api/episodes (та же карта, что уже строит
+    // myshows.js — ensureHashMap, — но без персиста, кеш только на сессию).
+    var _episodeHashMapCache = {}; // cardId → { hash: {season, episode} }
+
+    function ensureEpisodeHashMap(cardId, callback) {
+        var cached = _episodeHashMapCache[cardId];
+        if (cached) { callback(cached); return; }
+        if (!BASE_URL) { callback({}); return; }
+
+        fetch(BASE_URL + '/api/episodes?card_id=' + encodeURIComponent(cardId))
+            .then(function (r) { return r.json(); })
+            .then(function (data) {
+                var map = {};
+                var eps = (data && data.episodes) || [];
+                for (var i = 0; i < eps.length; i++) {
+                    var e = eps[i];
+                    if (e.hash) map[e.hash] = { season: e.season, episode: e.episode };
+                }
+                _episodeHashMapCache[cardId] = map;
+                callback(map);
+            })
+            .catch(function () { callback({}); });
     }
 
     function getCurrentCard() {
@@ -1474,6 +1515,56 @@
             }
         }
         tryAttach();
+
+        setupEarlyDurationReport();
+    }
+
+    // Не ждём естественный цикл Lampa (раз в 2 мин, см. interaction/player/
+    // timeline.js: setInterval(saveTimeView, 1000*60*2)) или переключение
+    // серии — как только видео сообщает свою реальную длительность (обычно
+    // несколько секунд после старта), шлём её сразу отдельным пингом.
+    // season/episode/card берём из самого объекта 'start' — он гарантированно
+    // относится к ИМЕННО этой, только что запущенной серии, в отличие от
+    // Lampa.Player.playdata(), которая при просмотре нескольких серий подряд
+    // во внешнем плеере не обновляется на переключении (см. разбор
+    // dev/lampa-app MainActivity.kt). data.timeline — тот же объект, что
+    // Timeline.view(hash) отдаёт при старте (interaction/torrent.js:
+    // element.timeline = view), и его .duration тот же модуль обновляет по
+    // каждому тику video 'timeupdate' — опрос ниже видит уже актуальное
+    // значение, не дожидаясь broadcast'а от Lampa.
+    function setupEarlyDurationReport() {
+        function tryAttach() {
+            if (window.Lampa && Lampa.Player && Lampa.Player.listener) {
+                Lampa.Player.listener.follow('start', onPlayerStart);
+                Log.info('Early duration report: Player attached');
+            } else {
+                setTimeout(tryAttach, 1000);
+            }
+        }
+        tryAttach();
+    }
+
+    function onPlayerStart(data) {
+        if (!data || !data.timeline || !data.timeline.hash) return;
+
+        var card = getCurrentCard();
+        if (!card || !card.id) return;
+
+        var mt = card.media_type || (card.isMovie ? 'movie' : 'tv');
+        var cardId = String(card.id) + '_' + mt;
+        var season = data.season, episode = data.episode;
+
+        var tries = 0;
+        var timer = setInterval(function () {
+            tries++;
+            var dur = data.timeline && data.timeline.duration;
+            if (dur > 0) {
+                clearInterval(timer);
+                sendViewEvent(cardId, data.timeline.percent || 0, dur, season, episode);
+            } else if (tries >= 15) {
+                clearInterval(timer); // за 15с не дождались — оставляем обычному циклу Lampa
+            }
+        }, 1000);
     }
 
     function onTimelineUpdate(data) {
@@ -1499,7 +1590,14 @@
 
         // Play-событие для «Популярного» — шлём независимо от активации/токена/соединения
         // (IS_NP=true только после активации, а просмотры нужно учитывать и без неё).
-        sendViewEvent(cardId, percent, duration);
+        if (mt === 'tv') {
+            ensureEpisodeHashMap(cardId, function (map) {
+                var info = map[hash];
+                sendViewEvent(cardId, percent, duration, info && info.season, info && info.episode);
+            });
+        } else {
+            sendViewEvent(cardId, percent, duration);
+        }
 
         // Синхронизация таймкодов — только при активном NP-соединении и токене.
         if (!window.IS_NP) {
