@@ -1,7 +1,7 @@
  (function () {
     'use strict';
 
-    var VERSION = '1.0.11';
+    var VERSION = '1.0.12';
 
     var DEFAULT_SOURCE_NAME = 'NUMParser';
     var SOURCE_NAME = Lampa.Storage.get('numparser_source_name', DEFAULT_SOURCE_NAME);
@@ -1554,11 +1554,27 @@
         var cardId = String(card.id) + '_' + mt;
         var season = data.season, episode = data.episode;
 
+        // data.timeline — это ТОТ ЖЕ объект, что Timeline.view(hash) отдал ДО
+        // старта видео: duration там — не "ещё не известно", а последнее
+        // СОХРАНЁННОЕ для этого hash значение (может быть от совсем другого
+        // релиза/качества под тем же хешем, или просто устаревшее). Он же
+        // мутируется на месте нативным кодом при каждом video 'timeupdate' —
+        // но здесь важно, что ПЕРВЫЙ такой тик (см. lampa-source
+        // interaction/player/timeline.js: !work.timeline.continued) уходит на
+        // операцию доскролла к сохранённой позиции и duration НЕ трогает;
+        // duration обновляется реальным значением видео только со ВТОРОГО
+        // тика. Поэтому "duration > 0" само по себе ничего не доказывает —
+        // ждём, пока значение ИЗМЕНИТСЯ относительно того, что было на
+        // старте (либо появится из 0, либо станет отличным от сохранённого) —
+        // так подтверждаем, что это свежий отчёт видеодвижка, а не старое
+        // значение из Timeline.view().
+        var initialDuration = data.timeline.duration || 0;
+
         var tries = 0;
         var timer = setInterval(function () {
             tries++;
             var dur = data.timeline && data.timeline.duration;
-            if (dur > 0) {
+            if (dur > 0 && dur !== initialDuration) {
                 clearInterval(timer);
                 sendViewEvent(cardId, data.timeline.percent || 0, dur, season, episode);
             } else if (tries >= 15) {

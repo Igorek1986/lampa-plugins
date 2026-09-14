@@ -1,6 +1,6 @@
 (function() {
     "use strict";
-    var VERSION = "1.0.11";
+    var VERSION = "1.0.12";
     var DEFAULT_SOURCE_NAME = "NUMParser";
     var SOURCE_NAME = Lampa.Storage.get("numparser_source_name", DEFAULT_SOURCE_NAME);
     var newName = SOURCE_NAME;
@@ -1203,11 +1203,12 @@
         var mt = card.media_type || (card.isMovie ? "movie" : "tv");
         var cardId = String(card.id) + "_" + mt;
         var season = data.season, episode = data.episode;
+        var initialDuration = data.timeline.duration || 0;
         var tries = 0;
         var timer = setInterval(function() {
             tries++;
             var dur = data.timeline && data.timeline.duration;
-            if (dur > 0) {
+            if (dur > 0 && dur !== initialDuration) {
                 clearInterval(timer);
                 sendViewEvent(cardId, data.timeline.percent || 0, dur, season, episode);
             } else if (tries >= 15) clearInterval(timer);
