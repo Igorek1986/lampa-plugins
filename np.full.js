@@ -1,7 +1,7 @@
  (function () {
     'use strict';
 
-    var VERSION = '1.0.13';
+    var VERSION = '1.0.14';
 
     var DEFAULT_SOURCE_NAME = 'NUMParser';
     var SOURCE_NAME = Lampa.Storage.get('numparser_source_name', DEFAULT_SOURCE_NAME);
@@ -1445,6 +1445,16 @@
     // myshows.js — ensureHashMap, — но без персиста, кеш только на сессию).
     var _episodeHashMapCache = {}; // cardId → { hash: {season, episode} }
 
+    // hash → {season, episode} замеченные напрямую на старте плеера (Lampa
+    // сама парсит их из имени файла торрента — см. onPlayerStart) — куда
+    // надёжнее, чем матчинг по синтетическому /api/episodes hash ниже: он
+    // регулярно не совпадает (например, у is_file-торрентов Lampa строит
+    // hash из сырого пути файла, а не из season+episode+title). Раз мы уже
+    // ОДНАЖДЫ узнали season/episode для этого hash на старте — переиспользуем
+    // их на каждом периодическом онTimelineUpdate той же серии вместо того,
+    // чтобы полагаться на матчинг заново.
+    var _seasonEpisodeByHash = {};
+
     function ensureEpisodeHashMap(cardId, callback) {
         var cached = _episodeHashMapCache[cardId];
         if (cached) { callback(cached); return; }
@@ -1555,6 +1565,10 @@
         var cardId = String(card.id) + '_' + mt;
         var season = data.season, episode = data.episode;
 
+        if (season > 0 && episode > 0) {
+            _seasonEpisodeByHash[String(data.timeline.hash)] = { season: season, episode: episode };
+        }
+
         // data.timeline — это ТОТ ЖЕ объект, что Timeline.view(hash) отдал ДО
         // старта видео: duration там — не "ещё не известно", а последнее
         // СОХРАНЁННОЕ для этого hash значение (может быть от совсем другого
@@ -1608,10 +1622,15 @@
         // Play-событие для «Популярного» — шлём независимо от активации/токена/соединения
         // (IS_NP=true только после активации, а просмотры нужно учитывать и без неё).
         if (mt === 'tv') {
-            ensureEpisodeHashMap(cardId, function (map) {
-                var info = map[hash];
-                sendViewEvent(cardId, percent, duration, info && info.season, info && info.episode);
-            });
+            var known = _seasonEpisodeByHash[hash];
+            if (known) {
+                sendViewEvent(cardId, percent, duration, known.season, known.episode);
+            } else {
+                ensureEpisodeHashMap(cardId, function (map) {
+                    var info = map[hash];
+                    sendViewEvent(cardId, percent, duration, info && info.season, info && info.episode);
+                });
+            }
         } else {
             sendViewEvent(cardId, percent, duration);
         }
