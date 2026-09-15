@@ -1,7 +1,7 @@
  (function () {
     'use strict';
 
-    var VERSION = '1.0.14';
+    var VERSION = '1.0.15';
 
     var DEFAULT_SOURCE_NAME = 'NUMParser';
     var SOURCE_NAME = Lampa.Storage.get('numparser_source_name', DEFAULT_SOURCE_NAME);
@@ -1455,6 +1455,32 @@
     // чтобы полагаться на матчинг заново.
     var _seasonEpisodeByHash = {};
 
+    // Единая точка резолва season/episode для одного hash — пробует оба
+    // независимых источника прежде чем сдаться. knownSeason/knownEpisode —
+    // то, что Lampa уже дала напрямую (playlist item на старте плеера,
+    // из разбора имени файла); если их нет — берём то, что уже узнали
+    // раньше для этого же hash (кеш), а если и этого нет — только тогда
+    // идём в асинхронный hash-матчинг через /api/episodes. Раньше
+    // onPlayerStart пробовал только первый источник, а onTimelineUpdate —
+    // только третий; теперь оба пробуют оба, до полного отказа.
+    function resolveSeasonEpisode(cardId, hash, knownSeason, knownEpisode, callback) {
+        if (knownSeason > 0 && knownEpisode > 0) {
+            _seasonEpisodeByHash[hash] = { season: knownSeason, episode: knownEpisode };
+            callback(knownSeason, knownEpisode);
+            return;
+        }
+        var cached = _seasonEpisodeByHash[hash];
+        if (cached) {
+            callback(cached.season, cached.episode);
+            return;
+        }
+        ensureEpisodeHashMap(cardId, function (map) {
+            var info = map[hash];
+            if (info) _seasonEpisodeByHash[hash] = info;
+            callback(info && info.season, info && info.episode);
+        });
+    }
+
     function ensureEpisodeHashMap(cardId, callback) {
         var cached = _episodeHashMapCache[cardId];
         if (cached) { callback(cached); return; }
@@ -1564,10 +1590,7 @@
         var mt = card.media_type || (card.isMovie ? 'movie' : 'tv');
         var cardId = String(card.id) + '_' + mt;
         var season = data.season, episode = data.episode;
-
-        if (season > 0 && episode > 0) {
-            _seasonEpisodeByHash[String(data.timeline.hash)] = { season: season, episode: episode };
-        }
+        var hash = String(data.timeline.hash);
 
         // data.timeline — это ТОТ ЖЕ объект, что Timeline.view(hash) отдал ДО
         // старта видео: duration там — не "ещё не известно", а последнее
@@ -1591,7 +1614,13 @@
             var dur = data.timeline && data.timeline.duration;
             if (dur > 0 && dur !== initialDuration) {
                 clearInterval(timer);
-                sendViewEvent(cardId, data.timeline.percent || 0, dur, season, episode);
+                if (mt === 'tv') {
+                    resolveSeasonEpisode(cardId, hash, season, episode, function (s, e) {
+                        sendViewEvent(cardId, data.timeline.percent || 0, dur, s, e);
+                    });
+                } else {
+                    sendViewEvent(cardId, data.timeline.percent || 0, dur);
+                }
             } else if (tries >= 15) {
                 clearInterval(timer); // за 15с не дождались — оставляем обычному циклу Lampa
             }
@@ -1622,15 +1651,9 @@
         // Play-событие для «Популярного» — шлём независимо от активации/токена/соединения
         // (IS_NP=true только после активации, а просмотры нужно учитывать и без неё).
         if (mt === 'tv') {
-            var known = _seasonEpisodeByHash[hash];
-            if (known) {
-                sendViewEvent(cardId, percent, duration, known.season, known.episode);
-            } else {
-                ensureEpisodeHashMap(cardId, function (map) {
-                    var info = map[hash];
-                    sendViewEvent(cardId, percent, duration, info && info.season, info && info.episode);
-                });
-            }
+            resolveSeasonEpisode(cardId, hash, undefined, undefined, function (s, e) {
+                sendViewEvent(cardId, percent, duration, s, e);
+            });
         } else {
             sendViewEvent(cardId, percent, duration);
         }

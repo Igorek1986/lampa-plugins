@@ -1,6 +1,6 @@
 (function() {
     "use strict";
-    var VERSION = "1.0.14";
+    var VERSION = "1.0.15";
     var DEFAULT_SOURCE_NAME = "NUMParser";
     var SOURCE_NAME = Lampa.Storage.get("numparser_source_name", DEFAULT_SOURCE_NAME);
     var newName = SOURCE_NAME;
@@ -1144,6 +1144,26 @@
     }
     var _episodeHashMapCache = {};
     var _seasonEpisodeByHash = {};
+    function resolveSeasonEpisode(cardId, hash, knownSeason, knownEpisode, callback) {
+        if (knownSeason > 0 && knownEpisode > 0) {
+            _seasonEpisodeByHash[hash] = {
+                season: knownSeason,
+                episode: knownEpisode
+            };
+            callback(knownSeason, knownEpisode);
+            return;
+        }
+        var cached = _seasonEpisodeByHash[hash];
+        if (cached) {
+            callback(cached.season, cached.episode);
+            return;
+        }
+        ensureEpisodeHashMap(cardId, function(map) {
+            var info = map[hash];
+            if (info) _seasonEpisodeByHash[hash] = info;
+            callback(info && info.season, info && info.episode);
+        });
+    }
     function ensureEpisodeHashMap(cardId, callback) {
         var cached = _episodeHashMapCache[cardId];
         if (cached) {
@@ -1204,10 +1224,7 @@
         var mt = card.media_type || (card.isMovie ? "movie" : "tv");
         var cardId = String(card.id) + "_" + mt;
         var season = data.season, episode = data.episode;
-        if (season > 0 && episode > 0) _seasonEpisodeByHash[String(data.timeline.hash)] = {
-            season: season,
-            episode: episode
-        };
+        var hash = String(data.timeline.hash);
         var initialDuration = data.timeline.duration || 0;
         var tries = 0;
         var timer = setInterval(function() {
@@ -1215,7 +1232,9 @@
             var dur = data.timeline && data.timeline.duration;
             if (dur > 0 && dur !== initialDuration) {
                 clearInterval(timer);
-                sendViewEvent(cardId, data.timeline.percent || 0, dur, season, episode);
+                if (mt === "tv") resolveSeasonEpisode(cardId, hash, season, episode, function(s, e) {
+                    sendViewEvent(cardId, data.timeline.percent || 0, dur, s, e);
+                }); else sendViewEvent(cardId, data.timeline.percent || 0, dur);
             } else if (tries >= 15) clearInterval(timer);
         }, 1e3);
     }
@@ -1231,13 +1250,9 @@
         var duration = Math.round(road.duration || 0);
         var mt = card.media_type || (card.isMovie ? "movie" : "tv");
         var cardId = String(card.id) + "_" + mt;
-        if (mt === "tv") {
-            var known = _seasonEpisodeByHash[hash];
-            if (known) sendViewEvent(cardId, percent, duration, known.season, known.episode); else ensureEpisodeHashMap(cardId, function(map) {
-                var info = map[hash];
-                sendViewEvent(cardId, percent, duration, info && info.season, info && info.episode);
-            });
-        } else sendViewEvent(cardId, percent, duration);
+        if (mt === "tv") resolveSeasonEpisode(cardId, hash, void 0, void 0, function(s, e) {
+            sendViewEvent(cardId, percent, duration, s, e);
+        }); else sendViewEvent(cardId, percent, duration);
         if (!window.IS_NP) return;
         var token = Lampa.Storage.get("numparser_api_key", "");
         if (!token) return;
