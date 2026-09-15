@@ -1,7 +1,7 @@
  (function () {
     'use strict';
 
-    var VERSION = '1.0.19';
+    var VERSION = '1.0.20';
 
     var DEFAULT_SOURCE_NAME = 'NUMParser';
     var SOURCE_NAME = Lampa.Storage.get('numparser_source_name', DEFAULT_SOURCE_NAME);
@@ -1408,128 +1408,14 @@
     // возврате в Lampa). Дедуп/агрегация — на бэкенде: max_percent за день берётся как
     // GREATEST по всем событиям (см. store.RecordPlayEvent), так что клиенту копить
     // ничего не нужно — послать можно хоть на каждом тике.
-    // duration (сек, из road.duration в onTimelineUpdate) — реальная длительность
-    // видео от плеера, не обязателен. Бэкенд использует его, чтобы самокорректировать
-    // runtime/episode_run_time карточки (MaybeUpdateRuntimeFromPlayer), если он
-    // отличается от того, что есть в БД — см. dev/instance-sync.md.
-    //
-    // percent>=30 — порог именно для «Популярного» (RecordPlayEvent на бэкенде
-    // и так же им ограничен — не «засчитывать» пару секунд как просмотр).
-    // Коррекция длительности этим порогом не ограничена: реальный duration
-    // известен намного раньше 30% и бэкенду для самокоррекции percent не
-    // нужен вообще — поэтому пропускаем вызов, только если нет ВООБЩЕ
-    // ничего полезного (ни высокого percent, ни известной длительности).
-    function sendViewEvent(cardId, percent, duration, season, episode, torrentTitle, cardTitle, cardOriginalTitle, rawPath) {
-        if (!BASE_URL) return;
-        if (percent < 30 && !(duration > 0)) return;
+    function sendViewEvent(cardId, percent) {
+        if (percent < 30 || !BASE_URL) return;
         var uid = getProfileId() || Lampa.Storage.field('lampa_uid');
         if (!uid) return;
         var url = BASE_URL + '/api/view?card_id=' + encodeURIComponent(cardId) +
               '&percent=' + percent +
-              '&uid=' + encodeURIComponent(uid) +
-              '&plugin_version=' + VERSION;
-        if (duration > 0) url += '&duration=' + Math.round(duration);
-        if (season > 0 && episode > 0) url += '&season=' + season + '&episode=' + episode;
-        // Реальное имя файла торрента (element.title в Lampa — то, что
-        // реально проигрывается), а не название карточки — единственный
-        // способ со стороны бэкенда заметить, что под карточкой смотрят
-        // совсем другой релиз (см. случаи «Одиссея»/«Бегущая» — корректный
-        // самокоррекция runtime по факту меряет чужой файл). Только для
-        // диагностики, в БД не пишется.
-        if (torrentTitle) url += '&torrent_title=' + encodeURIComponent(torrentTitle);
-        // Название карточки, как его понимает САМА Lampa (card.title/name) —
-        // не зависит от источника (торрент/онлайн) и не зависит от того,
-        // какую именно систему id использует конкретный источник. Ловит
-        // случай, когда card.id ошибочно совпал с ЧУЖИМ tmdb_id в нашей базе
-        // (id не только у сторонних источников бывает перепутан — наш
-        // собственный imdb_id enrichment тоже иногда матчит не тот тайтл).
-        if (cardTitle) url += '&card_title=' + encodeURIComponent(cardTitle);
-        // original_title гораздо стабильнее для сверки, чем локализованное
-        // название: не зависит от языка интерфейса Lampa/перевода — раньше
-        // локализованные card_title/our_title давали ложные "расхождения"
-        // на банальной разнице переводов («Спецзагін» vs «Спецназ: Львица»).
-        if (cardOriginalTitle) url += '&card_original_title=' + encodeURIComponent(cardOriginalTitle);
-        if (rawPath) url += '&raw_path=' + encodeURIComponent(rawPath);
+              '&uid=' + encodeURIComponent(uid);
         fetch(url, { method: 'POST' }).catch(function () {});
-    }
-
-    // Сезон/серия для конкретного Timeline-события — резолвятся по hash, а НЕ
-    // из Lampa.Player.playdata(). playdata() — это то, что было при запуске
-    // плеера, и для одиночного эпизода этого достаточно, но при просмотре
-    // нескольких серий подряд во внешнем плеере нативный код (см.
-    // dev/lampa-app MainActivity.kt: resultPlayer/updatePreviousItemsCompletion)
-    // шлёт Lampa.Timeline.update(hash, ...) по КАЖДОЙ серии батча, ни разу не
-    // трогая playdata() — она осталась бы на первой серии плейлиста, и мы бы
-    // приписали реальную длительность последней серии первой. Резолвим hash →
-    // {season, episode} через /api/episodes (та же карта, что уже строит
-    // myshows.js — ensureHashMap, — но без персиста, кеш только на сессию).
-    var _episodeHashMapCache = {}; // cardId → { hash: {season, episode} }
-
-    // hash → {season, episode} замеченные напрямую на старте плеера (Lampa
-    // сама парсит их из имени файла торрента — см. onPlayerStart) — куда
-    // надёжнее, чем матчинг по синтетическому /api/episodes hash ниже: он
-    // регулярно не совпадает (например, у is_file-торрентов Lampa строит
-    // hash из сырого пути файла, а не из season+episode+title). Раз мы уже
-    // ОДНАЖДЫ узнали season/episode для этого hash на старте — переиспользуем
-    // их на каждом периодическом онTimelineUpdate той же серии вместо того,
-    // чтобы полагаться на матчинг заново.
-    var _seasonEpisodeByHash = {};
-
-    // hash → реальное имя файла торрента (element.title), замеченное на
-    // старте плеера — для диагностики рассинхрона карточка/файл (см.
-    // sendViewEvent). onTimelineUpdate не видит его напрямую, только через
-    // этот кеш.
-    var _torrentTitleByHash = {};
-
-    // hash → сырой путь файла внутри торрента (element.path) — то, что
-    // реально разбирает регэксп Lampa для season/episode, в отличие от уже
-    // очищенного torrentTitle (element.title = path_human).
-    var _rawPathByHash = {};
-
-    // Единая точка резолва season/episode для одного hash — пробует оба
-    // независимых источника прежде чем сдаться. knownSeason/knownEpisode —
-    // то, что Lampa уже дала напрямую (playlist item на старте плеера,
-    // из разбора имени файла); если их нет — берём то, что уже узнали
-    // раньше для этого же hash (кеш), а если и этого нет — только тогда
-    // идём в асинхронный hash-матчинг через /api/episodes. Раньше
-    // onPlayerStart пробовал только первый источник, а onTimelineUpdate —
-    // только третий; теперь оба пробуют оба, до полного отказа.
-    function resolveSeasonEpisode(cardId, hash, knownSeason, knownEpisode, callback) {
-        if (knownSeason > 0 && knownEpisode > 0) {
-            _seasonEpisodeByHash[hash] = { season: knownSeason, episode: knownEpisode };
-            callback(knownSeason, knownEpisode);
-            return;
-        }
-        var cached = _seasonEpisodeByHash[hash];
-        if (cached) {
-            callback(cached.season, cached.episode);
-            return;
-        }
-        ensureEpisodeHashMap(cardId, function (map) {
-            var info = map[hash];
-            if (info) _seasonEpisodeByHash[hash] = info;
-            callback(info && info.season, info && info.episode);
-        });
-    }
-
-    function ensureEpisodeHashMap(cardId, callback) {
-        var cached = _episodeHashMapCache[cardId];
-        if (cached) { callback(cached); return; }
-        if (!BASE_URL) { callback({}); return; }
-
-        fetch(BASE_URL + '/api/episodes?card_id=' + encodeURIComponent(cardId))
-            .then(function (r) { return r.json(); })
-            .then(function (data) {
-                var map = {};
-                var eps = (data && data.episodes) || [];
-                for (var i = 0; i < eps.length; i++) {
-                    var e = eps[i];
-                    if (e.hash) map[e.hash] = { season: e.season, episode: e.episode };
-                }
-                _episodeHashMapCache[cardId] = map;
-                callback(map);
-            })
-            .catch(function () { callback({}); });
     }
 
     function getCurrentCard() {
@@ -1583,102 +1469,6 @@
             }
         }
         tryAttach();
-
-        setupEarlyDurationReport();
-    }
-
-    // Не ждём естественный цикл Lampa (раз в 2 мин, см. interaction/player/
-    // timeline.js: setInterval(saveTimeView, 1000*60*2)) или переключение
-    // серии — как только видео сообщает свою реальную длительность (обычно
-    // несколько секунд после старта), шлём её сразу отдельным пингом.
-    // season/episode/card берём из самого объекта 'start' — он гарантированно
-    // относится к ИМЕННО этой, только что запущенной серии, в отличие от
-    // Lampa.Player.playdata(), которая при просмотре нескольких серий подряд
-    // во внешнем плеере не обновляется на переключении (см. разбор
-    // dev/lampa-app MainActivity.kt). data.timeline — тот же объект, что
-    // Timeline.view(hash) отдаёт при старте (interaction/torrent.js:
-    // element.timeline = view), и его .duration тот же модуль обновляет по
-    // каждому тику video 'timeupdate' — опрос ниже видит уже актуальное
-    // значение, не дожидаясь broadcast'а от Lampa.
-    function setupEarlyDurationReport() {
-        function tryAttach() {
-            if (window.Lampa && Lampa.Player && Lampa.Player.listener) {
-                Lampa.Player.listener.follow('start', onPlayerStart);
-                Log.info('Early duration report: Player attached');
-            } else {
-                setTimeout(tryAttach, 1000);
-            }
-        }
-        tryAttach();
-    }
-
-    function onPlayerStart(data) {
-        if (!data || !data.timeline || !data.timeline.hash) return;
-        // Ранний пинг проверен и безопасен только для торрент-воспроизведения
-        // (см. lampa-source interaction/player.js: data.torrent_hash — тот же
-        // флаг, которым сама Lampa отличает торрент-сессию). Для онлайн-
-        // источников поведение data.timeline/duration в первые секунды не
-        // изучено и не гарантировано — у «Одиссеи» (онлайн, torrent_title
-        // всегда пусто) именно на pct=1-5% ловились случайные, не совпадающие
-        // между собой значения длительности (86 мин, 110 мин, 165 мин за одну
-        // и ту же карточку/original_title). Обычный 2-минутный цикл Lampa
-        // (onTimelineUpdate) успевает стабилизироваться к тому времени —
-        // рискуем только этим ранним пингом, не самой коррекцией целиком.
-        if (!data.torrent_hash) return;
-
-        var card = getCurrentCard();
-        if (!card || !card.id) return;
-
-        var mt = card.media_type || (card.isMovie ? 'movie' : 'tv');
-        var cardId = String(card.id) + '_' + mt;
-        var season = data.season, episode = data.episode;
-        var hash = String(data.timeline.hash);
-        var torrentTitle = data.title;
-        if (torrentTitle) _torrentTitleByHash[hash] = torrentTitle;
-        var cardTitle = card.title || card.name || '';
-        var cardOriginalTitle = card.original_title || card.original_name || '';
-        // Сырой путь файла внутри торрента (element.path из torrent.js) — то,
-        // что реально разбирает регэксп Lampa для season/episode. torrentTitle
-        // (element.title = path_human) — уже ОЧИЩЕННОЕ отображаемое имя, по
-        // нему нельзя понять, почему конкретный файл не распознался: разные
-        // эпизоды одного сериала могут быть из разных раздач с разной
-        // внутренней структурой имён при одинаковом отображаемом виде.
-        var rawPath = data.path || '';
-        if (rawPath) _rawPathByHash[hash] = rawPath;
-
-        // data.timeline — это ТОТ ЖЕ объект, что Timeline.view(hash) отдал ДО
-        // старта видео: duration там — не "ещё не известно", а последнее
-        // СОХРАНЁННОЕ для этого hash значение (может быть от совсем другого
-        // релиза/качества под тем же хешем, или просто устаревшее). Он же
-        // мутируется на месте нативным кодом при каждом video 'timeupdate' —
-        // но здесь важно, что ПЕРВЫЙ такой тик (см. lampa-source
-        // interaction/player/timeline.js: !work.timeline.continued) уходит на
-        // операцию доскролла к сохранённой позиции и duration НЕ трогает;
-        // duration обновляется реальным значением видео только со ВТОРОГО
-        // тика. Поэтому "duration > 0" само по себе ничего не доказывает —
-        // ждём, пока значение ИЗМЕНИТСЯ относительно того, что было на
-        // старте (либо появится из 0, либо станет отличным от сохранённого) —
-        // так подтверждаем, что это свежий отчёт видеодвижка, а не старое
-        // значение из Timeline.view().
-        var initialDuration = data.timeline.duration || 0;
-
-        var tries = 0;
-        var timer = setInterval(function () {
-            tries++;
-            var dur = data.timeline && data.timeline.duration;
-            if (dur > 0 && dur !== initialDuration) {
-                clearInterval(timer);
-                if (mt === 'tv') {
-                    resolveSeasonEpisode(cardId, hash, season, episode, function (s, e) {
-                        sendViewEvent(cardId, data.timeline.percent || 0, dur, s, e, torrentTitle, cardTitle, cardOriginalTitle, rawPath);
-                    });
-                } else {
-                    sendViewEvent(cardId, data.timeline.percent || 0, dur, undefined, undefined, torrentTitle, cardTitle, cardOriginalTitle, rawPath);
-                }
-            } else if (tries >= 15) {
-                clearInterval(timer); // за 15с не дождались — оставляем обычному циклу Lampa
-            }
-        }, 1000);
     }
 
     function onTimelineUpdate(data) {
@@ -1701,20 +1491,10 @@
 
         var mt     = card.media_type || (card.isMovie ? 'movie' : 'tv');
         var cardId = String(card.id) + '_' + mt;
-        var torrentTitle = _torrentTitleByHash[hash];
-        var rawPath = _rawPathByHash[hash];
-        var cardTitle = card.title || card.name || '';
-        var cardOriginalTitle = card.original_title || card.original_name || '';
 
         // Play-событие для «Популярного» — шлём независимо от активации/токена/соединения
         // (IS_NP=true только после активации, а просмотры нужно учитывать и без неё).
-        if (mt === 'tv') {
-            resolveSeasonEpisode(cardId, hash, undefined, undefined, function (s, e) {
-                sendViewEvent(cardId, percent, duration, s, e, torrentTitle, cardTitle, cardOriginalTitle, rawPath);
-            });
-        } else {
-            sendViewEvent(cardId, percent, duration, undefined, undefined, torrentTitle, cardTitle, cardOriginalTitle, rawPath);
-        }
+        sendViewEvent(cardId, percent);
 
         // Синхронизация таймкодов — только при активном NP-соединении и токене.
         if (!window.IS_NP) {

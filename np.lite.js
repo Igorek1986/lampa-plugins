@@ -1,6 +1,6 @@
 (function() {
     "use strict";
-    var VERSION = "1.0.19";
+    var VERSION = "1.0.20";
     var DEFAULT_SOURCE_NAME = "NUMParser";
     var SOURCE_NAME = Lampa.Storage.get("numparser_source_name", DEFAULT_SOURCE_NAME);
     var newName = SOURCE_NAME;
@@ -1130,73 +1130,14 @@
     var _timecodeInterceptorActive = false;
     var _lastSentTimecodes = {};
     var SYNC_THROTTLE_MS = 15e3;
-    function sendViewEvent(cardId, percent, duration, season, episode, torrentTitle, cardTitle, cardOriginalTitle, rawPath) {
-        if (!BASE_URL) return;
-        if (percent < 30 && !(duration > 0)) return;
+    function sendViewEvent(cardId, percent) {
+        if (percent < 30 || !BASE_URL) return;
         var uid = getProfileId() || Lampa.Storage.field("lampa_uid");
         if (!uid) return;
-        var url = BASE_URL + "/api/view?card_id=" + encodeURIComponent(cardId) + "&percent=" + percent + "&uid=" + encodeURIComponent(uid) + "&plugin_version=" + VERSION;
-        if (duration > 0) url += "&duration=" + Math.round(duration);
-        if (season > 0 && episode > 0) url += "&season=" + season + "&episode=" + episode;
-        if (torrentTitle) url += "&torrent_title=" + encodeURIComponent(torrentTitle);
-        if (cardTitle) url += "&card_title=" + encodeURIComponent(cardTitle);
-        if (cardOriginalTitle) url += "&card_original_title=" + encodeURIComponent(cardOriginalTitle);
-        if (rawPath) url += "&raw_path=" + encodeURIComponent(rawPath);
+        var url = BASE_URL + "/api/view?card_id=" + encodeURIComponent(cardId) + "&percent=" + percent + "&uid=" + encodeURIComponent(uid);
         fetch(url, {
             method: "POST"
         }).catch(function() {});
-    }
-    var _episodeHashMapCache = {};
-    var _seasonEpisodeByHash = {};
-    var _torrentTitleByHash = {};
-    var _rawPathByHash = {};
-    function resolveSeasonEpisode(cardId, hash, knownSeason, knownEpisode, callback) {
-        if (knownSeason > 0 && knownEpisode > 0) {
-            _seasonEpisodeByHash[hash] = {
-                season: knownSeason,
-                episode: knownEpisode
-            };
-            callback(knownSeason, knownEpisode);
-            return;
-        }
-        var cached = _seasonEpisodeByHash[hash];
-        if (cached) {
-            callback(cached.season, cached.episode);
-            return;
-        }
-        ensureEpisodeHashMap(cardId, function(map) {
-            var info = map[hash];
-            if (info) _seasonEpisodeByHash[hash] = info;
-            callback(info && info.season, info && info.episode);
-        });
-    }
-    function ensureEpisodeHashMap(cardId, callback) {
-        var cached = _episodeHashMapCache[cardId];
-        if (cached) {
-            callback(cached);
-            return;
-        }
-        if (!BASE_URL) {
-            callback({});
-            return;
-        }
-        fetch(BASE_URL + "/api/episodes?card_id=" + encodeURIComponent(cardId)).then(function(r) {
-            return r.json();
-        }).then(function(data) {
-            var map = {};
-            var eps = data && data.episodes || [];
-            for (var i = 0; i < eps.length; i++) {
-                var e = eps[i];
-                if (e.hash) map[e.hash] = {
-                    season: e.season,
-                    episode: e.episode
-                };
-            }
-            _episodeHashMapCache[cardId] = map;
-            callback(map);
-        }).catch(function() {
-            callback({});
-        });
     }
     function getCurrentCard() {
         var card = Lampa.Activity && Lampa.Activity.active && Lampa.Activity.active() && (Lampa.Activity.active().card_data || Lampa.Activity.active().card || Lampa.Activity.active().movie) || null;
@@ -1215,41 +1156,6 @@
             if (window.Lampa && Lampa.Timeline && Lampa.Timeline.listener) Lampa.Timeline.listener.follow("update", onTimelineUpdate); else setTimeout(tryAttach, 1e3);
         }
         tryAttach();
-        setupEarlyDurationReport();
-    }
-    function setupEarlyDurationReport() {
-        function tryAttach() {
-            if (window.Lampa && Lampa.Player && Lampa.Player.listener) Lampa.Player.listener.follow("start", onPlayerStart); else setTimeout(tryAttach, 1e3);
-        }
-        tryAttach();
-    }
-    function onPlayerStart(data) {
-        if (!data || !data.timeline || !data.timeline.hash) return;
-        if (!data.torrent_hash) return;
-        var card = getCurrentCard();
-        if (!card || !card.id) return;
-        var mt = card.media_type || (card.isMovie ? "movie" : "tv");
-        var cardId = String(card.id) + "_" + mt;
-        var season = data.season, episode = data.episode;
-        var hash = String(data.timeline.hash);
-        var torrentTitle = data.title;
-        if (torrentTitle) _torrentTitleByHash[hash] = torrentTitle;
-        var cardTitle = card.title || card.name || "";
-        var cardOriginalTitle = card.original_title || card.original_name || "";
-        var rawPath = data.path || "";
-        if (rawPath) _rawPathByHash[hash] = rawPath;
-        var initialDuration = data.timeline.duration || 0;
-        var tries = 0;
-        var timer = setInterval(function() {
-            tries++;
-            var dur = data.timeline && data.timeline.duration;
-            if (dur > 0 && dur !== initialDuration) {
-                clearInterval(timer);
-                if (mt === "tv") resolveSeasonEpisode(cardId, hash, season, episode, function(s, e) {
-                    sendViewEvent(cardId, data.timeline.percent || 0, dur, s, e, torrentTitle, cardTitle, cardOriginalTitle, rawPath);
-                }); else sendViewEvent(cardId, data.timeline.percent || 0, dur, void 0, void 0, torrentTitle, cardTitle, cardOriginalTitle, rawPath);
-            } else if (tries >= 15) clearInterval(timer);
-        }, 1e3);
     }
     function onTimelineUpdate(data) {
         if (window.__npRemoteTimelineUpdate) return;
@@ -1263,13 +1169,7 @@
         var duration = Math.round(road.duration || 0);
         var mt = card.media_type || (card.isMovie ? "movie" : "tv");
         var cardId = String(card.id) + "_" + mt;
-        var torrentTitle = _torrentTitleByHash[hash];
-        var rawPath = _rawPathByHash[hash];
-        var cardTitle = card.title || card.name || "";
-        var cardOriginalTitle = card.original_title || card.original_name || "";
-        if (mt === "tv") resolveSeasonEpisode(cardId, hash, void 0, void 0, function(s, e) {
-            sendViewEvent(cardId, percent, duration, s, e, torrentTitle, cardTitle, cardOriginalTitle, rawPath);
-        }); else sendViewEvent(cardId, percent, duration, void 0, void 0, torrentTitle, cardTitle, cardOriginalTitle, rawPath);
+        sendViewEvent(cardId, percent);
         if (!window.IS_NP) return;
         var token = Lampa.Storage.get("numparser_api_key", "");
         if (!token) return;
