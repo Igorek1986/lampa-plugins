@@ -1,6 +1,6 @@
 (function() {
     "use strict";
-    var VERSION = "1.0.18";
+    var VERSION = "1.0.19";
     var DEFAULT_SOURCE_NAME = "NUMParser";
     var SOURCE_NAME = Lampa.Storage.get("numparser_source_name", DEFAULT_SOURCE_NAME);
     var newName = SOURCE_NAME;
@@ -1225,6 +1225,7 @@
     }
     function onPlayerStart(data) {
         if (!data || !data.timeline || !data.timeline.hash) return;
+        if (!data.torrent_hash) return;
         var card = getCurrentCard();
         if (!card || !card.id) return;
         var mt = card.media_type || (card.isMovie ? "movie" : "tv");

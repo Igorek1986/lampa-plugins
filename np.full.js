@@ -1,7 +1,7 @@
  (function () {
     'use strict';
 
-    var VERSION = '1.0.18';
+    var VERSION = '1.0.19';
 
     var DEFAULT_SOURCE_NAME = 'NUMParser';
     var SOURCE_NAME = Lampa.Storage.get('numparser_source_name', DEFAULT_SOURCE_NAME);
@@ -1614,6 +1614,17 @@
 
     function onPlayerStart(data) {
         if (!data || !data.timeline || !data.timeline.hash) return;
+        // Ранний пинг проверен и безопасен только для торрент-воспроизведения
+        // (см. lampa-source interaction/player.js: data.torrent_hash — тот же
+        // флаг, которым сама Lampa отличает торрент-сессию). Для онлайн-
+        // источников поведение data.timeline/duration в первые секунды не
+        // изучено и не гарантировано — у «Одиссеи» (онлайн, torrent_title
+        // всегда пусто) именно на pct=1-5% ловились случайные, не совпадающие
+        // между собой значения длительности (86 мин, 110 мин, 165 мин за одну
+        // и ту же карточку/original_title). Обычный 2-минутный цикл Lampa
+        // (onTimelineUpdate) успевает стабилизироваться к тому времени —
+        // рискуем только этим ранним пингом, не самой коррекцией целиком.
+        if (!data.torrent_hash) return;
 
         var card = getCurrentCard();
         if (!card || !card.id) return;
