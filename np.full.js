@@ -1,7 +1,7 @@
  (function () {
     'use strict';
 
-    var VERSION = '1.0.16';
+    var VERSION = '1.0.17';
 
     var DEFAULT_SOURCE_NAME = 'NUMParser';
     var SOURCE_NAME = Lampa.Storage.get('numparser_source_name', DEFAULT_SOURCE_NAME);
@@ -1419,7 +1419,7 @@
     // известен намного раньше 30% и бэкенду для самокоррекции percent не
     // нужен вообще — поэтому пропускаем вызов, только если нет ВООБЩЕ
     // ничего полезного (ни высокого percent, ни известной длительности).
-    function sendViewEvent(cardId, percent, duration, season, episode, torrentTitle) {
+    function sendViewEvent(cardId, percent, duration, season, episode, torrentTitle, cardTitle) {
         if (!BASE_URL) return;
         if (percent < 30 && !(duration > 0)) return;
         var uid = getProfileId() || Lampa.Storage.field('lampa_uid');
@@ -1437,6 +1437,13 @@
         // самокоррекция runtime по факту меряет чужой файл). Только для
         // диагностики, в БД не пишется.
         if (torrentTitle) url += '&torrent_title=' + encodeURIComponent(torrentTitle);
+        // Название карточки, как его понимает САМА Lampa (card.title/name) —
+        // не зависит от источника (торрент/онлайн) и не зависит от того,
+        // какую именно систему id использует конкретный источник. Ловит
+        // случай, когда card.id ошибочно совпал с ЧУЖИМ tmdb_id в нашей базе
+        // (id не только у сторонних источников бывает перепутан — наш
+        // собственный imdb_id enrichment тоже иногда матчит не тот тайтл).
+        if (cardTitle) url += '&card_title=' + encodeURIComponent(cardTitle);
         fetch(url, { method: 'POST' }).catch(function () {});
     }
 
@@ -1606,6 +1613,7 @@
         var hash = String(data.timeline.hash);
         var torrentTitle = data.title;
         if (torrentTitle) _torrentTitleByHash[hash] = torrentTitle;
+        var cardTitle = card.title || card.name || '';
 
         // data.timeline — это ТОТ ЖЕ объект, что Timeline.view(hash) отдал ДО
         // старта видео: duration там — не "ещё не известно", а последнее
@@ -1631,10 +1639,10 @@
                 clearInterval(timer);
                 if (mt === 'tv') {
                     resolveSeasonEpisode(cardId, hash, season, episode, function (s, e) {
-                        sendViewEvent(cardId, data.timeline.percent || 0, dur, s, e, torrentTitle);
+                        sendViewEvent(cardId, data.timeline.percent || 0, dur, s, e, torrentTitle, cardTitle);
                     });
                 } else {
-                    sendViewEvent(cardId, data.timeline.percent || 0, dur, undefined, undefined, torrentTitle);
+                    sendViewEvent(cardId, data.timeline.percent || 0, dur, undefined, undefined, torrentTitle, cardTitle);
                 }
             } else if (tries >= 15) {
                 clearInterval(timer); // за 15с не дождались — оставляем обычному циклу Lampa
@@ -1663,15 +1671,16 @@
         var mt     = card.media_type || (card.isMovie ? 'movie' : 'tv');
         var cardId = String(card.id) + '_' + mt;
         var torrentTitle = _torrentTitleByHash[hash];
+        var cardTitle = card.title || card.name || '';
 
         // Play-событие для «Популярного» — шлём независимо от активации/токена/соединения
         // (IS_NP=true только после активации, а просмотры нужно учитывать и без неё).
         if (mt === 'tv') {
             resolveSeasonEpisode(cardId, hash, undefined, undefined, function (s, e) {
-                sendViewEvent(cardId, percent, duration, s, e, torrentTitle);
+                sendViewEvent(cardId, percent, duration, s, e, torrentTitle, cardTitle);
             });
         } else {
-            sendViewEvent(cardId, percent, duration, undefined, undefined, torrentTitle);
+            sendViewEvent(cardId, percent, duration, undefined, undefined, torrentTitle, cardTitle);
         }
 
         // Синхронизация таймкодов — только при активном NP-соединении и токене.
