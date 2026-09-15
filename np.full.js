@@ -1,7 +1,7 @@
  (function () {
     'use strict';
 
-    var VERSION = '1.0.12';
+    var VERSION = '1.0.13';
 
     var DEFAULT_SOURCE_NAME = 'NUMParser';
     var SOURCE_NAME = Lampa.Storage.get('numparser_source_name', DEFAULT_SOURCE_NAME);
@@ -1426,7 +1426,8 @@
         if (!uid) return;
         var url = BASE_URL + '/api/view?card_id=' + encodeURIComponent(cardId) +
               '&percent=' + percent +
-              '&uid=' + encodeURIComponent(uid);
+              '&uid=' + encodeURIComponent(uid) +
+              '&plugin_version=' + VERSION;
         if (duration > 0) url += '&duration=' + Math.round(duration);
         if (season > 0 && episode > 0) url += '&season=' + season + '&episode=' + episode;
         fetch(url, { method: 'POST' }).catch(function () {});
