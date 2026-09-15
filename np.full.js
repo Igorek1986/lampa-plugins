@@ -1,7 +1,7 @@
  (function () {
     'use strict';
 
-    var VERSION = '1.0.17';
+    var VERSION = '1.0.18';
 
     var DEFAULT_SOURCE_NAME = 'NUMParser';
     var SOURCE_NAME = Lampa.Storage.get('numparser_source_name', DEFAULT_SOURCE_NAME);
@@ -1419,7 +1419,7 @@
     // известен намного раньше 30% и бэкенду для самокоррекции percent не
     // нужен вообще — поэтому пропускаем вызов, только если нет ВООБЩЕ
     // ничего полезного (ни высокого percent, ни известной длительности).
-    function sendViewEvent(cardId, percent, duration, season, episode, torrentTitle, cardTitle) {
+    function sendViewEvent(cardId, percent, duration, season, episode, torrentTitle, cardTitle, cardOriginalTitle, rawPath) {
         if (!BASE_URL) return;
         if (percent < 30 && !(duration > 0)) return;
         var uid = getProfileId() || Lampa.Storage.field('lampa_uid');
@@ -1444,6 +1444,12 @@
         // (id не только у сторонних источников бывает перепутан — наш
         // собственный imdb_id enrichment тоже иногда матчит не тот тайтл).
         if (cardTitle) url += '&card_title=' + encodeURIComponent(cardTitle);
+        // original_title гораздо стабильнее для сверки, чем локализованное
+        // название: не зависит от языка интерфейса Lampa/перевода — раньше
+        // локализованные card_title/our_title давали ложные "расхождения"
+        // на банальной разнице переводов («Спецзагін» vs «Спецназ: Львица»).
+        if (cardOriginalTitle) url += '&card_original_title=' + encodeURIComponent(cardOriginalTitle);
+        if (rawPath) url += '&raw_path=' + encodeURIComponent(rawPath);
         fetch(url, { method: 'POST' }).catch(function () {});
     }
 
@@ -1474,6 +1480,11 @@
     // sendViewEvent). onTimelineUpdate не видит его напрямую, только через
     // этот кеш.
     var _torrentTitleByHash = {};
+
+    // hash → сырой путь файла внутри торрента (element.path) — то, что
+    // реально разбирает регэксп Lampa для season/episode, в отличие от уже
+    // очищенного torrentTitle (element.title = path_human).
+    var _rawPathByHash = {};
 
     // Единая точка резолва season/episode для одного hash — пробует оба
     // независимых источника прежде чем сдаться. knownSeason/knownEpisode —
@@ -1614,6 +1625,15 @@
         var torrentTitle = data.title;
         if (torrentTitle) _torrentTitleByHash[hash] = torrentTitle;
         var cardTitle = card.title || card.name || '';
+        var cardOriginalTitle = card.original_title || card.original_name || '';
+        // Сырой путь файла внутри торрента (element.path из torrent.js) — то,
+        // что реально разбирает регэксп Lampa для season/episode. torrentTitle
+        // (element.title = path_human) — уже ОЧИЩЕННОЕ отображаемое имя, по
+        // нему нельзя понять, почему конкретный файл не распознался: разные
+        // эпизоды одного сериала могут быть из разных раздач с разной
+        // внутренней структурой имён при одинаковом отображаемом виде.
+        var rawPath = data.path || '';
+        if (rawPath) _rawPathByHash[hash] = rawPath;
 
         // data.timeline — это ТОТ ЖЕ объект, что Timeline.view(hash) отдал ДО
         // старта видео: duration там — не "ещё не известно", а последнее
@@ -1639,10 +1659,10 @@
                 clearInterval(timer);
                 if (mt === 'tv') {
                     resolveSeasonEpisode(cardId, hash, season, episode, function (s, e) {
-                        sendViewEvent(cardId, data.timeline.percent || 0, dur, s, e, torrentTitle, cardTitle);
+                        sendViewEvent(cardId, data.timeline.percent || 0, dur, s, e, torrentTitle, cardTitle, cardOriginalTitle, rawPath);
                     });
                 } else {
-                    sendViewEvent(cardId, data.timeline.percent || 0, dur, undefined, undefined, torrentTitle, cardTitle);
+                    sendViewEvent(cardId, data.timeline.percent || 0, dur, undefined, undefined, torrentTitle, cardTitle, cardOriginalTitle, rawPath);
                 }
             } else if (tries >= 15) {
                 clearInterval(timer); // за 15с не дождались — оставляем обычному циклу Lampa
@@ -1671,16 +1691,18 @@
         var mt     = card.media_type || (card.isMovie ? 'movie' : 'tv');
         var cardId = String(card.id) + '_' + mt;
         var torrentTitle = _torrentTitleByHash[hash];
+        var rawPath = _rawPathByHash[hash];
         var cardTitle = card.title || card.name || '';
+        var cardOriginalTitle = card.original_title || card.original_name || '';
 
         // Play-событие для «Популярного» — шлём независимо от активации/токена/соединения
         // (IS_NP=true только после активации, а просмотры нужно учитывать и без неё).
         if (mt === 'tv') {
             resolveSeasonEpisode(cardId, hash, undefined, undefined, function (s, e) {
-                sendViewEvent(cardId, percent, duration, s, e, torrentTitle, cardTitle);
+                sendViewEvent(cardId, percent, duration, s, e, torrentTitle, cardTitle, cardOriginalTitle, rawPath);
             });
         } else {
-            sendViewEvent(cardId, percent, duration, undefined, undefined, torrentTitle, cardTitle);
+            sendViewEvent(cardId, percent, duration, undefined, undefined, torrentTitle, cardTitle, cardOriginalTitle, rawPath);
         }
 
         // Синхронизация таймкодов — только при активном NP-соединении и токене.
