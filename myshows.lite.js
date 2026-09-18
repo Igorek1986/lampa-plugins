@@ -1,6 +1,6 @@
 (function() {
     "use strict";
-    var VERSION = "1.0.11";
+    var VERSION = "1.0.12";
     var DEFAULT_ADD_THRESHOLD = "0";
     var DEFAULT_MIN_PROGRESS = 90;
     var API_URL = "https://myshows.me/v3/rpc/";
@@ -235,7 +235,7 @@
                     var entry = {
                         myshows_id: myshowsId,
                         tmdb_id: tmdbId,
-                        media_type: s.media_type || (s.type === "movie" ? "movie" : "tv")
+                        media_type: s.media_type || (s.first_air_date || s.number_of_seasons ? "tv" : "movie")
                     };
                     if (path === "unwatched_serials") {
                         entry.unwatched_count = s.remaining || s.unwatched_count || 0;
@@ -302,7 +302,7 @@
             if (callback) callback(false);
         }
     }
-    var _SERVER_CACHE_VERSION = 5;
+    var _SERVER_CACHE_VERSION = 6;
     var _SERVER_CACHE_VER_KEY = "myshows_server_cache_ver";
     var _SERVER_CACHE_PATHS = [ "unwatched_serials", "serial_status", "movie_status", "watchlist", "watched", "cancelled" ];
     var _skipCachedShowsOnce = false;

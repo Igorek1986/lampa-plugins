@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    var VERSION = '1.0.11';
+    var VERSION = '1.0.12';
 
     var DEFAULT_ADD_THRESHOLD = '0';
     var DEFAULT_MIN_PROGRESS = 90;
@@ -323,10 +323,18 @@
                     var tmdbId = s.id || s.tmdb_id;
                     var myshowsId = s.myshowsId || s.myshows_id;
                     if (!tmdbId || !myshowsId) continue;
+                    // s.type — не реальное поле карточки Lampa (у неё его просто нет), это
+                    // условие всегда false, из-за чего абсолютно все фильмы без уже
+                    // проставленного media_type попадали в ветку 'tv': бэкенд принимал их с
+                    // media_type='tv' от NP, отдавал обратно тем же значением — и Lampa потом
+                    // открывала настоящий фильм как сериал (card=...&media=tv), TMDB /tv/{id}
+                    // либо пусто, либо чужой контент. Тот же надёжный признак, что уже
+                    // используется в np.js (item.first_air_date || item.number_of_seasons) —
+                    // TMDB-поля, которых у фильма попросту нет.
                     var entry = {
                         myshows_id: myshowsId,
                         tmdb_id:    tmdbId,
-                        media_type: s.media_type || (s.type === 'movie' ? 'movie' : 'tv')
+                        media_type: s.media_type || ((s.first_air_date || s.number_of_seasons) ? 'tv' : 'movie')
                     };
                     if (path === 'unwatched_serials') {
                         entry.unwatched_count  = s.remaining || s.unwatched_count || 0;
@@ -404,7 +412,7 @@
         }
     }
 
-    var _SERVER_CACHE_VERSION = 5; // bump при изменениях логики myshowsId-маппинга
+    var _SERVER_CACHE_VERSION = 6; // bump при изменениях логики myshowsId-маппинга
     var _SERVER_CACHE_VER_KEY = 'myshows_server_cache_ver';
     var _SERVER_CACHE_PATHS   = ['unwatched_serials', 'serial_status', 'movie_status', 'watchlist', 'watched', 'cancelled'];
 

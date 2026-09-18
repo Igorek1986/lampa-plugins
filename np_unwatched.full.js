@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    var VERSION = '1.18.0';
+    var VERSION = '1.18.1';
 
     // Флаг для других плагинов (см. full_hero.js): по нему можно решить, ждать
     // ли событие np-unwatched-progress ниже, или сразу считать свой лёгкий
@@ -1061,12 +1061,23 @@
 
         // Не тронутая карточка визуально показывает «Не смотрю» активной, но в БД
         // ничего не пишется (как на вебе, см. CardDetailPage.tsx) — сравнение локальное.
-        fetchSubjectiveStatus(cardId, function (status) {
-            if (!isSameFullCardOpen(movie)) return;
+        //
+        // np.js (self.full) с этой же версии тянет статус параллельно с TMDB и кладёт
+        // его в movie.subjective_status — если он уже есть, подсвечиваем кнопку сразу,
+        // без отдельного round-trip (устраняет заметное мигание "сначала без подсветки").
+        // Фолбэк на fetchSubjectiveStatus — для карточек не из np.js/старой версии np.js.
+        if (movie.subjective_status !== undefined) {
             _openCardStatus.cardId = cardId;
-            _openCardStatus.status = status || 'not_watching';
+            _openCardStatus.status = movie.subjective_status || 'not_watching';
             applyActive(_openCardStatus.status);
-        });
+        } else {
+            fetchSubjectiveStatus(cardId, function (status) {
+                if (!isSameFullCardOpen(movie)) return;
+                _openCardStatus.cardId = cardId;
+                _openCardStatus.status = status || 'not_watching';
+                applyActive(_openCardStatus.status);
+            });
+        }
 
         if (window.Lampa && window.Lampa.Controller) {
             var allButtons = container.find('> *').filter(function () { return $(this).is(':visible'); });

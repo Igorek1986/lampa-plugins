@@ -1,7 +1,7 @@
  (function () {
     'use strict';
 
-    var VERSION = '1.0.20';
+    var VERSION = '1.0.21';
 
     var DEFAULT_SOURCE_NAME = 'NUMParser';
     var SOURCE_NAME = Lampa.Storage.get('numparser_source_name', DEFAULT_SOURCE_NAME);
@@ -257,15 +257,50 @@
         };
 
         self.full = function (params, onSuccess, onError) {
-            var card = params.card;
-            var certRu = card && card.certification_ru;
-            params.method = !!(card.number_of_seasons || card.seasons || card.last_episode_to_air || card.first_air_date) ? 'tv' : 'movie';
+            // params.card отсутствует при открытии по прямой ссылке/восстановлении по URL
+            // (?card=X&media=Y) — без клика внутри Lampa нет карточки-источника с реальными
+            // TMDB-полями. card.number_of_seasons без "card &&" кидал TypeError прямо тут,
+            // до вызова tmdb.full(...) — ни onSuccess, ни onError не срабатывали, и карточка
+            // висела в бесконечной загрузке вместо того, чтобы хотя бы открыться по method
+            // из params (уже посчитанному тем, кто инициировал переход).
+            var card = params.card || {};
+            var certRu = card.certification_ru;
+            if (params.card) {
+                params.method = !!(card.number_of_seasons || card.seasons || card.last_episode_to_air || card.first_air_date) ? 'tv' : 'movie';
+            }
+
+            // Личный статус просмотра (Смотрю/Просмотрел/...) тянем ПАРАЛЛЕЛЬНО с TMDB,
+            // а не после отрисовки — np_unwatched.js раньше запрашивал его только в
+            // 'full complite', из-за чего кнопки статуса сперва рисовались без подсветки
+            // и подсвечивались только после отдельного round-trip (заметное мигание).
+            // Здесь метод уже гарантированно верный (см. коррекцию выше), поэтому cardId
+            // строим сразу, не дожидаясь TMDB-ответа.
+            var statusPromise = null;
+            var npToken = Lampa.Storage.get('numparser_api_key', '');
+            if (npToken && params.id && params.method) {
+                var statusCardId = params.id + '_' + params.method;
+                var statusUrl = BASE_URL + '/timecode/status?token=' + encodeURIComponent(npToken) +
+                    '&card_id=' + encodeURIComponent(statusCardId);
+                var statusProfileId = getProfileId();
+                if (statusProfileId) statusUrl += '&profile_id=' + encodeURIComponent(statusProfileId);
+                statusPromise = fetch(statusUrl).then(function (r) { return r.json(); })
+                    .then(function (d) { return (d && d.status) || ''; })
+                    .catch(function () { return ''; });
+            }
+
             Lampa.Api.sources.tmdb.full(params, function (data) {
                 if (data && data.movie && certRu && !data.movie.restrict) {
                     var match = certRu.match(/^(\d+)/);
                     if (match) data.movie.restrict = match[1];
                 }
-                onSuccess(data);
+                if (statusPromise && data && data.movie) {
+                    statusPromise.then(function (status) {
+                        data.movie.subjective_status = status;
+                        onSuccess(data);
+                    });
+                } else {
+                    onSuccess(data);
+                }
             }, onError);
         }
 

@@ -1,6 +1,6 @@
 (function() {
     "use strict";
-    var VERSION = "1.18.0";
+    var VERSION = "1.18.1";
     window.np_unwatched_plugin = true;
     var DEBUG = false;
     function log(message, data) {
@@ -730,7 +730,11 @@
             buttons[opt.status] = btn;
             container.append(btn);
         });
-        fetchSubjectiveStatus(cardId, function(status) {
+        if (movie.subjective_status !== void 0) {
+            _openCardStatus.cardId = cardId;
+            _openCardStatus.status = movie.subjective_status || "not_watching";
+            applyActive(_openCardStatus.status);
+        } else fetchSubjectiveStatus(cardId, function(status) {
             if (!isSameFullCardOpen(movie)) return;
             _openCardStatus.cardId = cardId;
             _openCardStatus.status = status || "not_watching";
