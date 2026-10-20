@@ -1,6 +1,6 @@
 (function() {
     "use strict";
-    var VERSION = "1.0.12";
+    var VERSION = "1.0.17";
     var DEFAULT_ADD_THRESHOLD = "0";
     var DEFAULT_MIN_PROGRESS = 90;
     var API_URL = "https://myshows.me/v3/rpc/";
@@ -40,21 +40,27 @@
     function ensureWatchingStatus(card, reason, callback) {
         var key = card && card.id ? String(card.id) : "";
         if (getCardStatusCache(card.id, false) === "watching") {
+            Log.info("[MS-guard] сериал уже в Смотрю — перевод не нужен (" + reason + ", tmdbId=" + key + ")");
             if (callback) callback(false);
             return;
         }
         if (watchingTransitionInFlight[key]) {
+            Log.info("[MS-guard] перевод в Смотрю уже в полёте — пропускаем (" + reason + ", tmdbId=" + key + ")");
             if (callback) callback(false);
             return;
         }
         watchingTransitionInFlight[key] = true;
         if (key) _pendingWatchedShows[key] = true;
+        Log.info("[MS-guard] Переводим сериал в Смотрю (" + reason + ", tmdbId=" + key + ")");
         setMyShowsStatus(card, "watching", function(success) {
             watchingTransitionInFlight[key] = false;
             if (success) {
                 setCardStatusCache(card.id, false, "watching");
                 _myShowsDirty = true;
                 addUnwatchedTraces(card);
+                Log.info("[MS-guard] ✅ сериал переведён в Смотрю (tmdbId=" + key + ")");
+            } else {
+                Log.warn("[MS-guard] ❌ не удалось перевести сериал в Смотрю (tmdbId=" + key + ")");
             }
             if (callback) callback(success);
         });
@@ -70,6 +76,224 @@
     }
     var EPISODES_CACHE = {};
     var _profileRenderToken = 0;
+    var _channelGeneration = 0;
+    var _channelShows = null;
+    var _channelPublication = 0;
+    function channelSupported() {
+        return window.AndroidJS && typeof window.AndroidJS.publishPluginChannel === "function" && typeof window.AndroidJS.clearPluginChannel === "function";
+    }
+    function channelEnabled() {
+        var enabled = getProfileSetting("myshows_android_tv", false);
+        return enabled === true || enabled === "true";
+    }
+    function channelContext() {
+        return {
+            generation: _channelGeneration,
+            profile: getProfileId(),
+            token: getProfileSetting("myshows_token", "")
+        };
+    }
+    function channelContextCurrent(context) {
+        return context && context.generation === _channelGeneration && context.profile === getProfileId() && context.token && context.token === getProfileSetting("myshows_token", "");
+    }
+    function clearAndroidChannel(notify) {
+        if (!channelSupported()) return;
+        try {
+            if (window.AndroidJS.clearPluginChannel("myshows") === true) return;
+        } catch (e) {}
+        Log.warn("Android TV channel clear rejected");
+        if (notify) Lampa.Noty.show("Android TV: не удалось очистить канал MyShows");
+    }
+    function invalidateAndroidChannel(notify) {
+        _channelGeneration++;
+        _channelShows = null;
+        clearAndroidChannel(notify);
+    }
+    function publishAndroidChannel(shows, context, prepared) {
+        if (!channelSupported() || !channelEnabled() || !channelContextCurrent(context) || !Array.isArray(shows)) return;
+        if (!prepared && getProfileSetting("myshows_sort_order", "progress") === "relevance") {
+            var publication = ++_channelPublication;
+            publishAndroidChannel(shows, context, true);
+            prepareRelevance(shows, context, function() {
+                if (publication === _channelPublication) publishAndroidChannel(shows, context, true);
+            });
+            return;
+        }
+        var sorted = shows.slice();
+        sortShows(sorted, getProfileSetting("myshows_sort_order", "progress"));
+        var items = [];
+        var fields = [ "name", "title", "original_name", "original_title", "poster_path", "backdrop_path", "first_air_date", "release_date", "release_year", "vote_average" ];
+        sorted.forEach(function(show) {
+            if (!show || !show.id || !(show.name || show.title)) return;
+            var item = {
+                id: String(show.id),
+                source: "tmdb",
+                type: "tv"
+            };
+            fields.forEach(function(key) {
+                if (typeof show[key] === "string" || typeof show[key] === "number") item[key] = show[key];
+            });
+            var description = typeof show.overview === "string" ? show.overview : "";
+            var details = [];
+            if (show.next_episode) details.push("Next: " + show.next_episode);
+            var remaining = show.remaining !== undefined ? show.remaining : show.unwatched_count;
+            if (typeof remaining === "number" && remaining >= 0) details.push("Unwatched: " + remaining);
+            item.overview = description + (description && details.length ? "\n" : "") + details.join(" · ");
+            items.push(item);
+        });
+        if (shows.length && !items.length) return;
+        if (!shows.length) {
+            _channelShows = [];
+            clearAndroidChannel(false);
+            return;
+        }
+        try {
+            if (window.AndroidJS.publishPluginChannel(JSON.stringify({
+                id: "myshows",
+                title: "MyShows",
+                items: items
+            })) === true) {
+                _channelShows = sorted;
+                return;
+            }
+        } catch (e) {}
+        Log.warn("Android TV channel publish rejected");
+    }
+    var _relevancePending = {};
+    var _relevanceQueue = [];
+    var _relevanceActive = 0;
+    function relevanceDate(value) {
+        if (typeof value !== "string") return 0;
+        var match = /^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(Z|[+-](\d{2}):?(\d{2})))?$/.exec(value);
+        if (!match) return 0;
+        var day = new Date(Date.UTC(+match[1], +match[2] - 1, +match[3]));
+        if (day.getUTCFullYear() !== +match[1] || day.getUTCMonth() !== +match[2] - 1 || day.getUTCDate() !== +match[3]) return 0;
+        if (match[4] !== undefined && (+match[4] > 23 || +match[5] > 59 || +match[6] > 59 || +match[8] > 23 || +match[9] > 59)) return 0;
+        var normalized = value.replace(/([+-]\d{2})(\d{2})$/, "$1:$2");
+        var time = Date.parse(normalized);
+        return isFinite(time) && time > 0 && time <= Date.now() ? time : 0;
+    }
+    function relevanceHistory() {
+        return getProfileSetting("myshows_relevance_history", {});
+    }
+    function relevanceRelease(show) {
+        var ep = show.last_episode_to_myshows;
+        var hasDates = ep && (ep.air_date_utc !== undefined || ep.air_date !== undefined);
+        var latest = ep ? relevanceDate(ep.air_date_utc || ep.air_date) : 0;
+        (show.unwatchedEpisodes || []).forEach(function(episode) {
+            if (!episode) return;
+            if (episode.airDateUTC !== undefined || episode.airDate !== undefined) hasDates = true;
+            latest = Math.max(latest, relevanceDate(episode.airDateUTC || episode.airDate));
+        });
+        return hasDates ? latest : null;
+    }
+    function rememberReleaseDates(shows) {
+        var map = relevanceHistory();
+        shows.forEach(function(show) {
+            if (!show || !show.myshowsId || !show.last_episode_to_myshows && !show.unwatchedEpisodes) return;
+            var entry = map[show.myshowsId] || {};
+            var release = relevanceRelease(show);
+            if (release !== null) entry.release = release;
+            map[show.myshowsId] = entry;
+        });
+        setProfileSetting("myshows_relevance_history", map, false);
+    }
+    function pumpRelevanceHistory() {
+        while (_relevanceActive < 2 && _relevanceQueue.length) {
+            var task = _relevanceQueue.shift();
+            if (!channelContextCurrent(task.context)) {
+                delete _relevancePending[task.key];
+                task.callbacks.forEach(function(fn) {
+                    fn();
+                });
+                continue;
+            }
+            _relevanceActive++;
+            (function(request) {
+                makeMyShowsJSONRPCRequest("profile.Episodes", {
+                    showId: request.id
+                }, function(ok, response) {
+                    _relevanceActive--;
+                    delete _relevancePending[request.key];
+                    if (channelContextCurrent(request.context)) {
+                        var map = relevanceHistory();
+                        var entry = map[request.id] || {};
+                        if ((entry.version || 0) === request.version) {
+                            if (ok && response && Array.isArray(response.result)) {
+                                var latest = 0;
+                                response.result.forEach(function(ep) {
+                                    latest = Math.max(latest, relevanceDate(ep && ep.watchDate));
+                                });
+                                entry.watch = latest;
+                                entry.checked = Date.now();
+                            } else {
+                                Log.warn("MyShows viewing history unavailable");
+                                entry.checked = Date.now() - 354e4;
+                            }
+                            entry.dateParser = 2;
+                            map[request.id] = entry;
+                            setProfileSetting("myshows_relevance_history", map, false);
+                        }
+                    }
+                    request.callbacks.forEach(function(fn) {
+                        fn();
+                    });
+                    pumpRelevanceHistory();
+                });
+            })(task);
+        }
+    }
+    function prepareRelevance(shows, context, callback) {
+        if (getProfileSetting("myshows_sort_order", "progress") !== "relevance") {
+            callback();
+            return;
+        }
+        if (!shows.length && context.generation === _channelGeneration && context.profile === getProfileId() && context.token === getProfileSetting("myshows_token", "")) {
+            callback();
+            return;
+        }
+        if (!channelContextCurrent(context)) return;
+        rememberReleaseDates(shows);
+        var map = relevanceHistory(), waiting = 0;
+        var ids = {};
+        shows.forEach(function(show) {
+            if (show && show.myshowsId) ids[show.myshowsId] = true;
+        });
+        function complete() {
+            if (--waiting === 0 && channelContextCurrent(context)) callback();
+        }
+        Object.keys(ids).forEach(function(id) {
+            var entry = map[id] || {};
+            if (entry.dateParser === 2 && entry.checked && Date.now() - entry.checked < 36e5) return;
+            waiting++;
+            var key = context.generation + ":" + context.profile + ":" + id + ":" + (entry.version || 0);
+            if (_relevancePending[key]) {
+                _relevancePending[key].callbacks.push(complete);
+                return;
+            }
+            var task = {
+                id: parseInt(id, 10),
+                key: key,
+                context: context,
+                version: entry.version || 0,
+                callbacks: [ complete ]
+            };
+            _relevancePending[key] = task;
+            _relevanceQueue.push(task);
+        });
+        if (!waiting) callback(); else pumpRelevanceHistory();
+    }
+    function sortByRelevance(a, b) {
+        var map = relevanceHistory();
+        function time(show) {
+            var entry = map[show.myshowsId] || {};
+            var release = entry.release !== undefined ? entry.release : relevanceRelease(show);
+            if (release === null) release = entry.release || 0;
+            var watch = entry.watch > 0 && entry.watch <= Date.now() ? entry.watch : 0;
+            return Math.max(watch, release <= Date.now() ? release : 0);
+        }
+        return time(b) - time(a) || sortByAlphabet(a, b);
+    }
     function getNpBaseUrl() {
         return Lampa.Storage.get("base_url_numparser", "");
     }
@@ -78,10 +302,14 @@
     }
     function createLogMethod(emoji, consoleMethod) {
         var DEBUG = Lampa.Storage.get("myshows_debug_mode", false);
-        if (!DEBUG) return function() {};
+        if (!DEBUG) {
+            return function() {};
+        }
         return function() {
             var args = Array.prototype.slice.call(arguments);
-            if (emoji) args.unshift(emoji);
+            if (emoji) {
+                args.unshift(emoji);
+            }
             args.unshift("MyShows");
             consoleMethod.apply(console, args);
         };
@@ -93,7 +321,7 @@
         debug: createLogMethod("🐛", console.debug)
     };
     function accountUrl(url) {
-        url += "";
+        url = url + "";
         if (url.indexOf("uid=") == -1) {
             var uid = Lampa.Storage.get("account_email") || Lampa.Storage.get("lampac_unic_id");
             if (uid) url = Lampa.Utils.addUrlComponent(url, "uid=" + encodeURIComponent(uid));
@@ -131,14 +359,24 @@
         var name = (card.original_name || card.name || card.original_title || card.title || "").toLowerCase();
         var year = extractYear(card);
         var i, it;
-        if (tmdbId) for (i = 0; i < arr.length; i++) if (arr[i].id && String(arr[i].id) === tmdbId) return arr[i];
-        if (msId) for (i = 0; i < arr.length; i++) if (arr[i].myshowsId && String(arr[i].myshowsId) === msId) return arr[i];
-        if (name && year) for (i = 0; i < arr.length; i++) {
-            it = arr[i];
-            var n = (it.original_name || it.name || it.title || it.titleOriginal || "").toLowerCase();
-            if (n !== name) continue;
-            var iy = extractYear(it);
-            if (iy && Math.abs(parseInt(iy) - parseInt(year)) <= 1) return it;
+        if (tmdbId) {
+            for (i = 0; i < arr.length; i++) {
+                if (arr[i].id && String(arr[i].id) === tmdbId) return arr[i];
+            }
+        }
+        if (msId) {
+            for (i = 0; i < arr.length; i++) {
+                if (arr[i].myshowsId && String(arr[i].myshowsId) === msId) return arr[i];
+            }
+        }
+        if (name && year) {
+            for (i = 0; i < arr.length; i++) {
+                it = arr[i];
+                var n = (it.original_name || it.name || it.title || it.titleOriginal || "").toLowerCase();
+                if (n !== name) continue;
+                var iy = extractYear(it);
+                if (iy && Math.abs(parseInt(iy) - parseInt(year)) <= 1) return it;
+            }
         }
         if (!tmdbId && !msId && !year) return findByName(arr, name);
         return null;
@@ -150,17 +388,23 @@
                 callback(null);
                 return;
             }
-            if (cacheType === "unwatched_serials") arr.forEach(function(s) {
-                if (s && s.remaining === void 0 && s.unwatched_count !== void 0) s.remaining = s.unwatched_count;
-            });
+            if (cacheType === "unwatched_serials") {
+                arr.forEach(function(s) {
+                    if (s && s.remaining === undefined && s.unwatched_count !== undefined) {
+                        s.remaining = s.unwatched_count;
+                    }
+                });
+            }
             if (card) {
                 callback(matchShowInArray(arr, card));
                 return;
             }
             var found = null;
-            for (var i = 0; i < arr.length; i++) if (arr[i].myshowsId && String(arr[i].myshowsId) === String(nameOrId)) {
-                found = arr[i];
-                break;
+            for (var i = 0; i < arr.length; i++) {
+                if (arr[i].myshowsId && String(arr[i].myshowsId) === String(nameOrId)) {
+                    found = arr[i];
+                    break;
+                }
             }
             if (!found) found = findByName(arr, nameOrId);
             callback(found);
@@ -172,7 +416,9 @@
             if (profileId) return String(profileId);
         }
         try {
-            if (Lampa.Account.Permit.account && Lampa.Account.Permit.account.profile && Lampa.Account.Permit.account.profile.id) return String(Lampa.Account.Permit.account.profile.id);
+            if (Lampa.Account.Permit.account && Lampa.Account.Permit.account.profile && Lampa.Account.Permit.account.profile.id) {
+                return String(Lampa.Account.Permit.account.profile.id);
+            }
         } catch (e) {}
         return "";
     }
@@ -186,9 +432,38 @@
     function useNpServer() {
         return getStorageMode() === "np";
     }
-    function saveCacheToServer(cacheData, path, callback, profileId) {
+    function saveCacheToServer(cacheData, path, callback, profileId, channelRequest, channelUpdate) {
         var mode = getStorageMode();
-        if (profileId === void 0 || profileId === null) profileId = getProfileId();
+        if (profileId === undefined || profileId === null) profileId = getProfileId();
+        if (path === "unwatched_serials" && profileId === getProfileId() && cacheData) {
+            var publication = cacheData.shows;
+            if (channelUpdate && _channelShows && channelContextCurrent(channelRequest)) {
+                publication = _channelShows.slice();
+                var previous = matchShowInArray(publication, channelUpdate.show);
+                var index = previous ? publication.indexOf(previous) : -1;
+                if (channelUpdate.remove) {
+                    if (index >= 0) publication.splice(index, 1);
+                } else {
+                    var updated = {};
+                    var key;
+                    if (previous) {
+                        for (key in previous) {
+                            if (previous.hasOwnProperty(key)) updated[key] = previous[key];
+                        }
+                    }
+                    for (key in channelUpdate.show) {
+                        if (channelUpdate.show.hasOwnProperty(key)) updated[key] = channelUpdate.show[key];
+                    }
+                    if (index >= 0) publication[index] = updated; else publication.push(updated);
+                }
+            }
+            var listContext = channelRequest || channelContext();
+            publishAndroidChannel(publication, listContext);
+            if (Array.isArray(publication)) prepareRelevance(publication, listContext, function() {
+                reorderCardsInMyShowsSection();
+            });
+        }
+        Log.info("Save", "Cache: ", cacheData, "Path:", path, "Mode:", mode, "Profile:", profileId);
         var NP_PATHS = {
             unwatched_serials: "/myshows/watching",
             watchlist: "/myshows/watchlist",
@@ -204,6 +479,7 @@
                 return;
             }
             var payload = [];
+            Log.info("Save to NP");
             if (path === "serial_status" || path === "movie_status") {
                 var tvStatusMap = {
                     watching: "watching",
@@ -242,9 +518,11 @@
                         entry.next_episode = s.next_episode || null;
                         entry.progress_marker = s.progress_marker || null;
                         entry.unwatched_episodes = [];
-                        if (s.unwatchedEpisodes && s.unwatchedEpisodes.length) for (var ue = 0; ue < s.unwatchedEpisodes.length; ue++) {
-                            var ueid = s.unwatchedEpisodes[ue] && s.unwatchedEpisodes[ue].id;
-                            if (ueid) entry.unwatched_episodes.push(parseInt(ueid));
+                        if (s.unwatchedEpisodes && s.unwatchedEpisodes.length) {
+                            for (var ue = 0; ue < s.unwatchedEpisodes.length; ue++) {
+                                var ueid = s.unwatchedEpisodes[ue] && s.unwatchedEpisodes[ue].id;
+                                if (ueid) entry.unwatched_episodes.push(parseInt(ueid));
+                            }
                         }
                     }
                     payload.push(entry);
@@ -270,7 +548,10 @@
         try {
             var data = JSON.stringify(cacheData, null, 2);
             var uri = accountUrl("/storage/set?path=myshows/" + path + "&pathfile=" + profileId);
-            if (Lampa.Platform.is("android") && !/^https?:\/\//i.test(uri)) uri = window.location.origin + (uri.indexOf("/") === 0 ? uri : "/" + uri);
+            if (Lampa.Platform.is("android") && !/^https?:\/\//i.test(uri)) {
+                uri = window.location.origin + (uri.indexOf("/") === 0 ? uri : "/" + uri);
+                Log.info("Android 🧩 Fixed URI via window.location.origin:", uri);
+            }
             if (mode === "local") {
                 Lampa.Storage.set(profileKeyFor("myshows_" + path, profileId), cacheData);
                 if (callback) callback(true);
@@ -288,17 +569,18 @@
                     if (response && response.success) {
                         if (callback) callback(true);
                     } else {
-                        response && response.msg;
+                        Log.error("Storage error", response && response.msg);
                         if (callback) callback(false);
                     }
                 };
                 xhrLampac.onerror = function() {
+                    Log.error("Network error");
                     if (callback) callback(false);
                 };
                 xhrLampac.send(data);
             }
         } catch (e) {
-            e.message;
+            Log.error("Try error on saveCacheToServer", e.message);
             if (callback) callback(false);
         }
     }
@@ -314,8 +596,13 @@
         });
         Lampa.Storage.set(_SERVER_CACHE_VER_KEY, _SERVER_CACHE_VERSION);
         Lampa.Storage.set("myshows_tmdb_cards", {});
-        if (typeof _tmdbCardCache !== "undefined") for (var k in _tmdbCardCache) if (_tmdbCardCache.hasOwnProperty(k)) delete _tmdbCardCache[k];
+        if (typeof _tmdbCardCache !== "undefined") {
+            for (var k in _tmdbCardCache) {
+                if (_tmdbCardCache.hasOwnProperty(k)) delete _tmdbCardCache[k];
+            }
+        }
         _skipCachedShowsOnce = true;
+        Log.info("Server cache cleared (version bump: " + stored + " → " + _SERVER_CACHE_VERSION + ")");
         return false;
     }
     function isNpConfigured() {
@@ -325,7 +612,9 @@
     }
     function loadCacheFromServer(path, propertyName, callback, options) {
         var mode = getStorageMode();
-        if (options && options.forceNp && mode !== "np" && isNpConfigured()) mode = "np";
+        if (options && options.forceNp && mode !== "np" && isNpConfigured()) {
+            mode = "np";
+        }
         var profileId = getProfileId();
         if (!getProfileSetting("myshows_token")) {
             callback(null);
@@ -354,18 +643,24 @@
                 if (response && response.results) {
                     for (var ri = 0; ri < response.results.length; ri++) {
                         var item = response.results[ri];
-                        if (item && item.myshowsId === void 0 && item.myshows_id !== void 0) item.myshowsId = item.myshows_id;
+                        if (item && item.myshowsId === undefined && item.myshows_id !== undefined) {
+                            item.myshowsId = item.myshows_id;
+                        }
                         if (item && item.unwatched_episodes && !item.unwatchedEpisodes) {
                             var uarr = [];
-                            for (var ux = 0; ux < item.unwatched_episodes.length; ux++) uarr.push({
-                                id: item.unwatched_episodes[ux]
-                            });
+                            for (var ux = 0; ux < item.unwatched_episodes.length; ux++) {
+                                uarr.push({
+                                    id: item.unwatched_episodes[ux]
+                                });
+                            }
                             item.unwatchedEpisodes = uarr;
                         }
                     }
                     response.shows = response.results;
                     callback(response);
-                } else callback(null);
+                } else {
+                    callback(null);
+                }
             }, function() {
                 callback(null);
             });
@@ -397,18 +692,26 @@
     }
     function initMyShowsCaches() {
         _msttT0 = Date.now();
+        Log.info("[MS-TT] initMyShowsCaches start");
         var updateDelay = getRefreshDelay();
         var renderToken = _profileRenderToken;
+        var channelRequest = channelContext();
         loadCacheFromServer("unwatched_serials", "shows", function(cachedResult) {
             if (renderToken !== _profileRenderToken) return;
             var cachedShows = cachedResult && cachedResult.shows;
+            if (cachedShows) {
+                publishAndroidChannel(cachedShows, channelRequest);
+                prepareRelevance(cachedShows, channelRequest, function() {
+                    reorderCardsInMyShowsSection();
+                });
+            }
             seedUnwatchedSetFromCache(cachedShows, getProfileId());
             if (cachedShows && cachedShows.length > 0) {
                 setTimeout(function() {
                     if (renderToken !== _profileRenderToken) return;
-                    Date.now();
+                    Log.info("[MS-TT] fetchFromMyShowsAPI start, t=", Date.now() - _msttT0, "ms");
                     fetchFromMyShowsAPI(function(freshResult) {
-                        Date.now();
+                        Log.info("[MS-TT] fetchFromMyShowsAPI done, t=", Date.now() - _msttT0, "ms");
                         if (renderToken !== _profileRenderToken) return;
                         if (freshResult && freshResult.shows && cachedResult.shows) {
                             freshResult.shows.forEach(function(s) {
@@ -421,12 +724,14 @@
                 return;
             }
             if (getProfileSetting("myshows_token", "")) {
-                Date.now();
+                Log.info("[MS-TT] no cache → cold fetchFromMyShowsAPI, t=", Date.now() - _msttT0, "ms");
                 fetchFromMyShowsAPI(function(freshResult) {
                     if (renderToken !== _profileRenderToken) return;
-                    if (freshResult && freshResult.shows) freshResult.shows.forEach(function(s) {
-                        if (s) s._renderToken = renderToken;
-                    });
+                    if (freshResult && freshResult.shows) {
+                        freshResult.shows.forEach(function(s) {
+                            if (s) s._renderToken = renderToken;
+                        });
+                    }
                 });
             }
         });
@@ -445,17 +750,25 @@
         } else {
             loadCacheFromServer("serial_status", "shows", function(cachedResult) {
                 if (renderToken !== _profileRenderToken) return;
-                if (cachedResult) setTimeout(function() {
-                    if (renderToken !== _profileRenderToken) return;
+                if (cachedResult) {
+                    setTimeout(function() {
+                        if (renderToken !== _profileRenderToken) return;
+                        fetchShowStatus(function(showsData) {});
+                    }, updateDelay);
+                } else {
                     fetchShowStatus(function(showsData) {});
-                }, updateDelay); else fetchShowStatus(function(showsData) {});
+                }
             });
             loadCacheFromServer("movie_status", "movies", function(cachedResult) {
                 if (renderToken !== _profileRenderToken) return;
-                if (cachedResult) setTimeout(function() {
-                    if (renderToken !== _profileRenderToken) return;
+                if (cachedResult) {
+                    setTimeout(function() {
+                        if (renderToken !== _profileRenderToken) return;
+                        fetchStatusMovies(function(showsData) {});
+                    }, updateDelay);
+                } else {
                     fetchStatusMovies(function(showsData) {});
-                }, updateDelay); else fetchStatusMovies(function(showsData) {});
+                }
             });
         }
     }
@@ -472,7 +785,11 @@
         var password = getProfileSetting("myshows_password", "");
         if (!login || !password) {
             var msg = "Enter MyShows login and password";
-            if (successCallback) successCallback(null); else Lampa.Noty.show(msg);
+            if (successCallback) {
+                successCallback(null);
+            } else {
+                Lampa.Noty.show(msg);
+            }
             return;
         }
         var body = JSON.stringify({
@@ -485,7 +802,9 @@
             setProfileSetting("myshows_token", token);
             Lampa.Storage.set("myshows_token", token, true);
             enableBadgesOnFirstAuth();
-            if (successCallback) successCallback(token); else {
+            if (successCallback) {
+                successCallback(token);
+            } else {
                 Lampa.Noty.show("✅ Auth success! Reboot...");
                 setTimeout(function() {
                     window.location.reload();
@@ -512,7 +831,11 @@
             headers: JSON_HEADERS
         });
         function fail(msg) {
-            if (successCallback) successCallback(null); else Lampa.Noty.show("🔒 MyShows auth failed: " + msg);
+            if (successCallback) {
+                successCallback(null);
+            } else {
+                Lampa.Noty.show("🔒 MyShows auth failed: " + msg);
+            }
         }
     }
     function makeAuthenticatedRequest(options, callback, errorCallback) {
@@ -525,40 +848,56 @@
         options.headers = options.headers || {};
         options.headers[AUTHORIZATION] = "Bearer " + token;
         network.silent(API_URL, function(data) {
-            if (data && data.error && data.error.code === 401) tryAuthFromSettings(function(newToken) {
-                if (newToken) {
-                    options.headers[AUTHORIZATION] = "Bearer " + newToken;
-                    var retryNetwork = new Lampa.Reguest;
-                    retryNetwork.silent(API_URL, function(retryData) {
-                        if (callback) callback(retryData);
-                    }, function(retryXhr) {
-                        if (errorCallback) errorCallback(new Error("HTTP " + retryXhr.status));
-                    }, options.body, {
-                        headers: options.headers
-                    });
-                } else if (errorCallback) errorCallback(new Error("Failed to refresh token"));
-            }); else if (callback) callback(data);
+            if (data && data.error && data.error.code === 401) {
+                tryAuthFromSettings(function(newToken) {
+                    if (newToken) {
+                        options.headers[AUTHORIZATION] = "Bearer " + newToken;
+                        var retryNetwork = new Lampa.Reguest;
+                        retryNetwork.silent(API_URL, function(retryData) {
+                            if (callback) callback(retryData);
+                        }, function(retryXhr) {
+                            if (errorCallback) errorCallback(new Error("HTTP " + retryXhr.status));
+                        }, options.body, {
+                            headers: options.headers
+                        });
+                    } else {
+                        if (errorCallback) errorCallback(new Error("Failed to refresh token"));
+                    }
+                });
+            } else {
+                if (callback) callback(data);
+            }
         }, function(xhr) {
-            if (xhr.status === 401) tryAuthFromSettings(function(newToken) {
-                if (newToken) {
-                    options.headers[AUTHORIZATION] = "Bearer " + newToken;
-                    var retryNetwork = new Lampa.Reguest;
-                    retryNetwork.silent(API_URL, function(retryData) {
-                        if (callback) callback(retryData);
-                    }, function(retryXhr) {
-                        if (errorCallback) errorCallback(new Error("HTTP " + retryXhr.status));
-                    }, options.body, {
-                        headers: options.headers
-                    });
-                } else if (errorCallback) errorCallback(new Error("Failed to refresh token"));
-            }); else if (errorCallback) errorCallback(new Error("HTTP " + xhr.status));
+            if (xhr.status === 401) {
+                tryAuthFromSettings(function(newToken) {
+                    if (newToken) {
+                        options.headers[AUTHORIZATION] = "Bearer " + newToken;
+                        var retryNetwork = new Lampa.Reguest;
+                        retryNetwork.silent(API_URL, function(retryData) {
+                            if (callback) callback(retryData);
+                        }, function(retryXhr) {
+                            if (errorCallback) errorCallback(new Error("HTTP " + retryXhr.status));
+                        }, options.body, {
+                            headers: options.headers
+                        });
+                    } else {
+                        if (errorCallback) errorCallback(new Error("Failed to refresh token"));
+                    }
+                });
+            } else {
+                if (errorCallback) errorCallback(new Error("HTTP " + xhr.status));
+            }
         }, options.body, {
             headers: options.headers
         });
     }
     function makeMyShowsRequest(requestConfig, callback) {
         makeAuthenticatedRequest(requestConfig, function(data) {
-            if (data && data.result) callback(true, data); else callback(false, data);
+            if (data && data.result) {
+                callback(true, data);
+            } else {
+                callback(false, data);
+            }
         }, function(err) {
             callback(false, null);
         });
@@ -588,6 +927,10 @@
     }
     function setProfileSetting(key, value, sync) {
         value = storableValue(value);
+        if (key === "myshows_token" && value !== getProfileSetting(key, "") && getProfileSetting(key, "")) {
+            setProfileSetting("myshows_relevance_history", {}, false);
+            invalidateAndroidChannel(!value);
+        }
         Lampa.Storage.set(getProfileKey(key), value);
         if (sync !== false && !_syncApplying && window.__NMSync) window.__NMSync.patch("myshows", getProfileKey(key), value);
     }
@@ -595,31 +938,69 @@
     function _applyMyShowsSetting(profileKey, value) {
         if (profileKey.indexOf("_profile_") < 0) return;
         value = storableValue(value);
+        var base = profileKey.slice(0, profileKey.lastIndexOf("_profile_"));
+        var tokenChanged = base === "myshows_token" && value !== Lampa.Storage.get(profileKey, "");
+        if (tokenChanged) {
+            var targetProfile = profileKey.slice(profileKey.lastIndexOf("_profile_") + 9);
+            Lampa.Storage.set(profileKeyFor("myshows_relevance_history", targetProfile), {});
+        }
         _syncApplying = true;
         Lampa.Storage.set(profileKey, value);
-        var base = profileKey.slice(0, profileKey.lastIndexOf("_profile_"));
         if (getProfileKey(base) === profileKey) {
             Lampa.Storage.set(base, value, true);
             if (base === "myshows_badge_style") applyBadgeStyleAttr();
+            if (tokenChanged) invalidateAndroidChannel(!value);
         }
         _syncApplying = false;
     }
     function loadProfileSettings() {
-        if (!hasProfileSetting("myshows_view_in_main")) setProfileSetting("myshows_view_in_main", true, false);
-        if (!hasProfileSetting("myshows_button_view")) setProfileSetting("myshows_button_view", true, false);
-        if (!hasProfileSetting("myshows_sort_order")) setProfileSetting("myshows_sort_order", "progress", false);
-        if (!hasProfileSetting("myshows_add_threshold")) setProfileSetting("myshows_add_threshold", DEFAULT_ADD_THRESHOLD, false);
-        if (!hasProfileSetting("myshows_min_progress")) setProfileSetting("myshows_min_progress", DEFAULT_MIN_PROGRESS, false);
-        if (!hasProfileSetting("myshows_token")) setProfileSetting("myshows_token", "", false);
-        if (!hasProfileSetting("myshows_login")) setProfileSetting("myshows_login", "", false);
-        if (!hasProfileSetting("myshows_password")) setProfileSetting("myshows_password", "", false);
-        if (!hasProfileSetting("myshows_cache_days")) setProfileSetting("myshows_cache_days", DEFAULT_CACHE_DAYS, false);
-        if (!hasProfileSetting("myshows_use_np")) setProfileSetting("myshows_use_np", "false", false);
-        if (!hasProfileSetting("myshows_badges_disabled")) setProfileSetting("myshows_badges_disabled", false, false);
-        if (!hasProfileSetting("myshows_badge_progress")) setProfileSetting("myshows_badge_progress", false, false);
-        if (!hasProfileSetting("myshows_badge_remaining")) setProfileSetting("myshows_badge_remaining", false, false);
-        if (!hasProfileSetting("myshows_badge_next")) setProfileSetting("myshows_badge_next", false, false);
-        if (!hasProfileSetting("myshows_badge_style")) setProfileSetting("myshows_badge_style", "1", false);
+        if (!hasProfileSetting("myshows_android_tv")) setProfileSetting("myshows_android_tv", false, false);
+        if (!hasProfileSetting("myshows_view_in_main")) {
+            setProfileSetting("myshows_view_in_main", true, false);
+        }
+        if (!hasProfileSetting("myshows_button_view")) {
+            setProfileSetting("myshows_button_view", true, false);
+        }
+        if (!hasProfileSetting("myshows_sort_order")) {
+            setProfileSetting("myshows_sort_order", "progress", false);
+        }
+        if (!hasProfileSetting("myshows_add_threshold")) {
+            setProfileSetting("myshows_add_threshold", DEFAULT_ADD_THRESHOLD, false);
+        }
+        if (!hasProfileSetting("myshows_min_progress")) {
+            setProfileSetting("myshows_min_progress", DEFAULT_MIN_PROGRESS, false);
+        }
+        if (!hasProfileSetting("myshows_token")) {
+            setProfileSetting("myshows_token", "", false);
+        }
+        if (!hasProfileSetting("myshows_login")) {
+            setProfileSetting("myshows_login", "", false);
+        }
+        if (!hasProfileSetting("myshows_password")) {
+            setProfileSetting("myshows_password", "", false);
+        }
+        if (!hasProfileSetting("myshows_cache_days")) {
+            setProfileSetting("myshows_cache_days", DEFAULT_CACHE_DAYS, false);
+        }
+        if (!hasProfileSetting("myshows_use_np")) {
+            setProfileSetting("myshows_use_np", "false", false);
+        }
+        if (!hasProfileSetting("myshows_badges_disabled")) {
+            setProfileSetting("myshows_badges_disabled", false, false);
+        }
+        if (!hasProfileSetting("myshows_badge_progress")) {
+            setProfileSetting("myshows_badge_progress", false, false);
+        }
+        if (!hasProfileSetting("myshows_badge_remaining")) {
+            setProfileSetting("myshows_badge_remaining", false, false);
+        }
+        if (!hasProfileSetting("myshows_badge_next")) {
+            setProfileSetting("myshows_badge_next", false, false);
+        }
+        if (!hasProfileSetting("myshows_badge_style")) {
+            setProfileSetting("myshows_badge_style", "1", false);
+        }
+        Lampa.Storage.set("myshows_android_tv", storableValue(getProfileSetting("myshows_android_tv", false)), true);
         Lampa.Storage.set("myshows_view_in_main", storableValue(getProfileSetting("myshows_view_in_main", true)), true);
         Lampa.Storage.set("myshows_button_view", storableValue(getProfileSetting("myshows_button_view", true)), true);
         Lampa.Storage.set("myshows_sort_order", getProfileSetting("myshows_sort_order", "progress"), true);
@@ -743,7 +1124,9 @@
     }
     function initSettings() {
         try {
-            if (Lampa.SettingsApi.removeComponent) Lampa.SettingsApi.removeComponent("myshows");
+            if (Lampa.SettingsApi.removeComponent) {
+                Lampa.SettingsApi.removeComponent("myshows");
+            }
         } catch (e) {}
         Lampa.SettingsApi.addComponent({
             component: "myshows",
@@ -753,6 +1136,22 @@
         loadProfileSettings();
         autoSetupToken();
         var tokenValue = getProfileSetting("myshows_token", "");
+        Lampa.SettingsApi.addParam({
+            component: "myshows",
+            param: {
+                name: "myshows_android_tv",
+                type: "trigger",
+                default: getProfileSetting("myshows_android_tv", false)
+            },
+            field: {
+                name: "MyShows на главном экране Android TV",
+                description: channelSupported() ? "Публиковать непросмотренные сериалы отдельным каналом. Обновляется, пока работает Lampa." : "Нужна версия Lampa для Android TV с поддержкой каналов плагинов. Текущая версия не поддерживает публикацию."
+            },
+            onChange: function(value) {
+                setProfileSetting("myshows_android_tv", value, false);
+                if (!channelEnabled()) invalidateAndroidChannel(true); else if (channelSupported()) initMyShowsCaches(); else Lampa.Noty.show("Нужна Lampa для Android TV с поддержкой каналов плагинов");
+            }
+        });
         if (tokenValue) {
             Lampa.SettingsApi.addParam({
                 component: "myshows",
@@ -792,6 +1191,7 @@
                     values: {
                         alphabet: "По алфавиту",
                         progress: "По прогрессу",
+                        relevance: "По актуальности",
                         unwatched_count: "По количеству непросмотренных",
                         air_date: "По дате последнего эпизода ↓",
                         air_date_asc: "По дате последнего эпизода ↑",
@@ -805,17 +1205,21 @@
                     description: "Порядок отображения сериалов на главной странице"
                 },
                 onChange: function(value) {
+                    _channelPublication++;
                     setProfileSetting("myshows_sort_order", value);
+                    if (_channelShows) publishAndroidChannel(_channelShows, channelContext());
                     cachedShuffledItems = {};
                     setTimeout(function() {
                         var activity = Lampa.Activity.active();
-                        if (activity) Lampa.Activity.replace({
-                            url: activity.url,
-                            title: activity.title,
-                            component: activity.component,
-                            source: activity.source,
-                            page: activity.page || 1
-                        });
+                        if (activity) {
+                            Lampa.Activity.replace({
+                                url: activity.url,
+                                title: activity.title,
+                                component: activity.component,
+                                source: activity.source,
+                                page: activity.page || 1
+                            });
+                        }
                     }, 200);
                 }
             });
@@ -964,93 +1368,106 @@
                 tryAuthFromSettings();
             }
         });
-        if (tokenValue) Lampa.SettingsApi.addParam({
-            component: "myshows",
-            param: {
-                type: "button"
-            },
-            field: {
-                name: "Выйти из MyShows",
-                description: "Очистить токен, логин и пароль"
-            },
-            onChange: function() {
-                setProfileSetting("myshows_token", "", false);
-                setProfileSetting("myshows_login", "", false);
-                setProfileSetting("myshows_password", "", false);
-                Lampa.Storage.set("myshows_token", "", true);
-                Lampa.Storage.set("myshows_login", "", true);
-                Lampa.Storage.set("myshows_password", "", true);
-                Lampa.Noty.show("✅ Выход из MyShows выполнен");
-                try {
-                    sessionStorage.setItem("myshows_just_logged_out", "1");
-                } catch (e) {}
-                if (window.__NMSync) {
-                    var done = 0;
-                    var total = 3;
-                    var onDone = function() {
-                        done++;
-                        if (done >= total) window.location.reload();
-                    };
-                    window.__NMSync.patch("myshows", getProfileKey("myshows_token"), "", onDone);
-                    window.__NMSync.patch("myshows", getProfileKey("myshows_login"), "", onDone);
-                    window.__NMSync.patch("myshows", getProfileKey("myshows_password"), "", onDone);
-                } else setTimeout(function() {
-                    window.location.reload();
-                }, 1500);
-            }
-        });
-        var xhr = new XMLHttpRequest;
-        xhr.open("GET", "/timecode/batch_add", true);
-        xhr.onload = function() {
-            var isEnabled = xhr.status !== 404;
-            if (isEnabled && IS_LAMPAC && tokenValue) Lampa.SettingsApi.addParam({
+        if (tokenValue) {
+            Lampa.SettingsApi.addParam({
                 component: "myshows",
                 param: {
                     type: "button"
                 },
                 field: {
-                    name: "Синхронизация с Lampac"
+                    name: "Выйти из MyShows",
+                    description: "Очистить токен, логин и пароль"
                 },
                 onChange: function() {
-                    Lampa.Select.show({
-                        title: "Синхронизация MyShows",
-                        items: [ {
-                            title: "Синхронизировать",
-                            subtitle: "Добавить просмотренные фильмы и сериалы в историю Lampa.",
-                            confirm: true
-                        }, {
-                            title: "Отмена"
-                        } ],
-                        onSelect: function(item) {
-                            if (item.confirm) {
-                                Lampa.Noty.show("Начинаем синхронизацию...");
-                                syncMyShows(function(success, message) {
-                                    if (success) Lampa.Noty.show(message); else Lampa.Noty.show("Ошибка: " + message);
-                                });
-                            }
-                            Lampa.Controller.toggle("settings_component");
-                        },
-                        onBack: function() {
-                            Lampa.Controller.toggle("settings_component");
-                        }
-                    });
+                    setProfileSetting("myshows_token", "", false);
+                    setProfileSetting("myshows_login", "", false);
+                    setProfileSetting("myshows_password", "", false);
+                    Lampa.Storage.set("myshows_token", "", true);
+                    Lampa.Storage.set("myshows_login", "", true);
+                    Lampa.Storage.set("myshows_password", "", true);
+                    Lampa.Noty.show("✅ Выход из MyShows выполнен");
+                    try {
+                        sessionStorage.setItem("myshows_just_logged_out", "1");
+                    } catch (e) {}
+                    if (window.__NMSync) {
+                        var done = 0;
+                        var total = 3;
+                        var onDone = function() {
+                            done++;
+                            if (done >= total) window.location.reload();
+                        };
+                        window.__NMSync.patch("myshows", getProfileKey("myshows_token"), "", onDone);
+                        window.__NMSync.patch("myshows", getProfileKey("myshows_login"), "", onDone);
+                        window.__NMSync.patch("myshows", getProfileKey("myshows_password"), "", onDone);
+                    } else {
+                        setTimeout(function() {
+                            window.location.reload();
+                        }, 1500);
+                    }
                 }
             });
+        }
+        var xhr = new XMLHttpRequest;
+        xhr.open("GET", "/timecode/batch_add", true);
+        xhr.onload = function() {
+            var isEnabled = xhr.status !== 404;
+            Log.info("✅ Модуль TimecodeUser " + (isEnabled ? "установлен" : "не установлен"));
+            if (isEnabled && IS_LAMPAC && tokenValue) {
+                Lampa.SettingsApi.addParam({
+                    component: "myshows",
+                    param: {
+                        type: "button"
+                    },
+                    field: {
+                        name: "Синхронизация с Lampac"
+                    },
+                    onChange: function() {
+                        Lampa.Select.show({
+                            title: "Синхронизация MyShows",
+                            items: [ {
+                                title: "Синхронизировать",
+                                subtitle: "Добавить просмотренные фильмы и сериалы в историю Lampa.",
+                                confirm: true
+                            }, {
+                                title: "Отмена"
+                            } ],
+                            onSelect: function(item) {
+                                if (item.confirm) {
+                                    Lampa.Noty.show("Начинаем синхронизацию...");
+                                    syncMyShows(function(success, message) {
+                                        if (success) {
+                                            Lampa.Noty.show(message);
+                                        } else {
+                                            Lampa.Noty.show("Ошибка: " + message);
+                                        }
+                                    });
+                                }
+                                Lampa.Controller.toggle("settings_component");
+                            },
+                            onBack: function() {
+                                Lampa.Controller.toggle("settings_component");
+                            }
+                        });
+                    }
+                });
+            }
         };
         xhr.onerror = function(e) {
-            e.type;
+            Log.info("❌ Ошибка проверки модуля: " + e.type);
         };
         xhr.send();
-        if (!tokenValue) Lampa.SettingsApi.addParam({
-            component: "myshows",
-            param: {
-                type: "static"
-            },
-            field: {
-                name: "📋 После авторизации станут доступны:",
-                description: "• Показ непросмотренных сериалов на главной странице<br>• Настройки сортировки<br>• Управление порогами просмотра<br>• Дополнительные настройки"
-            }
-        });
+        if (!tokenValue) {
+            Lampa.SettingsApi.addParam({
+                component: "myshows",
+                param: {
+                    type: "static"
+                },
+                field: {
+                    name: "📋 После авторизации станут доступны:",
+                    description: "• Показ непросмотренных сериалов на главной странице<br>• Настройки сортировки<br>• Управление порогами просмотра<br>• Дополнительные настройки"
+                }
+            });
+        }
     }
     if (IS_LAMPAC && Lampa.Storage.get("lampac_profile_id")) {
         var originalProfileWaiter = window.__profile_extra_waiter;
@@ -1058,19 +1475,26 @@
         var currentProfileId = "";
         window.__profile_extra_waiter = function() {
             var synced = myshowsProfileSynced;
-            if (typeof originalProfileWaiter === "function") synced = synced && originalProfileWaiter();
+            if (typeof originalProfileWaiter === "function") {
+                synced = synced && originalProfileWaiter();
+            }
             return synced;
         };
     }
     function handleProfileChange() {
+        Log.info("Checking for profile change...");
         myshowsProfileSynced = false;
+        Log.info("myshowsProfileSynced", myshowsProfileSynced);
         var newProfileId = getProfileId();
+        Log.info("Current Profile ID:", currentProfileId, "New Profile ID:", newProfileId);
         if (currentProfileId === newProfileId) {
             myshowsProfileSynced = true;
             return;
         }
         currentProfileId = newProfileId;
         _profileRenderToken++;
+        invalidateAndroidChannel(true);
+        Log.info("🔄 Profile changed to:", newProfileId);
         initSettings();
         cachedShuffledItems = {};
         _unwatchedProgressMap = {};
@@ -1078,16 +1502,26 @@
         var currentActivity = Lampa.Activity.active();
         var newToken = getProfileSetting("myshows_token", "");
         if (currentActivity && currentActivity.component && currentActivity.component.indexOf("myshows_") === 0 && !newToken) {
+            Log.info("Switched from MyShows to profile without token, redirecting to start page");
             var start_from = Lampa.Storage.field("start_page");
+            Log.info("start_from:", start_from);
             var active = Lampa.Storage.get("activity", "false");
+            Log.info("active:", active);
             var startParams;
-            if (window.start_deep_link) startParams = window.start_deep_link; else if (active && start_from === "last") startParams = active; else startParams = {
-                url: "",
-                title: Lang.translate("title_main") + " - " + Storage.field("source").toUpperCase(),
-                component: "main",
-                source: Storage.field("source"),
-                page: 1
-            };
+            if (window.start_deep_link) {
+                startParams = window.start_deep_link;
+            } else if (active && start_from === "last") {
+                startParams = active;
+            } else {
+                startParams = {
+                    url: "",
+                    title: Lang.translate("title_main") + " - " + Storage.field("source").toUpperCase(),
+                    component: "main",
+                    source: Storage.field("source"),
+                    page: 1
+                };
+            }
+            Log.info("startParams:", startParams);
             sursAddBtn();
             setTimeout(function() {
                 Lampa.Activity.replace(startParams);
@@ -1106,12 +1540,20 @@
                     });
                 }
             }
-            if (newToken) setTimeout(function() {
-                try {
-                    initMyShowsCaches();
-                } catch (e) {}
+            if (newToken) {
+                setTimeout(function() {
+                    try {
+                        initMyShowsCaches();
+                        Log.info("✅ MyShows data loaded for profile:", newProfileId);
+                    } catch (e) {
+                        Log.error("Error loading MyShows data:", e);
+                    }
+                    myshowsProfileSynced = true;
+                }, 500);
+            } else {
                 myshowsProfileSynced = true;
-            }, 500); else myshowsProfileSynced = true;
+                Log.info("✅ No MyShows token for this profile");
+            }
         }
         setTimeout(function() {
             var settingsPanel = document.querySelector('[data-component="myshows"]');
@@ -1151,44 +1593,91 @@
     function initCurrentProfile() {
         currentProfileId = getProfileId();
         myshowsProfileSynced = true;
+        Log.info("📊 Current profile initialized:", currentProfileId);
     }
     Lampa.Listener.follow("state:changed", function(e) {
-        if (e.target === "favorite" && e.reason === "profile") handleProfileChange();
+        if (e.target === "favorite" && e.reason === "profile") {
+            handleProfileChange();
+        }
     });
     Lampa.Listener.follow("profile", function(e) {
-        if (e.type === "changed") handleProfileChange();
+        if (e.type === "changed") {
+            handleProfileChange();
+        }
     });
-    if (Lampa.Account && Lampa.Account.listener) Lampa.Account.listener.follow("profile_select", function() {
-        handleProfileChange();
-    });
+    if (Lampa.Account && Lampa.Account.listener) {
+        Lampa.Account.listener.follow("profile_select", function() {
+            handleProfileChange();
+        });
+    }
     Lampa.Listener.follow("profile_select", function() {
         handleProfileChange();
     });
     function getShowIdByExternalIds(imdbId, kinopoiskId, title, originalTitle, tmdbId, year, alternativeTitles, callback) {
+        Log.info("getShowIdByExternalIds started with params:", {
+            imdbId: imdbId,
+            kinopoiskId: kinopoiskId,
+            title: title,
+            originalTitle: originalTitle,
+            tmdbId: tmdbId,
+            year: year,
+            alternativeTitles: alternativeTitles
+        });
         getShowIdByImdbId(imdbId, originalTitle || title, year, alternativeTitles, function(imdbResult) {
-            if (imdbResult) return callback(imdbResult);
+            if (imdbResult) {
+                Log.info("Found by IMDB ID:", imdbResult);
+                return callback(imdbResult);
+            }
             getShowIdByKinopiskId(kinopoiskId, function(kinopoiskResult) {
-                if (kinopoiskResult) return callback(kinopoiskResult);
-                if (isAsianContent(originalTitle)) handleAsianContent(originalTitle, tmdbId, year, alternativeTitles, callback); else getShowIdByOriginalTitle(originalTitle, year, callback);
+                if (kinopoiskResult) {
+                    Log.info("Found by Kinopoisk ID:", kinopoiskResult);
+                    return callback(kinopoiskResult);
+                }
+                if (isAsianContent(originalTitle)) {
+                    handleAsianContent(originalTitle, tmdbId, year, alternativeTitles, callback);
+                } else {
+                    Log.info("Non-Asian content, searching by original title:", originalTitle);
+                    getShowIdByOriginalTitle(originalTitle, year, callback);
+                }
             });
         });
     }
     function handleAsianContent(originalTitle, tmdbId, year, alternativeTitles, callback) {
-        if (alternativeTitles && alternativeTitles.length > 0) tryAlternativeTitles(alternativeTitles, 0, year, function(altResult) {
-            if (altResult) return callback(altResult);
+        Log.info("Is Asian content: true for originalTitle:", originalTitle);
+        if (alternativeTitles && alternativeTitles.length > 0) {
+            Log.info("Trying alternative titles:", alternativeTitles);
+            tryAlternativeTitles(alternativeTitles, 0, year, function(altResult) {
+                if (altResult) {
+                    Log.info("Found by alternative title:", altResult);
+                    return callback(altResult);
+                }
+                tryEnglishTitleFallback(originalTitle, tmdbId, year, callback);
+            });
+        } else {
             tryEnglishTitleFallback(originalTitle, tmdbId, year, callback);
-        }); else tryEnglishTitleFallback(originalTitle, tmdbId, year, callback);
+        }
     }
     function tryEnglishTitleFallback(originalTitle, tmdbId, year, callback) {
+        Log.info("Trying getEnglishTitle fallback");
         getEnglishTitle(tmdbId, true, function(englishTitle) {
-            if (englishTitle) getShowIdByOriginalTitle(englishTitle, year, function(englishResult) {
-                if (englishResult) return callback(englishResult);
+            if (englishTitle) {
+                Log.info("getEnglishTitle result:", englishTitle);
+                getShowIdByOriginalTitle(englishTitle, year, function(englishResult) {
+                    if (englishResult) {
+                        Log.info("Found by English title:", englishResult);
+                        return callback(englishResult);
+                    }
+                    finalFallbackToOriginal(originalTitle, year, callback);
+                });
+            } else {
                 finalFallbackToOriginal(originalTitle, year, callback);
-            }); else finalFallbackToOriginal(originalTitle, year, callback);
+            }
         });
     }
     function finalFallbackToOriginal(originalTitle, year, callback) {
+        Log.info("Fallback to original title:", originalTitle);
         getShowIdByOriginalTitle(originalTitle, year, function(finalResult) {
+            Log.info("Final result:", finalResult);
             callback(finalResult);
         });
     }
@@ -1197,7 +1686,11 @@
             id: parseInt(id),
             source: source
         }, function(success, data) {
-            if (success && data && data.result) callback(data.result.id); else callback(null);
+            if (success && data && data.result) {
+                callback(data.result.id);
+            } else {
+                callback(null);
+            }
         });
     }
     function getEpisodesByShowId(showId, token, callback) {
@@ -1215,9 +1708,13 @@
                 year: parseInt(year)
             }
         }, function(success, data) {
-            if (success && data && data.result) getShowCandidates(data.result, title, year, function(candidates) {
-                callback(candidates || null);
-            }); else callback(null);
+            if (success && data && data.result) {
+                getShowCandidates(data.result, title, year, function(candidates) {
+                    callback(candidates || null);
+                });
+            } else {
+                callback(null);
+            }
         });
     }
     function getMovieIdByOriginalTitle(title, year, callback) {
@@ -1227,12 +1724,18 @@
                 year: parseInt(year)
             }
         }, function(success, data) {
-            if (success && data && data.result) getMovieCandidates(data.result, title, year, function(candidates) {
-                if (candidates) {
-                    callback(candidates);
-                    return;
-                } else callback(null);
-            }); else callback(null);
+            if (success && data && data.result) {
+                getMovieCandidates(data.result, title, year, function(candidates) {
+                    if (candidates) {
+                        callback(candidates);
+                        return;
+                    } else {
+                        callback(null);
+                    }
+                });
+            } else {
+                callback(null);
+            }
         });
     }
     function checkEpisodeMyShows(episodeId, callback) {
@@ -1253,18 +1756,25 @@
     }
     function npSetStatus(myshowsId, tmdbId, mediaType, npCacheType) {
         if (!useNpServer()) {
-            getStorageMode(), window.IS_NP;
+            Log.warn("[MS-np] npSetStatus ПРОПУЩЕН (mode=" + getStorageMode() + ", IS_NP=" + !!window.IS_NP + ") " + mediaType + " tmdb=" + tmdbId + ' → "' + npCacheType + '"');
             return;
         }
         var profileId = getProfileId();
+        Log.info("[MS-np] npSetStatus → " + mediaType + " tmdb=" + tmdbId + " myshows=" + myshowsId + ' cache_type="' + npCacheType + '" profile=' + profileId);
         var npUrl = getNpBaseUrl() + "/myshows/set_status?token=" + encodeURIComponent(getNpToken()) + "&profile_id=" + encodeURIComponent(profileId);
         var xhr = new XMLHttpRequest;
         xhr.open("POST", npUrl, true);
         xhr.setRequestHeader("Content-Type", "application/json");
         xhr.onload = function() {
-            if (xhr.status >= 200 && xhr.status < 300) ; else xhr.status;
+            if (xhr.status >= 200 && xhr.status < 300) {
+                Log.info("[MS-np] ✅ npSetStatus записан в БД (" + mediaType + " tmdb=" + tmdbId + ")");
+            } else {
+                Log.error("[MS-np] ❌ npSetStatus ОШИБКА записи (" + mediaType + " tmdb=" + tmdbId + "), HTTP " + xhr.status);
+            }
         };
-        xhr.onerror = function() {};
+        xhr.onerror = function() {
+            Log.error("[MS-np] ❌ npSetStatus сетевая ОШИБКА (" + mediaType + " tmdb=" + tmdbId + ")");
+        };
         xhr.send(JSON.stringify({
             myshows_id: myshowsId,
             tmdb_id: tmdbId,
@@ -1292,7 +1802,9 @@
                     invalidateTimetableCache();
                     fetchShowStatus(function(data) {});
                     fetchFromMyShowsAPI(function(data) {});
-                    if (status === "watching") addToHistory(cardData);
+                    if (status === "watching") {
+                        addToHistory(cardData);
+                    }
                     var tvMap = {
                         watching: "watching",
                         finished: "watching",
@@ -1313,7 +1825,9 @@
             if (success && data && data.result) {
                 var filteredShows = data.result.map(function(item) {
                     var status = item.watchStatus;
-                    if (status === "finished") status = "watching";
+                    if (status === "finished") {
+                        status = "watching";
+                    }
                     return {
                         id: item.show.id,
                         title: item.show.title,
@@ -1327,11 +1841,15 @@
                 callback(getProfileId() === startProfile ? {
                     shows: filteredShows
                 } : null);
-            } else callback(null);
+            } else {
+                callback(null);
+            }
         });
     }
-    function fetchFromMyShowsAPI(callback) {
+    function fetchFromMyShowsAPI(callback, originalChannelRequest) {
         var startProfile = getProfileId();
+        var channelRequest = originalChannelRequest || channelContext();
+        if (originalChannelRequest && !channelContextCurrent(originalChannelRequest)) return;
         makeMyShowsJSONRPCRequest("lists.EpisodesUnwatched", {}, function(success, response) {
             if (!response || !response.result) {
                 callback({
@@ -1346,11 +1864,13 @@
                 var item = response.result[i];
                 if (item.show && item.episodes && item.episodes.length > 0) {
                     var showId = item.show.id;
-                    if (!showsData[showId]) showsData[showId] = {
-                        show: item.show,
-                        unwatchedCount: 0,
-                        episodes: []
-                    };
+                    if (!showsData[showId]) {
+                        showsData[showId] = {
+                            show: item.show,
+                            unwatchedCount: 0,
+                            episodes: []
+                        };
+                    }
                     for (var j = 0; j < item.episodes.length; j++) {
                         var episode = item.episodes[j];
                         showsData[showId].episodes.push(episode);
@@ -1365,16 +1885,18 @@
                 var newUnwatchedIds = {};
                 for (var si = 0; si < response.result.length; si++) {
                     var rit = response.result[si];
-                    if (rit && rit.episodes) for (var ej = 0; ej < rit.episodes.length; ej++) {
-                        var rep = rit.episodes[ej];
-                        if (rep && rep.id) newUnwatchedIds[parseInt(rep.id)] = true;
+                    if (rit && rit.episodes) {
+                        for (var ej = 0; ej < rit.episodes.length; ej++) {
+                            var rep = rit.episodes[ej];
+                            if (rep && rep.id) newUnwatchedIds[parseInt(rep.id)] = true;
+                        }
                     }
                 }
                 _unwatchedEpisodeIds = newUnwatchedIds;
                 _unwatchedEpisodeIdsReady = true;
                 _unwatchedEpisodeIdsProfile = startProfile;
                 _pendingWatchedShows = {};
-                Object.keys(newUnwatchedIds).length;
+                Log.info("[MS-guard] in-memory непросмотренных серий: " + Object.keys(newUnwatchedIds).length);
                 scheduleEpisodeBadgeDecorate();
             }
             for (var showId in showsData) {
@@ -1383,18 +1905,22 @@
                 var firstEpisode = showData.episodes[showData.episodes.length - 1];
                 var last_episode_to_myshows = null;
                 var first_episode_to_myshows = null;
-                if (lastEpisode) last_episode_to_myshows = {
-                    season_number: lastEpisode.seasonNumber,
-                    episode_number: lastEpisode.episodeNumber,
-                    air_date: lastEpisode.airDate,
-                    air_date_utc: lastEpisode.airDateUTC
-                };
-                if (firstEpisode) first_episode_to_myshows = {
-                    season_number: firstEpisode.seasonNumber,
-                    episode_number: firstEpisode.episodeNumber,
-                    air_date: firstEpisode.airDate,
-                    air_date_utc: firstEpisode.airDateUTC
-                };
+                if (lastEpisode) {
+                    last_episode_to_myshows = {
+                        season_number: lastEpisode.seasonNumber,
+                        episode_number: lastEpisode.episodeNumber,
+                        air_date: lastEpisode.airDate,
+                        air_date_utc: lastEpisode.airDateUTC
+                    };
+                }
+                if (firstEpisode) {
+                    first_episode_to_myshows = {
+                        season_number: firstEpisode.seasonNumber,
+                        episode_number: firstEpisode.episodeNumber,
+                        air_date: firstEpisode.airDate,
+                        air_date_utc: firstEpisode.airDateUTC
+                    };
+                }
                 myshowsIndex[showData.show.id] = {
                     myshowsId: showData.show.id,
                     unwatchedCount: showData.unwatchedCount,
@@ -1413,6 +1939,7 @@
                     first_episode_to_myshows: first_episode_to_myshows
                 });
             }
+            Log.info("shows", shows);
             getTMDBDetails(shows, function(result) {
                 var sameProfile = getProfileId() === startProfile;
                 if (result && result.shows) {
@@ -1424,17 +1951,24 @@
                             tmdbShow.first_episode_to_myshows = myshowsIndex[tmdbShow.myshowsId].first_episode_to_myshows;
                         }
                     }
-                    result.shows.length, Date.now();
+                    Log.info("[MS-TT] saveCacheToServer unwatched_serials called, shows:", result.shows.length, "t=", Date.now() - _msttT0, "ms");
                     saveCacheToServer({
                         shows: result.shows
                     }, "unwatched_serials", function(ok) {
-                        Date.now();
+                        Log.info("[MS-TT] saveCacheToServer callback ok:", ok, "_onUnwatchedSaved:", !!_onUnwatchedSaved, "t=", Date.now() - _msttT0, "ms");
                         if (ok) _skipCachedShowsOnce = false;
                         _fireUnwatchedSaved(result.shows);
-                    }, startProfile);
+                    }, startProfile, channelRequest);
                     if (sameProfile) _populateProgressMap(result.shows);
                 }
-                callback(sameProfile ? result : {
+                if (sameProfile && result && result.shows) {
+                    if (!channelContextCurrent(channelRequest)) return;
+                    sortShows(result.shows, getProfileSetting("myshows_sort_order", "progress"));
+                    callback(result);
+                    prepareRelevance(result.shows, channelRequest, function() {
+                        reorderCardsInMyShowsSection();
+                    });
+                } else callback({
                     error: "profile changed"
                 });
             });
@@ -1455,7 +1989,9 @@
                 if (success && data && data.result) {
                     cachedShuffledItems = {};
                     fetchStatusMovies(function(data) {});
-                    if (status === "finished") addToHistory(movieData);
+                    if (status === "finished") {
+                        addToHistory(movieData);
+                    }
                     var movieMap = {
                         finished: "watched",
                         later: "watchlist",
@@ -1483,33 +2019,39 @@
                 var foundTitleClean = normalizeForComparison(cleanTitle(found.titleOriginal || found.title || ""));
                 if (isAsianContent(expectedTitle)) {
                     var matched = false;
-                    if (alternativeTitles) for (var i = 0; i < alternativeTitles.length; i++) if (normalizeForComparison(cleanTitle(alternativeTitles[i])) === foundTitleClean) {
-                        matched = true;
-                        break;
+                    if (alternativeTitles) {
+                        for (var i = 0; i < alternativeTitles.length; i++) {
+                            if (normalizeForComparison(cleanTitle(alternativeTitles[i])) === foundTitleClean) {
+                                matched = true;
+                                break;
+                            }
+                        }
                     }
                     if (!matched) {
-                        found.titleOriginal || found.title;
+                        Log.warn('IMDB Asian mismatch: "' + (found.titleOriginal || found.title) + '" not in alternativeTitles — skip');
                         callback(null);
                         return;
                     }
                 } else if (expectedTitle) {
                     var exp = normalizeForComparison(cleanTitle(expectedTitle));
                     if (foundTitleClean.indexOf(exp) === -1 && exp.indexOf(foundTitleClean) === -1) {
-                        found.titleOriginal || found.title;
+                        Log.warn('IMDB mismatch: expected "' + expectedTitle + '" got "' + (found.titleOriginal || found.title) + '" — skip');
                         callback(null);
                         return;
                     }
                     if (expectedYear && found.year) {
                         var yearDiff = Math.abs(parseInt(found.year) - parseInt(expectedYear));
                         if (yearDiff > 1) {
-                            found.year, found.titleOriginal || found.title;
+                            Log.warn("IMDB year mismatch: expected " + expectedYear + " got " + found.year + ' for "' + (found.titleOriginal || found.title) + '" — skip');
                             callback(null);
                             return;
                         }
                     }
                 }
                 callback(found.id);
-            } else callback(null);
+            } else {
+                callback(null);
+            }
         });
     }
     function getShowIdByKinopiskId(id, callback) {
@@ -1527,19 +2069,30 @@
     }
     function getMediaCandidates(data, title, year, dataKey, getBestFn, callback) {
         var candidates = [];
-        for (var i = 0; i < data.length; ++i) try {
-            var item = data[i][dataKey];
-            if (!item) continue;
-            var titleMatch = item.titleOriginal && normalizeForComparison(cleanTitle(item.titleOriginal).toLowerCase()) === normalizeForComparison(cleanTitle(title).toLowerCase());
-            var yearMatch = !year || !item.year || Math.abs(parseInt(item.year) - parseInt(year)) <= 1;
-            if (titleMatch && yearMatch) candidates.push(item);
-        } catch (e) {
-            callback(null);
-            return;
+        for (var i = 0; i < data.length; ++i) {
+            try {
+                var item = data[i][dataKey];
+                if (!item) continue;
+                var titleMatch = item.titleOriginal && normalizeForComparison(cleanTitle(item.titleOriginal).toLowerCase()) === normalizeForComparison(cleanTitle(title).toLowerCase());
+                var yearMatch = !year || !item.year || Math.abs(parseInt(item.year) - parseInt(year)) <= 1;
+                if (titleMatch && yearMatch) {
+                    candidates.push(item);
+                }
+            } catch (e) {
+                Log.error("Error processing " + dataKey + ":", e);
+                callback(null);
+                return;
+            }
         }
-        if (candidates.length === 0) callback(null); else if (candidates.length === 1) callback(candidates[0].id); else getBestFn(candidates, function(candidate) {
-            callback(candidate ? candidate.id : null);
-        });
+        if (candidates.length === 0) {
+            callback(null);
+        } else if (candidates.length === 1) {
+            callback(candidates[0].id);
+        } else {
+            getBestFn(candidates, function(candidate) {
+                callback(candidate ? candidate.id : null);
+            });
+        }
     }
     function getShowCandidates(data, title, year, callback) {
         getMediaCandidates(data, title, year, "show", getBestShowCandidate, callback);
@@ -1565,23 +2118,33 @@
                     return;
                 }
             } catch (e) {
+                Log.info("Date parsing error:", e);
                 continue;
             }
         }
+        Log.info("No matching candidate found");
         callback(null);
     }
     function getBestShowCandidate(candidates, callback) {
         for (var i = 0; i < candidates.length; i++) {
             var candidate = candidates[i];
             var airDate = candidate.started || candidate.first_air_date;
-            if (!airDate) continue;
+            if (!airDate) {
+                continue;
+            }
             try {
                 var myShowsDate;
                 if (airDate.indexOf(".") !== -1) {
                     var parts = airDate.split(".");
-                    if (parts.length !== 3) continue;
+                    if (parts.length !== 3) {
+                        continue;
+                    }
                     myShowsDate = new Date(parts[2], parts[1] - 1, parts[0]);
-                } else if (airDate.indexOf("-") !== -1) myShowsDate = new Date(airDate); else continue;
+                } else if (airDate.indexOf("-") !== -1) {
+                    myShowsDate = new Date(airDate);
+                } else {
+                    continue;
+                }
                 myShowsDate.setHours(0, 0, 0, 0);
                 var card = getCurrentCard();
                 var tmdbDate = card && card.first_air_date ? new Date(card.first_air_date) : card && card.release_date ? new Date(card.release_date) : null;
@@ -1604,7 +2167,9 @@
             if (response) {
                 var englishTitle = isSerial ? response.name : response.title;
                 callback(englishTitle);
-            } else callback(null);
+            } else {
+                callback(null);
+            }
         }, function() {
             callback(null);
         });
@@ -1617,14 +2182,23 @@
         return koreanRegex.test(originalTitle) || japaneseRegex.test(originalTitle) || chineseRegex.test(originalTitle);
     }
     function tryAlternativeTitles(titles, index, year, callback) {
-        titles.length;
+        Log.info("tryAlternativeTitles - index:", index, "of", titles.length, "titles");
         if (index >= titles.length) {
+            Log.info("tryAlternativeTitles - all titles exhausted");
             callback(null);
             return;
         }
         var currentTitle = titles[index];
+        Log.info("tryAlternativeTitles - trying title:", currentTitle, "year:", year);
         getShowIdByOriginalTitle(currentTitle, year, function(myshows_id) {
-            if (myshows_id) callback(myshows_id); else tryAlternativeTitles(titles, index + 1, year, callback);
+            Log.info('tryAlternativeTitles - result for "' + currentTitle + '":', myshows_id);
+            if (myshows_id) {
+                Log.info("tryAlternativeTitles - SUCCESS with title:", currentTitle);
+                callback(myshows_id);
+            } else {
+                Log.info('tryAlternativeTitles - failed with "' + currentTitle + '", trying next');
+                tryAlternativeTitles(titles, index + 1, year, callback);
+            }
         });
     }
     function getMovieYear(card) {
@@ -1638,7 +2212,7 @@
         var tmdbKey = tmdbId ? String(tmdbId) : "";
         for (var i = 0; i < episodes.length; i++) {
             var ep = episodes[i];
-            var hashStr = ep.seasonNumber + (ep.seasonNumber > 10 ? ":" : "") + ep.episodeNumber + originalName;
+            var hashStr = "" + ep.seasonNumber + (ep.seasonNumber > 10 ? ":" : "") + ep.episodeNumber + originalName;
             var hash = Lampa.Utils.hash(hashStr);
             map[episodeMapKey(tmdbKey, hash)] = {
                 episodeId: ep.id,
@@ -1663,7 +2237,7 @@
             if (!eps || !eps.length) continue;
             found = true;
             for (var j = 0; j < eps.length; j++) {
-                var id = eps[j] && (eps[j].id !== void 0 ? eps[j].id : eps[j]);
+                var id = eps[j] && (eps[j].id !== undefined ? eps[j].id : eps[j]);
                 if (id) ids[parseInt(id)] = true;
             }
         }
@@ -1671,7 +2245,7 @@
         _unwatchedEpisodeIds = ids;
         _unwatchedEpisodeIdsReady = true;
         _unwatchedEpisodeIdsProfile = profileId;
-        Object.keys(ids).length;
+        Log.info("[MS-guard] in-memory set засеян из кэша: " + Object.keys(ids).length + " серий");
     }
     function isEpisodeUnwatched(episodeId, callback) {
         if (!episodeId) {
@@ -1694,9 +2268,11 @@
                 var eps = shows[i] && shows[i].unwatchedEpisodes;
                 if (!eps || !eps.length) continue;
                 hasEpisodeData = true;
-                for (var j = 0; j < eps.length; j++) if (eps[j] && parseInt(eps[j].id) === episodeId) {
-                    callback(true, true);
-                    return;
+                for (var j = 0; j < eps.length; j++) {
+                    if (eps[j] && parseInt(eps[j].id) === episodeId) {
+                        callback(true, true);
+                        return;
+                    }
                 }
             }
             if (!hasEpisodeData) {
@@ -1725,45 +2301,69 @@
         }
         var tmdbKey = tmdbId ? String(tmdbId) : "";
         var map = Lampa.Storage.get(MAP_KEY, {});
-        if (tmdbKey) for (var h in map) if (map.hasOwnProperty(h) && map[h] && String(map[h].tmdbId) === tmdbKey) {
-            if (map[h].seasonNumber === void 0 || map[h].airDate === void 0) break;
-            callback(map);
-            return;
+        if (tmdbKey) {
+            for (var h in map) {
+                if (map.hasOwnProperty(h) && map[h] && String(map[h].tmdbId) === tmdbKey) {
+                    if (map[h].seasonNumber === undefined || map[h].airDate === undefined) break;
+                    callback(map);
+                    return;
+                }
+            }
         }
         getShowIdByExternalIds(imdbId, kinopoiskId, showTitle, originalName, tmdbId, year, alternativeTitles, function(showId) {
             if (!showId) {
                 callback({});
                 return;
             }
+            Log.info("ensureHashMap showId", showId);
             getEpisodesByShowId(showId, token, function(episodes) {
                 var newMap = buildHashMap(episodes, originalName, tmdbKey, showId);
-                for (var k in newMap) if (newMap.hasOwnProperty(k)) map[k] = newMap[k];
+                for (var k in newMap) {
+                    if (newMap.hasOwnProperty(k)) {
+                        map[k] = newMap[k];
+                    }
+                }
                 EPISODES_CACHE[tmdbKey || originalName] = map;
-                EPISODES_CACHE[tmdbKey || originalName];
+                Log.info("EPISODES_CACHE", EPISODES_CACHE[tmdbKey || originalName]);
                 Lampa.Storage.set(MAP_KEY, map);
                 callback(map);
             });
         });
     }
     function isMovieContent(card) {
-        if (card && ((card.number_of_seasons === void 0 || card.number_of_seasons === null) && card.media_type === "movie" || Lampa.Activity.active() && Lampa.Activity.active().method === "movie")) return true;
-        if (card && (card.number_of_seasons > 0 || card.media_type === "tv" || Lampa.Activity.active() && Lampa.Activity.active().method === "tv" || card.name !== void 0)) return false;
+        if (card && ((card.number_of_seasons === undefined || card.number_of_seasons === null) && card.media_type === "movie" || Lampa.Activity.active() && Lampa.Activity.active().method === "movie")) {
+            return true;
+        }
+        if (card && (card.number_of_seasons > 0 || card.media_type === "tv" || Lampa.Activity.active() && Lampa.Activity.active().method === "tv" || card.name !== undefined)) {
+            return false;
+        }
         return !card.original_name && (card.original_title || card.title);
     }
     function getCurrentCard() {
         var card = Lampa.Activity && Lampa.Activity.active && Lampa.Activity.active() && (Lampa.Activity.active().card_data || Lampa.Activity.active().card || Lampa.Activity.active().movie) || null;
         if (!card) card = Lampa.Storage.get("myshows_last_card", null);
-        if (card) card.isMovie = isMovieContent(card);
+        if (card) {
+            card.isMovie = isMovieContent(card);
+        }
         return card;
     }
     function getCardIdentifiers(card) {
-        if (!card) return null;
+        if (!card) {
+            Log.warn("extractCardIdentifiers: card is null");
+            return null;
+        }
         var alternativeTitles = [];
         try {
-            if (card.alternative_titles && card.alternative_titles.results) card.alternative_titles.results.forEach(function(altTitle) {
-                if (altTitle.iso_3166_1 === "US" && altTitle.title) alternativeTitles.push(altTitle.title);
-            });
-        } catch (e) {}
+            if (card.alternative_titles && card.alternative_titles.results) {
+                card.alternative_titles.results.forEach(function(altTitle) {
+                    if (altTitle.iso_3166_1 === "US" && altTitle.title) {
+                        alternativeTitles.push(altTitle.title);
+                    }
+                });
+            }
+        } catch (e) {
+            Log.warn("Error extracting alternative titles:", e);
+        }
         return {
             imdbId: card.imdb_id || card.imdbId || card.ids && card.ids.imdb,
             kinopoiskId: card.kinopoisk_id || card.kp_id || card.ids && card.ids.kp,
@@ -1775,26 +2375,40 @@
         };
     }
     function processTimelineUpdate(data) {
-        if (window.__npRemoteTimelineUpdate) return;
-        if (syncInProgress) return;
-        if (!data || !data.data || !data.data.hash || !data.data.road) return;
+        if (window.__npRemoteTimelineUpdate) {
+            return;
+        }
+        if (syncInProgress) {
+            return;
+        }
+        if (!data || !data.data || !data.data.hash || !data.data.road) {
+            return;
+        }
         var hash = data.data.hash;
         var percent = data.data.road.percent;
         var token = getProfileSetting("myshows_token", "");
+        var channelRequest = channelContext();
         var minProgress = parseInt(getProfileSetting("myshows_min_progress", DEFAULT_MIN_PROGRESS));
         var addThreshold = parseInt(getProfileSetting("myshows_add_threshold", DEFAULT_ADD_THRESHOLD));
-        if (!token) return;
+        if (!token) {
+            return;
+        }
         var card = getCurrentCard();
         if (!card) return;
         var isMovie = isMovieContent(card);
         if (isMovie) {
             if (percent >= minProgress) {
                 var mvKey = card.id ? String(card.id) : "";
-                if (checkedMovies[mvKey] || getCardStatusCache(card.id, true) === "finished") return;
+                if (checkedMovies[mvKey] || getCardStatusCache(card.id, true) === "finished") {
+                    Log.info("[MS-guard] фильм " + mvKey + " уже в статусе Просмотрел — пропускаем");
+                    return;
+                }
+                Log.info("[MS-guard] Отмечаем фильм " + mvKey + " как Просмотрел (percent=" + percent + ")");
                 setMyShowsMovieStatus(card, "finished", function(success) {
                     if (success) {
                         checkedMovies[mvKey] = true;
                         setCardStatusCache(card.id, true, "finished");
+                        Log.info("[MS-guard] ✅ фильм " + mvKey + " отмечен — больше к API не обращаемся");
                         cachedShuffledItems = {};
                     }
                 });
@@ -1806,31 +2420,47 @@
                 var entry = map[mapKey];
                 var episodeId = entry && entry.episodeId ? entry.episodeId : entry;
                 var airDate = entry && entry.airDate;
-                if (episodeId) ;
+                if (episodeId) {
+                    Log.info("episodeId есть в Local Storage", episodeId);
+                }
                 if (!episodeId) {
                     var fullMap = Lampa.Storage.get(MAP_KEY, {});
-                    for (var h in fullMap) if (fullMap.hasOwnProperty(h) && fullMap[h] && String(fullMap[h].tmdbId) === tmdbKey) delete fullMap[h];
+                    for (var h in fullMap) {
+                        if (fullMap.hasOwnProperty(h) && fullMap[h] && String(fullMap[h].tmdbId) === tmdbKey) {
+                            delete fullMap[h];
+                        }
+                    }
                     Lampa.Storage.set(MAP_KEY, fullMap);
                     ensureHashMap(card, token, function(newMap) {
                         var newEntry = newMap[mapKey];
                         var newEpisodeId = newEntry && newEntry.episodeId ? newEntry.episodeId : newEntry;
-                        if (newEpisodeId) processEpisode(newEpisodeId, hash, percent, card, token, minProgress, addThreshold, newEntry && newEntry.airDate); else {
+                        if (newEpisodeId) {
+                            processEpisode(newEpisodeId, hash, percent, card, token, minProgress, addThreshold, newEntry && newEntry.airDate, channelRequest);
+                        } else {
+                            Log.info("Нет newEpisodeId — ищем в EPISODES_CACHE");
                             var episodes_hash = EPISODES_CACHE[tmdbKey] || EPISODES_CACHE[card.original_name || card.original_title || card.title];
                             var episodeId = null;
                             var hitAirDate = null;
                             if (episodes_hash) {
+                                Log.info("episodes_hash", episodes_hash);
                                 var hit = episodes_hash[mapKey];
                                 if (hit && String(hit.tmdbId) === tmdbKey && hit.hash == hash) {
                                     episodeId = hit.episodeId;
                                     hitAirDate = hit.airDate;
+                                    Log.info("Найден episodeId:", episodeId);
                                 }
                             }
-                            if (episodeId) processEpisode(episodeId, hash, percent, card, token, minProgress, addThreshold, hitAirDate);
+                            if (episodeId) {
+                                processEpisode(episodeId, hash, percent, card, token, minProgress, addThreshold, hitAirDate, channelRequest);
+                            } else {
+                                Log.warn("❌ Не найден episodeId даже в EPISODES_CACHE для хеша:", hash);
+                            }
                         }
                     });
                     return;
                 }
-                processEpisode(episodeId, hash, percent, card, token, minProgress, addThreshold, airDate);
+                Log.info("CheckEpisode episodeId", episodeId);
+                processEpisode(episodeId, hash, percent, card, token, minProgress, addThreshold, airDate, channelRequest);
             });
         }
     }
@@ -1843,50 +2473,78 @@
         today.setHours(0, 0, 0, 0);
         return d.getTime() >= today.getTime();
     }
-    function processEpisode(episodeId, hash, percent, card, token, minProgress, addThreshold, airDate) {
+    function processEpisode(episodeId, hash, percent, card, token, minProgress, addThreshold, airDate, channelRequest) {
         var originalName = card.original_name || card.original_title || card.title;
         var firstEpisodeHash = Lampa.Utils.hash("11" + originalName);
         var currentStatus = getCardStatusCache(card.id, false);
         var alreadyWatching = currentStatus === "watching";
         var isFirstEpisode = hash === firstEpisodeHash;
+        Log.info("[MS-guard] processEpisode episodeId=" + episodeId + " percent=" + percent + ' статус="' + currentStatus + '" S1E1=' + isFirstEpisode + " addThreshold=" + addThreshold + " minProgress=" + minProgress);
         if (percent === 0 && currentStatus === "watching") {
             isEpisodeUnwatched(episodeId, function(unwatched, known) {
                 if (!known || unwatched) return;
+                Log.info("[MS-guard] Отправляем UnCheckEpisode для episodeId " + episodeId + " (ручное снятие отметки)");
                 unCheckEpisodeMyShows(episodeId, function(success) {
-                    if (!success) return;
+                    if (!success) {
+                        Log.warn("[MS-guard] ❌ UnCheckEpisode для episodeId " + episodeId + " не удался");
+                        return;
+                    }
                     delete checkedEpisodes[episodeId];
                     _unwatchedEpisodeIds[parseInt(episodeId)] = true;
-                    applyEpisodeMarkLocally(card, episodeId, false);
+                    Log.info("[MS-guard] ✅ episodeId " + episodeId + " отметка снята");
+                    applyEpisodeMarkLocally(card, episodeId, false, channelRequest);
                 });
             });
             return;
         }
-        if (isFirstEpisode && (percent >= addThreshold || addThreshold === 0) && !alreadyWatching) ensureWatchingStatus(card, "S1E1 percent=" + percent, function(success) {
-            cachedShuffledItems = {};
-            if (success && percent < minProgress) {
-                invalidateTimetableCache();
-                fetchFromMyShowsAPI(function(data) {});
-                fetchShowStatus(function(data) {});
-            }
-        });
+        if (isFirstEpisode && (percent >= addThreshold || addThreshold === 0) && !alreadyWatching) {
+            ensureWatchingStatus(card, "S1E1 percent=" + percent, function(success) {
+                cachedShuffledItems = {};
+                if (success && percent < minProgress) {
+                    invalidateTimetableCache();
+                    fetchFromMyShowsAPI(function(data) {});
+                    fetchShowStatus(function(data) {});
+                }
+            });
+        }
         if (percent >= minProgress) {
-            if (checkedEpisodes[episodeId]) return;
+            if (checkedEpisodes[episodeId]) {
+                Log.info("[MS-guard] episodeId " + episodeId + " уже отмечен в этой сессии — пропускаем (percent=" + percent + ")");
+                return;
+            }
             var markEpisode = function(reason) {
+                Log.info("[MS-guard] Отправляем CheckEpisode для episodeId " + episodeId + " (" + reason + ", percent=" + percent + ")");
                 checkEpisodeMyShows(episodeId, function(success) {
-                    if (!success) return;
+                    if (!success) {
+                        Log.warn("[MS-guard] ❌ CheckEpisode для episodeId " + episodeId + " не удался — повторим на следующем тике");
+                        return;
+                    }
                     checkedEpisodes[episodeId] = true;
                     delete _unwatchedEpisodeIds[parseInt(episodeId)];
-                    if (!alreadyWatching) ensureWatchingStatus(card, 'отметка серии при статусе "' + currentStatus + '"', function() {});
-                    applyEpisodeMarkLocally(card, episodeId, true);
+                    Log.info("[MS-guard] ✅ episodeId " + episodeId + " отмечен успешно — больше к API не обращаемся");
+                    if (!alreadyWatching) {
+                        ensureWatchingStatus(card, 'отметка серии при статусе "' + currentStatus + '"', function() {});
+                    }
+                    applyEpisodeMarkLocally(card, episodeId, true, channelRequest);
                 });
             };
-            if (currentStatus === "watching") if (isAirDateTodayOrFuture(airDate)) markEpisode("airDate сегодня/в будущем — список непросмотренных недостоверен"); else isEpisodeUnwatched(episodeId, function(unwatched, known) {
-                if (known && !unwatched) {
-                    checkedEpisodes[episodeId] = true;
-                    return;
+            if (currentStatus === "watching") {
+                if (isAirDateTodayOrFuture(airDate)) {
+                    markEpisode("airDate сегодня/в будущем — список непросмотренных недостоверен");
+                } else {
+                    isEpisodeUnwatched(episodeId, function(unwatched, known) {
+                        if (known && !unwatched) {
+                            checkedEpisodes[episodeId] = true;
+                            Log.info("[MS-guard] episodeId " + episodeId + " нет в непросмотренных (статус Смотрю) — уже отмечен, пропускаем");
+                            return;
+                        }
+                        markEpisode(known ? "есть в непросмотренных" : "список непросмотренных недоступен");
+                    });
                 }
-                markEpisode(known ? "есть в непросмотренных" : "список непросмотренных недоступен");
-            }); else markEpisode('статус "' + currentStatus + '"');
+            } else {
+                Log.info('[MS-guard] статус "' + currentStatus + '" не "Смотрю" → отмечаем серию без проверки списка непросмотренных');
+                markEpisode('статус "' + currentStatus + '"');
+            }
         }
     }
     function initTimelineListener() {
@@ -1897,10 +2555,14 @@
     }
     function autoSetupToken() {
         var token = getProfileSetting("myshows_token", "");
-        if (token && token.length > 0) return;
+        if (token && token.length > 0) {
+            return;
+        }
         var login = getProfileSetting("myshows_login", "");
         var password = getProfileSetting("myshows_password", "");
-        if (login && password) tryAuthFromSettings();
+        if (login && password) {
+            tryAuthFromSettings();
+        }
     }
     function cleanupOldMappings() {
         var map = Lampa.Storage.get(MAP_KEY, {});
@@ -1909,13 +2571,60 @@
         var maxAge = days * 24 * 60 * 60 * 1e3;
         var cleaned = {};
         var removedCount = 0;
-        for (var hash in map) if (map.hasOwnProperty(hash)) {
-            var item = map[hash];
-            if (item && item.timestamp && typeof item.timestamp === "number" && now - item.timestamp < maxAge) cleaned[hash] = item; else removedCount++;
+        for (var hash in map) {
+            if (map.hasOwnProperty(hash)) {
+                var item = map[hash];
+                if (item && item.timestamp && typeof item.timestamp === "number" && now - item.timestamp < maxAge) {
+                    cleaned[hash] = item;
+                } else {
+                    removedCount++;
+                }
+            }
         }
-        if (removedCount > 0) Lampa.Storage.set(MAP_KEY, cleaned);
+        if (removedCount > 0) {
+            Lampa.Storage.set(MAP_KEY, cleaned);
+        }
     }
-    function getUnwatchedShowsWithDetails(callback, show) {
+    function getUnwatchedShowsWithDetails(callback, show, sourceRequest) {
+        Log.info("getUnwatchedShowsWithDetails called");
+        var requestedContext = channelContext();
+        var originalCallback = callback;
+        var owner = sourceRequest && sourceRequest.activity ? sourceRequest : Lampa.Activity.active();
+        var handle = owner && owner.activity;
+        var request = sourceRequest || owner || {};
+        var source = request.source, url = request.url, page = request.page, query = request.query;
+        callback = function(result) {
+            if (!result || !result.shows) {
+                originalCallback(result);
+                return;
+            }
+            if (requestedContext.generation !== _channelGeneration || requestedContext.profile !== getProfileId() || requestedContext.token !== getProfileSetting("myshows_token", "")) return;
+            var delivered = false, order;
+            function signature() {
+                return result.shows.map(function(item) {
+                    return item.myshowsId || item.id || getCardName(item);
+                }).join("|");
+            }
+            prepareRelevance(result.shows, requestedContext, function() {
+                if (getProfileSetting("myshows_sort_order", "progress") !== "relevance") return;
+                sortShows(result.shows, "relevance");
+                if (!delivered || signature() === order) return;
+                function current() {
+                    var active = Lampa.Activity.active();
+                    return channelContextCurrent(requestedContext) && getProfileSetting("myshows_sort_order", "progress") === "relevance" && handle && active && active.activity === handle && owner.activity === handle && request.source === source && request.url === url && request.page === page && request.query === query && /^(main|category|myshows_all|myshows_unwatched)$/.test(active.component || "");
+                }
+                if (!current()) return;
+                setTimeout(function() {
+                    if (!current() || typeof Lampa.Activity.replace !== "function") return;
+                    if (handle.component && typeof handle.component.beforeRefresh === "function") handle.component.beforeRefresh();
+                    if (current()) Lampa.Activity.replace();
+                }, 400);
+            });
+            sortShows(result.shows, getProfileSetting("myshows_sort_order", "progress"));
+            order = signature();
+            originalCallback(result);
+            delivered = true;
+        };
         if (isNpConnected() || isNpConfigured()) {
             if (!getProfileSetting("myshows_token") || !getNpToken()) {
                 callback({
@@ -1934,7 +2643,9 @@
                                 s.total_count = parseInt(parts[1]) || s.watched_count + (s.unwatched_count || 0);
                             }
                         }
-                        if (s.remaining === void 0 && s.unwatched_count !== void 0) s.remaining = s.unwatched_count;
+                        if (s.remaining === undefined && s.unwatched_count !== undefined) {
+                            s.remaining = s.unwatched_count;
+                        }
                     });
                     var sortOrder = getProfileSetting("myshows_sort_order", "progress");
                     sortShows(shows, sortOrder);
@@ -1943,44 +2654,60 @@
                     callback(cachedResult);
                     setTimeout(function() {
                         fetchFromMyShowsAPI(function(freshResult) {
-                            if (freshResult && freshResult.shows && cachedResult.shows) updateUIIfNeeded(cachedResult.shows, freshResult.shows);
+                            if (freshResult && freshResult.shows && cachedResult.shows) {
+                                updateUIIfNeeded(cachedResult.shows, freshResult.shows);
+                            }
                         });
                     }, getRefreshDelay());
-                } else fetchFromMyShowsAPI(function(freshResult) {
-                    callback(freshResult || {
-                        shows: []
+                } else {
+                    fetchFromMyShowsAPI(function(freshResult) {
+                        callback(freshResult || {
+                            shows: []
+                        });
                     });
-                });
+                }
             }, {
                 forceNp: true
             });
-        } else if (IS_LAMPAC) loadCacheFromServer("unwatched_serials", "shows", function(cachedResult) {
-            if (cachedResult && cachedResult.shows && cachedResult.shows.length) {
-                var sortOrder = getProfileSetting("myshows_sort_order", "progress");
-                sortShows(cachedResult.shows, sortOrder);
-                _populateProgressMap(cachedResult.shows);
-                callback(cachedResult);
-            } else fetchFromMyShowsAPI(function(freshResult) {
-                callback(freshResult);
-            });
-        }); else loadCacheFromServer("unwatched_serials", "shows", function(cachedResult) {
-            var shows = cachedResult && cachedResult.shows;
-            if (shows && shows.length > 0) {
-                shows.length;
-                var sortOrder = getProfileSetting("myshows_sort_order", "progress");
-                sortShows(shows, sortOrder);
-                _populateProgressMap(shows);
-                cachedResult.shows = shows;
-                callback(cachedResult);
-                setTimeout(function() {
+        } else if (IS_LAMPAC) {
+            loadCacheFromServer("unwatched_serials", "shows", function(cachedResult) {
+                if (cachedResult && cachedResult.shows && cachedResult.shows.length) {
+                    var sortOrder = getProfileSetting("myshows_sort_order", "progress");
+                    sortShows(cachedResult.shows, sortOrder);
+                    _populateProgressMap(cachedResult.shows);
+                    callback(cachedResult);
+                } else {
                     fetchFromMyShowsAPI(function(freshResult) {
-                        if (freshResult && freshResult.shows && cachedResult.shows) updateUIIfNeeded(cachedResult.shows, freshResult.shows);
+                        callback(freshResult);
                     });
-                }, getRefreshDelay());
-            } else fetchFromMyShowsAPI(function(freshResult) {
-                callback(freshResult);
+                }
             });
-        });
+        } else {
+            loadCacheFromServer("unwatched_serials", "shows", function(cachedResult) {
+                var shows = cachedResult && cachedResult.shows;
+                if (shows && shows.length > 0) {
+                    Log.info("getUnwatchedShowsWithDetails: localStorage cache hit, " + shows.length + " shows");
+                    var sortOrder = getProfileSetting("myshows_sort_order", "progress");
+                    sortShows(shows, sortOrder);
+                    _populateProgressMap(shows);
+                    cachedResult.shows = shows;
+                    callback(cachedResult);
+                    setTimeout(function() {
+                        fetchFromMyShowsAPI(function(freshResult) {
+                            if (freshResult && freshResult.shows && cachedResult.shows) {
+                                updateUIIfNeeded(cachedResult.shows, freshResult.shows);
+                            }
+                        });
+                    }, getRefreshDelay());
+                } else {
+                    Log.info("getUnwatchedShowsWithDetails: no cache, fetching from API");
+                    fetchFromMyShowsAPI(function(freshResult) {
+                        Log.info("Direct API result:", freshResult);
+                        callback(freshResult);
+                    });
+                }
+            });
+        }
     }
     function updateUIIfNeeded(oldShows, newShows) {
         function showsMatch(a, b) {
@@ -1990,7 +2717,9 @@
             return n1 && n2 && n1 === n2;
         }
         function findInArray(show, arr) {
-            for (var i = 0; i < arr.length; i++) if (showsMatch(show, arr[i])) return arr[i];
+            for (var i = 0; i < arr.length; i++) {
+                if (showsMatch(show, arr[i])) return arr[i];
+            }
             return null;
         }
         newShows.forEach(function(newShow) {
@@ -2009,22 +2738,26 @@
         oldShows.forEach(function(oldShow) {
             if (!findInArray(oldShow, newShows)) {
                 var showName = oldShow.original_name || oldShow.name || oldShow.title || "";
-                oldShow.myshowsId;
+                Log.info("Removing completed show:", showName, "(myshowsId:", oldShow.myshowsId, ")");
                 updateCompletedShowCard(showName, oldShow.myshowsId);
             }
         });
         newShows.forEach(function(newShow) {
             var oldShow = findInArray(newShow, oldShows);
-            if (oldShow) if (oldShow.progress_marker !== newShow.progress_marker || oldShow.next_episode !== newShow.next_episode) {
-                var showName = newShow.original_name || newShow.name || newShow.title || "";
-                newShow.myshowsId;
-                updateAllMyShowsCards(showName, newShow.myshowsId, newShow.progress_marker, newShow.next_episode, newShow.remaining);
+            if (oldShow) {
+                if (oldShow.progress_marker !== newShow.progress_marker || oldShow.next_episode !== newShow.next_episode) {
+                    var showName = newShow.original_name || newShow.name || newShow.title || "";
+                    Log.info("Updating show:", showName, "(myshowsId:", newShow.myshowsId, ")");
+                    updateAllMyShowsCards(showName, newShow.myshowsId, newShow.progress_marker, newShow.next_episode, newShow.remaining);
+                }
             }
         });
     }
     function enrichShowData(fullResponse, myshowsData) {
         var enriched = {};
-        for (var _k in fullResponse) if (fullResponse.hasOwnProperty(_k)) enriched[_k] = fullResponse[_k];
+        for (var _k in fullResponse) {
+            if (fullResponse.hasOwnProperty(_k)) enriched[_k] = fullResponse[_k];
+        }
         if (myshowsData) {
             enriched.progress_marker = myshowsData.progress_marker;
             enriched.remaining = myshowsData.remaining;
@@ -2048,21 +2781,23 @@
         return enriched;
     }
     function getTMDBDetails(shows, callback) {
-        if (shows.length === 0) return callback({
-            shows: []
-        });
+        if (shows.length === 0) {
+            return callback({
+                shows: []
+            });
+        }
         var status = new Lampa.Status(shows.length);
-        shows.length;
+        Log.info("[DEBUG] Всего шоу из MyShows:", shows.length);
         shows.forEach(function(show, idx) {
-            show.title, show.myshowsId;
+            Log.info("[DEBUG] Шоу " + (idx + 1) + ': "' + show.title + '" (ID: ' + show.myshowsId + ")");
         });
         status.onComplite = function(data) {
             var matchedShows = Object.keys(data).map(function(key) {
                 return data[key];
             }).filter(Boolean);
-            matchedShows.length;
+            Log.info("[DEBUG] Успешно обработано шоу:", matchedShows.length);
             matchedShows.forEach(function(show, idx) {
-                show.name, show.id;
+                Log.info("[DEBUG] Обработано " + (idx + 1) + ': "' + show.name + '" (ID: ' + show.id + ")");
             });
             var sortOrder = getProfileSetting("myshows_sort_order", "progress");
             sortShows(matchedShows, sortOrder);
@@ -2072,10 +2807,12 @@
         };
         loadCacheFromServer("unwatched_serials", "shows", function(cache) {
             var cachedShows = cache && cache.shows && !_skipCachedShowsOnce ? cache.shows : [];
-            if (_skipCachedShowsOnce) ;
-            cachedShows.length;
+            if (_skipCachedShowsOnce) {
+                Log.info("[DEBUG] Пропускаем cachedShows (после сброса версии кэша, до подтверждённого сохранения)");
+            }
+            Log.info("[DEBUG] Шоу в кэше:", cachedShows.length);
             cachedShows.forEach(function(show, idx) {
-                show.name, show.id;
+                Log.info("[DEBUG] Кэш " + (idx + 1) + ': "' + show.name + '" (ID: ' + show.id + ")");
             });
             var parts = shows.map(function(currentShow, index) {
                 return function(call) {
@@ -2087,6 +2824,9 @@
     }
     function getShowComparator(order) {
         switch (order) {
+          case "relevance":
+            return sortByRelevance;
+
           case "progress":
             return sortByProgress;
 
@@ -2110,7 +2850,7 @@
         }
     }
     function sortShows(shows, order) {
-        shows && shows.length;
+        Log.info("[sortShows] order=" + order + " count=" + (shows ? shows.length : 0));
         shows.sort(getShowComparator(order));
     }
     function reorderCardsInMyShowsSection() {
@@ -2146,12 +2886,14 @@
     function sortByProgress(a, b) {
         var progressA = (a.watched_count || 0) / (a.total_count || 1);
         var progressB = (b.watched_count || 0) / (b.total_count || 1);
-        if (progressB !== progressA) return progressB - progressA;
+        if (progressB !== progressA) {
+            return progressB - progressA;
+        }
         return (b.watched_count || 0) - (a.watched_count || 0);
     }
     function sortByUnwatched(a, b) {
-        var unwatchedA = a.remaining !== void 0 ? a.remaining : (a.released_count || a.total_count || 0) - (a.watched_count || 0);
-        var unwatchedB = b.remaining !== void 0 ? b.remaining : (b.released_count || b.total_count || 0) - (b.watched_count || 0);
+        var unwatchedA = a.remaining !== undefined ? a.remaining : (a.released_count || a.total_count || 0) - (a.watched_count || 0);
+        var unwatchedB = b.remaining !== undefined ? b.remaining : (b.released_count || b.total_count || 0) - (b.watched_count || 0);
         if (unwatchedB !== unwatchedA) return unwatchedA - unwatchedB;
         return sortByAlphabet(a, b);
     }
@@ -2190,44 +2932,49 @@
     function fetchTMDBShowDetails(currentShow, index, status, cachedShows, callback) {
         var originalName = currentShow.originalTitle || currentShow.title || "";
         var cleanedName = cleanTitle(originalName);
-        currentShow.myshowsId;
+        Log.info('[DEBUG] Ищем шоу "' + originalName + '" (ID: ' + currentShow.myshowsId + ")");
         var cachedShow = null;
         var currentNameLower = cleanedName.toLowerCase();
         for (var _i = 0; _i < cachedShows.length; _i++) {
             var _s = cachedShows[_i];
             if (currentShow.myshowsId && _s.myshowsId && _s.myshowsId === currentShow.myshowsId) {
                 cachedShow = _s;
-                _s.name;
+                Log.info('[DEBUG] Найдено в кэше по myshowsId: "' + _s.name + '" для "' + originalName + '"');
                 break;
             }
             if (!cachedShow) {
                 var _fields = [ _s.original_title, _s.original_name, _s.name, _s.title ];
-                for (var _f = 0; _f < _fields.length; _f++) if (_fields[_f] && cleanTitle(_fields[_f]).toLowerCase() === currentNameLower) {
-                    if (currentShow.myshowsId && _s.myshowsId && _s.myshowsId !== currentShow.myshowsId) {
-                        currentShow.myshowsId, _s.myshowsId;
-                        continue;
+                for (var _f = 0; _f < _fields.length; _f++) {
+                    if (_fields[_f] && cleanTitle(_fields[_f]).toLowerCase() === currentNameLower) {
+                        if (currentShow.myshowsId && _s.myshowsId && _s.myshowsId !== currentShow.myshowsId) {
+                            Log.info("[DEBUG] Пропущен кэш по названию (разные myshowsId): " + currentShow.myshowsId + " vs " + _s.myshowsId + ' для "' + originalName + '"');
+                            continue;
+                        }
+                        if (currentShow.year && _s.year && Math.abs(parseInt(_s.year) - parseInt(currentShow.year)) > 1) {
+                            Log.info("[DEBUG] Пропущен кэш по названию (год не совпадает): " + _s.year + " vs " + currentShow.year + ' для "' + originalName + '"');
+                            continue;
+                        }
+                        cachedShow = _s;
+                        break;
                     }
-                    if (currentShow.year && _s.year && Math.abs(parseInt(_s.year) - parseInt(currentShow.year)) > 1) {
-                        _s.year, currentShow.year;
-                        continue;
-                    }
-                    cachedShow = _s;
-                    break;
                 }
                 if (cachedShow) {
-                    _s.name;
+                    Log.info('[DEBUG] Найдено в кэше по названию: "' + _s.name + '" для "' + originalName + '"');
                     break;
                 }
             }
         }
         if (cachedShow && cachedShow.id) {
-            cachedShow.name;
+            Log.info("TMDB пропущен (кеш):", cachedShow.name);
             enrichTMDBShow({
                 id: cachedShow.id,
                 name: cachedShow.name
             }, currentShow, index, status, cachedShows);
             callback();
-        } else searchTMDBWithRetry(currentShow, index, status, callback);
+        } else {
+            Log.info('[DEBUG] Не найдено в кэше: "' + originalName + '"');
+            searchTMDBWithRetry(currentShow, index, status, callback);
+        }
     }
     function searchTMDBWithRetry(currentShow, index, status, callback) {
         var originalTitle = currentShow.originalTitle || currentShow.title;
@@ -2262,70 +3009,91 @@
         function attemptSearch(attemptIndex, withYear) {
             if (attemptIndex >= searchAttempts.length) {
                 if (bestUnverified) {
-                    bestUnverified.name;
+                    Log.info('[DEBUG] Нет точного совпадения названия — используем лучшую догадку: "' + bestUnverified.name + '"');
                     enrichTMDBShow(bestUnverified, currentShow, index, status);
-                } else status.append("tmdb_" + index, null);
+                } else {
+                    status.append("tmdb_" + index, null);
+                }
                 callback();
                 return;
             }
             var query = searchAttempts[attemptIndex];
             var searchUrl = "search/tv" + "?api_key=" + Lampa.TMDB.key() + "&query=" + encodeURIComponent(query) + "&language=" + Lampa.Storage.get("tmdb_lang", "ru");
-            if (withYear && currentShow.year && currentShow.year > 1900 && currentShow.year < 2100) searchUrl += "&first_air_date_year=" + currentShow.year;
+            if (withYear && currentShow.year && currentShow.year > 1900 && currentShow.year < 2100) {
+                searchUrl += "&first_air_date_year=" + currentShow.year;
+            }
+            Log.info('[DEBUG] TMDB запрос: "' + query + '" (с годом: ' + withYear + ")");
             var network = new Lampa.Reguest;
             network.silent(Lampa.TMDB.api(searchUrl), function(searchResponse) {
                 if (searchResponse && searchResponse.results && searchResponse.results.length) {
                     if (!bestUnverified) bestUnverified = searchResponse.results[0];
                     var match = findVerifiedMatch(searchResponse.results);
                     if (match) {
-                        match.name;
+                        Log.info('[DEBUG] Найдено: "' + match.name + '" для "' + query + '"');
                         enrichTMDBShow(match, currentShow, index, status);
                         callback();
                         return;
                     }
                 }
-                if (withYear) attemptSearch(attemptIndex, false); else attemptSearch(attemptIndex + 1, true);
+                if (withYear) {
+                    attemptSearch(attemptIndex, false);
+                } else {
+                    attemptSearch(attemptIndex + 1, true);
+                }
             }, function(error) {
-                if (withYear) attemptSearch(attemptIndex, false); else attemptSearch(attemptIndex + 1, true);
+                Log.error('[DEBUG] Ошибка поиска для "' + query + '":', error);
+                if (withYear) {
+                    attemptSearch(attemptIndex, false);
+                } else {
+                    attemptSearch(attemptIndex + 1, true);
+                }
             });
         }
-        if (searchAttempts.length > 0) attemptSearch(0, true); else {
+        if (searchAttempts.length > 0) {
+            attemptSearch(0, true);
+        } else {
             status.append("tmdb_" + index, null);
             callback();
         }
     }
     function enrichTMDBShow(foundShow, currentShow, index, status, cachedShows) {
         var cachedShow = null;
-        if (cachedShows) for (var _ci = 0; _ci < cachedShows.length; _ci++) {
-            var _cs = cachedShows[_ci];
-            if (_cs.myshowsId && currentShow.myshowsId) {
-                if (_cs.myshowsId === currentShow.myshowsId) {
-                    cachedShow = _cs;
-                    break;
-                }
-            } else {
-                var _n1 = (_cs.original_title || _cs.original_name || _cs.name || "").toLowerCase();
-                var _n2 = (currentShow.originalTitle || currentShow.title || "").toLowerCase();
-                if (_n1 === _n2) {
-                    if (currentShow.year && _cs) {
-                        var _csYear = parseInt(_cs.year) || parseInt(extractYear(_cs)) || 0;
-                        if (_csYear && Math.abs(_csYear - parseInt(currentShow.year)) > 1) {
-                            currentShow.year;
-                            continue;
-                        }
+        if (cachedShows) {
+            for (var _ci = 0; _ci < cachedShows.length; _ci++) {
+                var _cs = cachedShows[_ci];
+                if (_cs.myshowsId && currentShow.myshowsId) {
+                    if (_cs.myshowsId === currentShow.myshowsId) {
+                        cachedShow = _cs;
+                        break;
                     }
-                    cachedShow = _cs;
-                    break;
+                } else {
+                    var _n1 = (_cs.original_title || _cs.original_name || _cs.name || "").toLowerCase();
+                    var _n2 = (currentShow.originalTitle || currentShow.title || "").toLowerCase();
+                    if (_n1 === _n2) {
+                        if (currentShow.year && _cs) {
+                            var _csYear = parseInt(_cs.year) || parseInt(extractYear(_cs)) || 0;
+                            if (_csYear && Math.abs(_csYear - parseInt(currentShow.year)) > 1) {
+                                Log.info("Пропущен кэш enrichTMDBShow (год не совпадает): " + _csYear + " vs " + currentShow.year);
+                                continue;
+                            }
+                        }
+                        cachedShow = _cs;
+                        break;
+                    }
                 }
             }
         }
+        Log.info("TMDB cachedShow", cachedShow);
         if (cachedShow && cachedShow.seasons) {
-            cachedShow.name;
+            Log.info("TMDB из кеша:", cachedShow.name);
             getMyShowsEpisodesCount(foundShow, currentShow, cachedShow, function(myShowsData) {
-                if (myShowsData) appendEnriched(cachedShow, foundShow, currentShow, myShowsData.totalEpisodes, myShowsData.releasedEpisodes, index, status);
+                if (myShowsData) {
+                    appendEnriched(cachedShow, foundShow, currentShow, myShowsData.totalEpisodes, myShowsData.releasedEpisodes, index, status);
+                }
             });
             return;
         }
-        foundShow.name;
+        Log.info("TMDB запрос:", foundShow.name);
         var fullUrl = "tv/" + foundShow.id + "?api_key=" + Lampa.TMDB.key() + "&language=" + Lampa.Storage.get("tmdb_lang", "ru");
         var fullNetwork = new Lampa.Reguest;
         fullNetwork.silent(Lampa.TMDB.api(fullUrl), function(fullResponse) {
@@ -2334,7 +3102,9 @@
                 return status.append("tmdb_" + index, foundShow);
             }
             getMyShowsEpisodesCount(foundShow, currentShow, fullResponse, function(myShowsData) {
-                if (myShowsData) appendEnriched(fullResponse, foundShow, currentShow, myShowsData.totalEpisodes, myShowsData.releasedEpisodes, index, status); else {
+                if (myShowsData) {
+                    appendEnriched(fullResponse, foundShow, currentShow, myShowsData.totalEpisodes, myShowsData.releasedEpisodes, index, status);
+                } else {
                     foundShow.myshowsId = currentShow.myshowsId;
                     status.append("tmdb_" + index, foundShow);
                 }
@@ -2352,7 +3122,11 @@
                 year: extractYear(fullResponse) || null
             };
             getShowIdByExternalIds(identifiers.imdbId, null, identifiers.title, identifiers.originalName, identifiers.tmdbId, identifiers.year, null, function(foundId) {
-                if (foundId) fetchEpisodes(foundId); else callback(null);
+                if (foundId) {
+                    fetchEpisodes(foundId);
+                } else {
+                    callback(null);
+                }
             });
             return;
         }
@@ -2378,14 +3152,24 @@
                     if (ep.isSpecial || ep.episodeNumber === 0) {
                         specials++;
                         var airDateSpecial = ep.airDateUTC ? new Date(ep.airDateUTC) : ep.airDate ? new Date(ep.airDate) : null;
-                        if (!airDateSpecial || airDateSpecial <= now) specialsReleased++;
+                        if (!airDateSpecial || airDateSpecial <= now) {
+                            specialsReleased++;
+                        }
                     } else {
                         regular++;
                         var airDate = ep.airDateUTC ? new Date(ep.airDateUTC) : ep.airDate ? new Date(ep.airDate) : null;
-                        if (!airDate || airDate <= now) released++;
+                        if (!airDate || airDate <= now) {
+                            released++;
+                        }
                     }
                 }
-                fullResponse.name, episodes.length;
+                Log.info("Статистика эпизодов для", fullResponse.name + ":", {
+                    "всего": episodes.length,
+                    "обычных": regular,
+                    "вышедших_обычных": released,
+                    "специальных": specials,
+                    "вышедших_специальных": specialsReleased
+                });
                 callback({
                     totalEpisodes: regular,
                     releasedEpisodes: released,
@@ -2408,7 +3192,9 @@
                     var season = padTwo(match[1]);
                     var episode = padTwo(match[2]);
                     nextEpisode = "S" + season + "/E" + episode;
-                } else nextEpisode = shortName.toUpperCase();
+                } else {
+                    nextEpisode = shortName.toUpperCase();
+                }
             }
         }
         var myshowsData = {
@@ -2429,9 +3215,13 @@
     }
     function getTotalEpisodesCount(tmdbShow) {
         var total = 0;
-        if (tmdbShow.seasons) tmdbShow.seasons.forEach(function(season) {
-            if (season.season_number > 0) total += season.episode_count || 0;
-        });
+        if (tmdbShow.seasons) {
+            tmdbShow.seasons.forEach(function(season) {
+                if (season.season_number > 0) {
+                    total += season.episode_count || 0;
+                }
+            });
+        }
         return total;
     }
     function openMyShowsPage() {
@@ -2471,17 +3261,40 @@
         });
         if (!existing) window.surs_addExternalButton(_sursBtn);
     }
-    if (window.plugin_custom_buttons_ready) sursAddBtn(); else Lampa.Listener.follow("custom_buttons", function(e) {
-        if (e.type === "ready") sursAddBtn();
-    });
+    if (window.plugin_custom_buttons_ready) {
+        sursAddBtn();
+    } else {
+        Lampa.Listener.follow("custom_buttons", function(e) {
+            if (e.type === "ready") sursAddBtn();
+        });
+    }
     function updateCardWithAnimation(cardElement, newText, markerClass) {
-        if (!cardElement || !markerClass) return;
-        if (typeof newText !== "string") return;
+        Log.info(">>> updateCardWithAnimation START:", {
+            cardElement: cardElement ? "found" : "null",
+            newText: newText,
+            markerClass: markerClass
+        });
+        if (!cardElement || !markerClass) {
+            Log.warn("updateCardWithAnimation: missing cardElement or markerClass");
+            return;
+        }
+        if (typeof newText !== "string") {
+            Log.warn("Invalid newText type:", typeof newText, newText);
+            return;
+        }
         var marker = cardElement.querySelector("." + markerClass);
-        if (!marker) return;
+        if (!marker) {
+            Log.info("Marker not found:", markerClass, "in card");
+            return;
+        }
         var oldText = marker.textContent || "";
-        if (oldText && oldText === newText) return;
+        Log.info("Old text:", oldText, "New text:", newText);
+        if (oldText && oldText === newText) {
+            Log.info("Text unchanged, skipping animation");
+            return;
+        }
         if (!oldText) {
+            Log.info("New marker created");
             marker.textContent = newText;
             marker.classList.add("digit-animating");
             setTimeout(function() {
@@ -2499,22 +3312,28 @@
                 var newWatched = parseInt(newParts[0], 10);
                 var oldTotal = oldParts[1];
                 var newTotal = newParts[1];
-                if (!isNaN(oldWatched) && !isNaN(newWatched)) if (oldTotal === newTotal && oldWatched !== newWatched) {
-                    animateDigitByDigit(marker, oldWatched, newWatched, newTotal);
-                    return;
+                if (!isNaN(oldWatched) && !isNaN(newWatched)) {
+                    if (oldTotal === newTotal && oldWatched !== newWatched) {
+                        Log.info("Progress animation:", oldWatched, "→", newWatched);
+                        animateDigitByDigit(marker, oldWatched, newWatched, newTotal);
+                        return;
+                    }
                 }
             }
         } else if (markerType === "remaining") {
             var oldRemaining = parseInt(oldText, 10);
             var newRemaining = parseInt(newText, 10);
             if (!isNaN(oldRemaining) && !isNaN(newRemaining) && oldRemaining !== newRemaining) {
+                Log.info("Remaining animation:", oldRemaining, "→", newRemaining);
                 animateCounter(marker, oldRemaining, newRemaining, "remaining");
                 return;
             }
         } else if (markerType === "next") {
+            Log.info("Next episode animation");
             animateNextEpisode(marker, oldText, newText);
             return;
         }
+        Log.info("Simple update");
         marker.textContent = newText;
         marker.classList.add("digit-animating");
         setTimeout(function() {
@@ -2522,6 +3341,14 @@
         }, 400);
     }
     function updateAllMyShowsCards(showName, showMyshowsId, newProgressMarker, newNextEpisode, newRemainingMarker) {
+        Log.info("updateAllMyShowsCards called:", {
+            showName: showName,
+            myshowsId: showMyshowsId,
+            progress: newProgressMarker,
+            remaining: newRemainingMarker,
+            nextEpisode: newNextEpisode,
+            nextEpisodeType: typeof newNextEpisode
+        });
         var cards = document.querySelectorAll(".card");
         var showNameLower = showName ? showName.toLowerCase() : "";
         cards.forEach(function(cardElement) {
@@ -2529,17 +3356,29 @@
             if (!cardData) return;
             var cardName = getCardName(cardData) || "";
             var match;
-            if (showMyshowsId && cardData.myshowsId) match = cardData.myshowsId === showMyshowsId; else match = cardName.toLowerCase() === showNameLower;
+            if (showMyshowsId && cardData.myshowsId) {
+                match = cardData.myshowsId === showMyshowsId;
+            } else {
+                match = cardName.toLowerCase() === showNameLower;
+            }
             if (match) {
-                cardData.myshowsId;
-                if (newProgressMarker) cardData.progress_marker = newProgressMarker;
-                if (newNextEpisode && typeof newNextEpisode === "string") cardData.next_episode = newNextEpisode;
-                if (newRemainingMarker) cardData.remaining = newRemainingMarker;
+                Log.info("Found card to update:", cardName, "(myshowsId:", cardData.myshowsId, ")");
+                if (newProgressMarker) {
+                    cardData.progress_marker = newProgressMarker;
+                }
+                if (newNextEpisode && typeof newNextEpisode === "string") {
+                    cardData.next_episode = newNextEpisode;
+                }
+                if (newRemainingMarker) {
+                    cardData.remaining = newRemainingMarker;
+                }
                 if (!cardElement.dataset.myshowsListeners) {
                     cardElement.addEventListener("visible", function() {
+                        Log.info("Card visible event fired (existing)");
                         addProgressMarkerToCard(cardElement, cardElement.card_data);
                     });
                     cardElement.addEventListener("update", function() {
+                        Log.info("Card update event fired (existing)");
                         addProgressMarkerToCard(cardElement, cardElement.card_data);
                     });
                     cardElement.dataset.myshowsListeners = "true";
@@ -2551,6 +3390,7 @@
         });
     }
     function animateDigitByDigit(container, startNum, endNum, totalEpisodes) {
+        Log.info("animateDigitByDigit:", startNum, "→", endNum, "/", totalEpisodes);
         if (startNum === endNum) {
             container.classList.add("digit-animating");
             setTimeout(function() {
@@ -2574,11 +3414,13 @@
                 } else if (direction === "down" && current > endNum) {
                     current--;
                     setTimeout(updateDigit, speed);
-                } else setTimeout(function() {
-                    container.style.color = "";
-                    container.style.backgroundColor = "";
-                    container.className = originalClasses;
-                }, 200);
+                } else {
+                    setTimeout(function() {
+                        container.style.color = "";
+                        container.style.backgroundColor = "";
+                        container.className = originalClasses;
+                    }, 200);
+                }
             }, 80);
         }
         updateDigit();
@@ -2615,20 +3457,27 @@
             })();
         }, movie);
     }
-    if (window.Lampa && Lampa.Player && Lampa.Player.listener) Lampa.Player.listener.follow("destroy", function() {
-        if (!Lampa.Storage.get("myshows_was_watching", false)) return;
-        var act = Lampa.Activity.active && Lampa.Activity.active();
-        if (!act || act.component === "full" || !act.movie) return;
-        var movie = act.movie;
-        setTimeout(function() {
-            fetchFromMyShowsAPI(function() {
-                addNextEpisodeToExplorer(movie);
-            });
-        }, 3e3);
-    });
+    if (window.Lampa && Lampa.Player && Lampa.Player.listener) {
+        Lampa.Player.listener.follow("destroy", function() {
+            if (!Lampa.Storage.get("myshows_was_watching", false)) return;
+            var act = Lampa.Activity.active && Lampa.Activity.active();
+            if (!act || act.component === "full" || !act.movie) return;
+            var movie = act.movie;
+            setTimeout(function() {
+                fetchFromMyShowsAPI(function() {
+                    addNextEpisodeToExplorer(movie);
+                });
+            }, 3e3);
+        });
+    }
     Lampa.Listener.follow("activity", function(event) {
-        event.type, event.component;
-        if (event.type === "start" && event.component !== "full" && event.object && event.object.movie) addNextEpisodeToExplorer(event.object.movie);
+        Log.info("Activity event:", {
+            type: event.type,
+            component: event.component
+        });
+        if (event.type === "start" && event.component !== "full" && event.object && event.object.movie) {
+            addNextEpisodeToExplorer(event.object.movie);
+        }
         if (event.type === "start" && (event.component === "main" || event.component === "category") && _myShowsDirty) {
             _myShowsDirty = false;
             setTimeout(reconcileMyShowsLine, 100);
@@ -2639,8 +3488,12 @@
                 var originalName = currentCard.original_name || currentCard.original_title || currentCard.title;
                 var previousCard = Lampa.Storage.get("myshows_current_card", null);
                 var wasWatching = Lampa.Storage.get("myshows_was_watching", false);
-                previousCard && (previousCard.original_name || previousCard.original_title || previousCard.title), 
-                currentCard.number_of_seasons > 0 || currentCard.seasons;
+                Log.info("Full start debug:", {
+                    originalName: originalName,
+                    previousCard: previousCard ? previousCard.original_name || previousCard.original_title || previousCard.title : null,
+                    wasWatching: wasWatching,
+                    isSerial: currentCard.number_of_seasons > 0 || currentCard.seasons
+                });
                 Lampa.Storage.set("myshows_current_card", currentCard);
                 if (previousCard && (previousCard.original_name || previousCard.original_title || previousCard.title) === originalName && wasWatching) {
                     var isSerial = currentCard.number_of_seasons > 0 || currentCard.seasons;
@@ -2666,8 +3519,14 @@
                         findShowInCache("unwatched_serials", "shows", needle, function(foundShow) {
                             if (foundShow) {
                                 var existingCard = findCardInMyShowsSection(originalName, foundShow.myshowsId);
-                                if (existingCard && foundShow.progress_marker) updateAllMyShowsCards(originalName, foundShow.myshowsId, foundShow.progress_marker, foundShow.next_episode, foundShow.remaining); else if (!existingCard) insertNewCardIntoMyShowsSection(foundShow);
-                            } else updateCompletedShowCard(originalName);
+                                if (existingCard && foundShow.progress_marker) {
+                                    updateAllMyShowsCards(originalName, foundShow.myshowsId, foundShow.progress_marker, foundShow.next_episode, foundShow.remaining);
+                                } else if (!existingCard) {
+                                    insertNewCardIntoMyShowsSection(foundShow);
+                                }
+                            } else {
+                                updateCompletedShowCard(originalName);
+                            }
                         }, lastCard);
                     });
                 }, 3e3);
@@ -2675,7 +3534,9 @@
                 var originalName = currentCard.original_name || currentCard.original_title || currentCard.title;
                 var currentMyshowsId = currentCard.myshowsId;
                 findShowInCache("unwatched_serials", "shows", currentMyshowsId || originalName, function(foundShow) {
-                    if (foundShow && foundShow.progress_marker) updateAllMyShowsCards(originalName, foundShow.myshowsId, foundShow.progress_marker, foundShow.next_episode, foundShow.remaining);
+                    if (foundShow && foundShow.progress_marker) {
+                        updateAllMyShowsCards(originalName, foundShow.myshowsId, foundShow.progress_marker, foundShow.next_episode, foundShow.remaining);
+                    }
                 }, currentCard);
             }
             localStorage.removeItem("myshows_current_card");
@@ -2687,7 +3548,9 @@
             var originalName = movie.original_name || movie.name || movie.title;
             findShowInCache("unwatched_serials", "shows", originalName, function(foundShow) {
                 if (!isSameFullCardOpen(movie)) return;
-                if (foundShow && foundShow.progress_marker) updateFullCardMarkers(foundShow, event.body);
+                if (foundShow && foundShow.progress_marker) {
+                    updateFullCardMarkers(foundShow, event.body);
+                }
             }, movie);
         }
     });
@@ -2701,37 +3564,72 @@
     }
     function computeNextUnwatchedEpisode(card) {
         var tmdbKey = card && card.id ? String(card.id) : "";
-        if (!tmdbKey) return;
+        if (!tmdbKey) return undefined;
         var map = Lampa.Storage.get(MAP_KEY, {});
         var best = null, hasData = false;
         for (var k in map) {
             if (!map.hasOwnProperty(k)) continue;
             var e = map[k];
             if (!e || String(e.tmdbId) !== tmdbKey) continue;
-            if (e.seasonNumber === void 0 || e.episodeNumber === void 0) continue;
+            if (e.seasonNumber === undefined || e.episodeNumber === undefined) continue;
             hasData = true;
             if (!_unwatchedEpisodeIds[parseInt(e.episodeId)]) continue;
-            if (!best || e.seasonNumber < best.seasonNumber || e.seasonNumber === best.seasonNumber && e.episodeNumber < best.episodeNumber) best = e;
+            if (!best || e.seasonNumber < best.seasonNumber || e.seasonNumber === best.seasonNumber && e.episodeNumber < best.episodeNumber) {
+                best = e;
+            }
         }
-        if (!hasData) return;
+        if (!hasData) return undefined;
         if (!best) return null;
         return "S" + padTwo(best.seasonNumber) + "/E" + padTwo(best.episodeNumber);
     }
-    function applyEpisodeMarkLocally(card, episodeId, watched) {
+    function applyEpisodeMarkLocally(card, episodeId, watched, channelRequest) {
+        if (!channelContextCurrent(channelRequest)) return;
+        function recordHistory(id) {
+            if (!id) return;
+            var historyMap = relevanceHistory();
+            var historyEntry = historyMap[id] || {};
+            historyEntry.version = (historyEntry.version || 0) + 1;
+            if (watched) {
+                historyEntry.watch = Date.now();
+                historyEntry.checked = Date.now();
+            } else historyEntry.checked = 0;
+            historyMap[id] = historyEntry;
+            setProfileSetting("myshows_relevance_history", historyMap, false);
+        }
+        var historyId = card.myshowsId;
+        if (!historyId && _channelShows) {
+            var knownShow = matchShowInArray(_channelShows, card);
+            if (knownShow) historyId = knownShow.myshowsId;
+        }
+        recordHistory(historyId);
+        if (!watched && historyId) prepareRelevance([ {
+            myshowsId: historyId
+        } ], channelRequest, function() {
+            if (_channelShows) publishAndroidChannel(_channelShows, channelRequest);
+            reorderCardsInMyShowsSection();
+        });
         episodeId = parseInt(episodeId);
         scheduleEpisodeBadgeDecorate();
         loadCacheFromServer("unwatched_serials", "shows", function(result) {
+            if (!channelContextCurrent(channelRequest)) return;
             var arr = result && result.shows;
             if (!arr) return;
             var show = matchShowInArray(arr, card);
+            if (!historyId && show) recordHistory(show.myshowsId);
+            if (!show && !watched && (getProfileSetting("myshows_sort_order", "progress") === "relevance" || channelSupported() && channelEnabled()) && channelContextCurrent(channelRequest)) {
+                fetchFromMyShowsAPI(function() {}, channelRequest);
+                return;
+            }
             if (!show || !show.progress_marker || show.progress_marker.indexOf("/") === -1) return;
             var pp = show.progress_marker.split("/");
             var watchedCount = parseInt(pp[0], 10);
             var released = parseInt(pp[1], 10);
             if (isNaN(watchedCount) || isNaN(released) || !released) return;
-            if (watched && show.unwatchedEpisodes && show.unwatchedEpisodes.length) show.unwatchedEpisodes = show.unwatchedEpisodes.filter(function(e) {
-                return e && parseInt(e.id) !== episodeId;
-            });
+            if (watched && show.unwatchedEpisodes && show.unwatchedEpisodes.length) {
+                show.unwatchedEpisodes = show.unwatchedEpisodes.filter(function(e) {
+                    return e && parseInt(e.id) !== episodeId;
+                });
+            }
             watchedCount += watched ? 1 : -1;
             if (watchedCount < 0) watchedCount = 0;
             if (watchedCount > released) watchedCount = released;
@@ -2745,16 +3643,22 @@
                 if (idx > -1) arr.splice(idx, 1);
                 saveCacheToServer({
                     shows: arr
-                }, "unwatched_serials", function() {}, getProfileId());
+                }, "unwatched_serials", function() {}, channelRequest.profile, channelRequest, {
+                    show: show,
+                    remove: true
+                });
                 if (isSameFullCardOpen(card)) completeFullCardMarkers(card);
                 updateCompletedShowCard(showName, show.myshowsId);
                 return;
             }
             var nextEp = computeNextUnwatchedEpisode(card);
-            if (nextEp !== void 0) show.next_episode = nextEp;
+            if (nextEp !== undefined) show.next_episode = nextEp;
             saveCacheToServer({
                 shows: arr
-            }, "unwatched_serials", function() {}, getProfileId());
+            }, "unwatched_serials", function() {}, channelRequest.profile, channelRequest, {
+                show: show,
+                remove: false
+            });
             if (isSameFullCardOpen(card)) updateFullCardMarkers(show);
             updateAllMyShowsCards(showName, show.myshowsId, show.progress_marker, show.next_episode, show.remaining);
             var act = Lampa.Activity.active && Lampa.Activity.active();
@@ -2771,28 +3675,48 @@
                 if (!isSameFullCardOpen(currentCard)) return;
                 var cacheType = response && response.cache_type;
                 var status;
-                if (isSerial) if (cacheType === "watchlist") status = "later"; else if (cacheType === "watching" || cacheType === "cancelled") status = cacheType; else status = "remove"; else if (cacheType === "watched") status = "finished"; else if (cacheType === "watchlist") status = "later"; else status = "remove";
+                if (isSerial) {
+                    if (cacheType === "watchlist") status = "later"; else if (cacheType === "watching" || cacheType === "cancelled") status = cacheType; else status = "remove";
+                } else {
+                    if (cacheType === "watched") status = "finished"; else if (cacheType === "watchlist") status = "later"; else status = "remove";
+                }
                 updateButtonStates(status, !isSerial, true);
             }, function() {});
-            if (isSerial) findShowInCache("unwatched_serials", "shows", originalName, function(foundShow) {
-                if (!isSameFullCardOpen(currentCard)) return;
-                if (foundShow && (foundShow.progress_marker || foundShow.next_episode || foundShow.remaining)) updateFullCardMarkers(foundShow); else if (!foundShow) completeFullCardMarkers(currentCard);
-            }, currentCard);
+            if (isSerial) {
+                findShowInCache("unwatched_serials", "shows", originalName, function(foundShow) {
+                    if (!isSameFullCardOpen(currentCard)) return;
+                    if (foundShow && (foundShow.progress_marker || foundShow.next_episode || foundShow.remaining)) {
+                        updateFullCardMarkers(foundShow);
+                    } else if (!foundShow) {
+                        completeFullCardMarkers(currentCard);
+                    }
+                }, currentCard);
+            }
             return;
         }
         if (isSerial) {
             findShowInCache("unwatched_serials", "shows", originalName, function(foundShow) {
                 if (!isSameFullCardOpen(currentCard)) return;
-                if (foundShow && (foundShow.progress_marker || foundShow.next_episode || foundShow.remaining)) updateFullCardMarkers(foundShow); else if (!foundShow) completeFullCardMarkers(currentCard);
+                if (foundShow && (foundShow.progress_marker || foundShow.next_episode || foundShow.remaining)) {
+                    updateFullCardMarkers(foundShow);
+                } else if (!foundShow) {
+                    completeFullCardMarkers(currentCard);
+                }
             }, currentCard);
             findShowInCache("serial_status", "shows", originalName, function(foundShow) {
                 if (!isSameFullCardOpen(currentCard)) return;
-                if (foundShow) updateButtonStates(foundShow.watchStatus, false, true);
+                if (foundShow) {
+                    updateButtonStates(foundShow.watchStatus, false, true);
+                }
             });
-        } else findShowInCache("movie_status", "movies", originalName, function(foundMovie) {
-            if (!isSameFullCardOpen(currentCard)) return;
-            if (foundMovie) updateButtonStates(foundMovie.watchStatus, true, true);
-        });
+        } else {
+            findShowInCache("movie_status", "movies", originalName, function(foundMovie) {
+                if (!isSameFullCardOpen(currentCard)) return;
+                if (foundMovie) {
+                    updateButtonStates(foundMovie.watchStatus, true, true);
+                }
+            });
+        }
     }
     function updateFullCardMarkers(showData, bodyElement) {
         var posterElement = bodyElement ? bodyElement.find(".full-start-new__poster") : $(".full-start-new__poster");
@@ -2823,9 +3747,21 @@
         var showProgress = !disabled && getProfileSetting("myshows_badge_progress", false);
         var showRemaining = !disabled && getProfileSetting("myshows_badge_remaining", false);
         var showNext = !disabled && getProfileSetting("myshows_badge_next", false);
-        if (showData.progress_marker && (showProgress === true || showProgress === "true")) if (existingProgress) animateFullCardMarker(existingProgress, showData.progress_marker, "progress"); else addMarker("myshows-progress", showData.progress_marker); else if (existingProgress) existingProgress.remove();
-        if (showData.remaining !== void 0 && showData.remaining !== null && (showRemaining === true || showRemaining === "true")) if (existingRemaining) animateFullCardMarker(existingRemaining, showData.remaining.toString(), "remaining"); else addMarker("myshows-remaining", showData.remaining); else if (existingRemaining) existingRemaining.remove();
-        if (showData.next_episode && (showNext === true || showNext === "true")) if (existingNext) animateFullCardMarker(existingNext, showData.next_episode, "next"); else addMarker("myshows-next-episode", showData.next_episode); else if (existingNext) existingNext.remove();
+        if (showData.progress_marker && (showProgress === true || showProgress === "true")) {
+            if (existingProgress) animateFullCardMarker(existingProgress, showData.progress_marker, "progress"); else addMarker("myshows-progress", showData.progress_marker);
+        } else if (existingProgress) {
+            existingProgress.remove();
+        }
+        if (showData.remaining !== undefined && showData.remaining !== null && (showRemaining === true || showRemaining === "true")) {
+            if (existingRemaining) animateFullCardMarker(existingRemaining, showData.remaining.toString(), "remaining"); else addMarker("myshows-remaining", showData.remaining);
+        } else if (existingRemaining) {
+            existingRemaining.remove();
+        }
+        if (showData.next_episode && (showNext === true || showNext === "true")) {
+            if (existingNext) animateFullCardMarker(existingNext, showData.next_episode, "next"); else addMarker("myshows-next-episode", showData.next_episode);
+        } else if (existingNext) {
+            existingNext.remove();
+        }
     }
     function completeFullCardMarkers(currentCard) {
         if (currentCard && !isSameFullCardOpen(currentCard)) return;
@@ -2838,7 +3774,9 @@
         if (!progress && !remaining && !next) return;
         if (progress) {
             var parts = (progress.textContent || "").split("/");
-            if (parts.length === 2 && parts[1]) animateFullCardMarker(progress, parts[1] + "/" + parts[1], "progress");
+            if (parts.length === 2 && parts[1]) {
+                animateFullCardMarker(progress, parts[1] + "/" + parts[1], "progress");
+            }
         }
         if (remaining) animateFullCardMarker(remaining, "0", "remaining");
         setTimeout(function() {
@@ -2859,16 +3797,18 @@
         var showName = card.original_name || card.original_title || card.title || card.name;
         var myshowsId = card.myshowsId;
         var poster = $(".full-start-new__poster")[0];
-        if (poster) [ ".myshows-progress", ".myshows-remaining", ".myshows-next-episode" ].forEach(function(sel) {
-            var el = poster.querySelector(sel);
-            if (!el) return;
-            el.style.transition = "opacity 0.4s ease, transform 0.4s ease";
-            el.style.opacity = "0";
-            el.style.transform = "translateY(10px)";
-            setTimeout(function() {
-                if (el.parentNode) el.remove();
-            }, 400);
-        });
+        if (poster) {
+            [ ".myshows-progress", ".myshows-remaining", ".myshows-next-episode" ].forEach(function(sel) {
+                var el = poster.querySelector(sel);
+                if (!el) return;
+                el.style.transition = "opacity 0.4s ease, transform 0.4s ease";
+                el.style.opacity = "0";
+                el.style.transform = "translateY(10px)";
+                setTimeout(function() {
+                    if (el.parentNode) el.remove();
+                }, 400);
+            });
+        }
         removeMarkersFromAllCards(showName, myshowsId);
         var cardEl = findCardInMyShowsSection(showName, myshowsId);
         if (cardEl) {
@@ -2879,6 +3819,7 @@
                 var prevMain = neighborCard(allCards, idx);
                 if (prevMain) _myShowsLine.last = prevMain;
             }
+            Log.info('[MS-guard] Сериал ушёл из Смотрю → удаляем карточку из "Непросмотренные" (' + showName + ")");
             removeCompletedCard(cardEl, showName, parentSection, idx);
         }
         removeShowCardFromActiveView(card);
@@ -2895,24 +3836,30 @@
                 var el = cards[i];
                 if (!el.card_data || el.dataset && el.dataset.removing === "true") continue;
                 var stale = true;
-                for (var j = 0; j < shows.length; j++) if (sameShow(shows[j], el.card_data)) {
-                    stale = false;
-                    break;
+                for (var j = 0; j < shows.length; j++) {
+                    if (sameShow(shows[j], el.card_data)) {
+                        stale = false;
+                        break;
+                    }
                 }
                 var afterMore = moreBtn && moreBtn.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING;
                 if (stale || afterMore) {
                     el.dataset.removing = "true";
                     var all = section.querySelectorAll(".card");
                     var idx = [].slice.call(all).indexOf(el);
-                    getCardName(el.card_data);
+                    Log.info("[MS-guard] reconcile: убираем карточку с главной (" + getCardName(el.card_data) + (afterMore ? ", после Еще" : ", устарела") + ")");
                     removeCompletedCard(el, getCardName(el.card_data), section, idx);
                 }
             }
         });
     }
     function neighborCard(cards, i) {
-        for (var p = i - 1; p >= 0; p--) if (cards[p] && !(cards[p].dataset && cards[p].dataset.removing === "true")) return cards[p];
-        for (var n = i + 1; n < cards.length; n++) if (cards[n] && !(cards[n].dataset && cards[n].dataset.removing === "true")) return cards[n];
+        for (var p = i - 1; p >= 0; p--) {
+            if (cards[p] && !(cards[p].dataset && cards[p].dataset.removing === "true")) return cards[p];
+        }
+        for (var n = i + 1; n < cards.length; n++) {
+            if (cards[n] && !(cards[n].dataset && cards[n].dataset.removing === "true")) return cards[n];
+        }
         return null;
     }
     function removeShowCardFromActiveView(card) {
@@ -2931,7 +3878,7 @@
                 if (cards[i].dataset && cards[i].dataset.removing === "true") continue;
                 if (sameShow(cards[i].card_data, card)) {
                     cards[i].dataset.removing = "true";
-                    a.component;
+                    Log.info('[MS-guard] Удаляем карточку со страницы "Еще" (' + name + ", " + a.component + ", active=" + isActivePage + ")");
                     if (isActivePage) {
                         var cont = cards[i].parentNode;
                         var all = cont ? cont.querySelectorAll(".card") : [];
@@ -2940,7 +3887,10 @@
                     } else {
                         var prevDom = neighborCard(cards, i);
                         var comp = a.activity && a.activity.component;
-                        if (prevDom && comp) comp.last = prevDom;
+                        if (prevDom && comp) {
+                            comp.last = prevDom;
+                            Log.info('[MS-guard] "Еще": фокус-цель → предыдущая карточка');
+                        }
                         (function(el) {
                             el.style.transition = "opacity 0.4s ease, transform 0.4s ease";
                             el.style.opacity = "0";
@@ -2964,10 +3914,17 @@
             if (foundShow && (foundShow.progress_marker || foundShow.next_episode || foundShow.remaining)) {
                 if (isSameFullCardOpen(card)) updateFullCardMarkers(foundShow);
                 updateAllMyShowsCards(showName, foundShow.myshowsId, foundShow.progress_marker, foundShow.next_episode, foundShow.remaining);
-                if (!findCardInMyShowsSection(showName, foundShow.myshowsId)) insertNewCardIntoMyShowsSection(foundShow);
-            } else if (attempt < 6) setTimeout(function() {
-                addUnwatchedTraces(card, attempt + 1);
-            }, 2e3);
+                if (!findCardInMyShowsSection(showName, foundShow.myshowsId)) {
+                    insertNewCardIntoMyShowsSection(foundShow);
+                }
+                Log.info('[MS-guard] Сериал добавлен в Смотрю → метки + карточка в "Непросмотренные" (' + showName + ")");
+            } else if (attempt < 6) {
+                setTimeout(function() {
+                    addUnwatchedTraces(card, attempt + 1);
+                }, 2e3);
+            } else {
+                Log.warn("[MS-guard] addUnwatchedTraces: сериал не появился в unwatched_serials за отведённое время (" + showName + ")");
+            }
         }, card);
     }
     function removeMarkersFromAllCards(showName, showMyshowsId) {
@@ -2997,11 +3954,18 @@
             });
             n++;
         });
-        if (n) ;
+        if (n) Log.info("[MS-guard] Сняты метки со всех линий: " + n + " карточек (" + showName + ")");
     }
     function animateFullCardMarker(markerElement, newValue, markerType) {
         var oldValue = markerElement.textContent || "";
-        if (oldValue === newValue) return;
+        Log.info("=== animateFullCardMarker START ===");
+        Log.info("Type:", markerType, "Old:", oldValue, "New:", newValue);
+        Log.info("Container exists:", !!markerElement);
+        if (oldValue === newValue) {
+            Log.info("Marker unchanged:", markerType, oldValue);
+            return;
+        }
+        Log.info("Animating", markerType, "from", oldValue, "to", newValue);
         if (!oldValue.trim()) {
             markerElement.textContent = newValue;
             markerElement.classList.add("digit-animating");
@@ -3041,6 +4005,7 @@
         }, 400);
     }
     function animateCounter(container, startNum, endNum, type) {
+        Log.info("animateCounter:", type, startNum, "→", endNum);
         if (startNum === endNum) {
             container.classList.add("counter-pulse");
             setTimeout(function() {
@@ -3066,12 +4031,22 @@
         updateCounter();
     }
     function animateNextEpisode(container, oldEpisode, newEpisode) {
+        Log.info(">>> animateNextEpisode START:", {
+            oldEpisode: oldEpisode,
+            newEpisode: newEpisode,
+            areEqual: oldEpisode === newEpisode
+        });
         var oldTrimmed = (oldEpisode || "").toString().trim();
         var newTrimmed = (newEpisode || "").toString().trim();
-        if (oldTrimmed === newTrimmed) return;
+        if (oldTrimmed === newTrimmed) {
+            Log.info("Episode unchanged, skipping animation");
+            return;
+        }
+        Log.info("Parsing episodes...");
         var oldMatch = oldTrimmed.match(/S(\d+)\/E(\d+)/);
         var newMatch = newTrimmed.match(/S(\d+)\/E(\d+)/);
         if (!oldMatch || !newMatch) {
+            Log.info("Not episode format or parsing failed");
             simpleUpdate(container, newTrimmed);
             return;
         }
@@ -3079,21 +4054,36 @@
         var oldEpNum = parseInt(oldMatch[2], 10);
         var newSeason = parseInt(newMatch[1], 10);
         var newEpNum = parseInt(newMatch[2], 10);
+        Log.info("Parsed values:", {
+            oldSeason: oldSeason,
+            oldEpNum: oldEpNum,
+            newSeason: newSeason,
+            newEpNum: newEpNum
+        });
         if (newSeason < oldSeason) {
+            Log.info("Rule 1: Season decreased");
             countDownEpisodes(container, oldSeason, oldEpNum, newSeason, newEpNum);
             return;
         }
         if (newSeason > oldSeason) {
+            Log.info("Rule 2: Season increased");
             animateSeasonTransition(container, oldSeason, oldEpNum, newSeason, newEpNum);
             return;
         }
         if (oldSeason === newSeason && oldEpNum !== newEpNum) {
-            if (oldEpNum < newEpNum) animateInSameSeason(container, oldSeason, oldEpNum, newEpNum, "forward"); else animateInSameSeason(container, oldSeason, oldEpNum, newEpNum, "backward");
+            Log.info("Rule 3: Same season, episode changed");
+            if (oldEpNum < newEpNum) {
+                animateInSameSeason(container, oldSeason, oldEpNum, newEpNum, "forward");
+            } else {
+                animateInSameSeason(container, oldSeason, oldEpNum, newEpNum, "backward");
+            }
             return;
         }
+        Log.info("Rule 4: No significant change");
         simpleUpdate(container, newTrimmed);
     }
     function countDownEpisodes(container, oldSeason, oldEpNum, newSeason, newEpNum) {
+        Log.info("countDownEpisodes:", oldSeason, oldEpNum, "→", newSeason, newEpNum);
         var currentSeason = oldSeason;
         var currentEp = oldEpNum;
         var speed = 250;
@@ -3115,12 +4105,15 @@
                 } else if (currentSeason === newSeason && currentEp > newEpNum) {
                     currentEp--;
                     setTimeout(update, speed);
+                } else {
+                    Log.info("Countdown complete:", currentSeason, "/", currentEp);
                 }
             }, 80);
         }
         update();
     }
     function simpleUpdate(container, text) {
+        Log.info("simpleUpdate:", text);
         container.textContent = text;
         container.classList.add("digit-animating");
         setTimeout(function() {
@@ -3128,6 +4121,7 @@
         }, 400);
     }
     function animateSeasonTransition(container, oldSeason, oldEpNum, newSeason, newEpNum) {
+        Log.info("animateSeasonTransition:", oldSeason, oldEpNum, "→", newSeason, newEpNum);
         var speed = 250;
         var currentSeason = oldSeason;
         var currentEp = oldEpNum;
@@ -3143,29 +4137,40 @@
                 } else if (currentSeason === newSeason && currentEp < newEpNum) {
                     currentEp++;
                     setTimeout(update, speed);
+                } else {
+                    Log.info("Season transition complete");
                 }
             }, 80);
         }
         update();
     }
     function animateInSameSeason(container, season, startEp, endEp, direction) {
+        Log.info("animateInSameSeason:", season, startEp, "→", endEp, "direction:", direction);
         var seasonPrefix = "S" + padTwo(season) + "/E";
         var current = startEp;
         var speed = 250;
+        Log.info("Starting counter with prefix:", seasonPrefix);
         function update() {
             var epStr = padTwo(current);
             var fullText = seasonPrefix + epStr;
+            Log.info("Update step:", current, "->", fullText);
             container.textContent = fullText;
             setTimeout(function() {
                 var shouldContinue = false;
                 if (direction === "forward" && current < endEp) {
                     current++;
                     shouldContinue = true;
+                    Log.info("Moving forward to:", current);
                 } else if (direction === "backward" && current > endEp) {
                     current--;
                     shouldContinue = true;
+                    Log.info("Moving backward to:", current);
+                } else {
+                    Log.info("Counter complete at:", current);
                 }
-                if (shouldContinue) setTimeout(update, speed);
+                if (shouldContinue) {
+                    setTimeout(update, speed);
+                }
             }, 80);
         }
         update();
@@ -3177,15 +4182,20 @@
             var cardElement = cards[i];
             var cardData = cardElement.card_data || {};
             var match;
-            if (showMyshowsId && cardData.myshowsId) match = cardData.myshowsId === showMyshowsId; else {
+            if (showMyshowsId && cardData.myshowsId) {
+                match = cardData.myshowsId === showMyshowsId;
+            } else {
                 var cardName = getCardName(cardData) || "";
                 match = cardName.toLowerCase() === showNameLower;
             }
             if (match && cardData.progress_marker) {
+                Log.info("Found matching card for:", showName, "(myshowsId:", showMyshowsId, ")");
                 cardElement.dataset.removing = "true";
                 var releasedEpisodes = cardData.released_count;
                 var totalEpisodes = cardData.total_count;
-                if (!releasedEpisodes && cardData.progress_marker && cardData.progress_marker.indexOf("/") > -1) releasedEpisodes = parseInt(cardData.progress_marker.split("/")[1], 10);
+                if (!releasedEpisodes && cardData.progress_marker && cardData.progress_marker.indexOf("/") > -1) {
+                    releasedEpisodes = parseInt(cardData.progress_marker.split("/")[1], 10);
+                }
                 if (releasedEpisodes) {
                     var newProgressMarker = releasedEpisodes + "/" + releasedEpisodes;
                     cardData.progress_marker = newProgressMarker;
@@ -3216,7 +4226,11 @@
         var nextCard = null;
         if (isCurrentlyFocused) {
             var allCards = parentSection.querySelectorAll(".card");
-            if (cardIndex > 0) nextCard = allCards[cardIndex - 1]; else if (cardIndex < allCards.length - 1) nextCard = allCards[cardIndex + 1];
+            if (cardIndex > 0) {
+                nextCard = allCards[cardIndex - 1];
+            } else if (cardIndex < allCards.length - 1) {
+                nextCard = allCards[cardIndex + 1];
+            }
         }
         var foreground = isRowActivityForeground(parentSection);
         cardElement.style.transition = "opacity 0.5s ease, transform 0.5s ease";
@@ -3225,13 +4239,21 @@
             if (cardElement && cardElement.parentNode) {
                 cardElement.remove();
                 if (nextCard && window.Lampa && window.Lampa.Controller) {
-                    if (foreground) setTimeout(function() {
-                        Lampa.Controller.collectionSet(parentSection);
-                        Lampa.Controller.collectionFocus(nextCard, parentSection);
-                    }, 50); else if (window.Lampa.Utils) Lampa.Utils.trigger(nextCard, "hover:focus");
-                } else if (isCurrentlyFocused && foreground) setTimeout(function() {
-                    if (window.Lampa && window.Lampa.Controller) Lampa.Controller.collectionSet(parentSection);
-                }, 50);
+                    if (foreground) {
+                        setTimeout(function() {
+                            Lampa.Controller.collectionSet(parentSection);
+                            Lampa.Controller.collectionFocus(nextCard, parentSection);
+                        }, 50);
+                    } else if (window.Lampa.Utils) {
+                        Lampa.Utils.trigger(nextCard, "hover:focus");
+                    }
+                } else if (isCurrentlyFocused && foreground) {
+                    setTimeout(function() {
+                        if (window.Lampa && window.Lampa.Controller) {
+                            Lampa.Controller.collectionSet(parentSection);
+                        }
+                    }, 50);
+                }
             }
         }, 500);
     }
@@ -3239,7 +4261,9 @@
         var titleElements = document.querySelectorAll(".items-line__title");
         for (var i = 0; i < titleElements.length; i++) {
             var titleText = titleElements[i].textContent || titleElements[i].innerText;
-            if (titleText.indexOf("MyShows") !== -1) return titleElements[i].closest(".items-line");
+            if (titleText.indexOf("MyShows") !== -1) {
+                return titleElements[i].closest(".items-line");
+            }
         }
         return null;
     }
@@ -3272,7 +4296,9 @@
         for (var i = 0; i < an.length; i++) {
             if (!an[i]) continue;
             var x = String(an[i]).toLowerCase();
-            for (var j = 0; j < bn.length; j++) if (bn[j] && String(bn[j]).toLowerCase() === x) return true;
+            for (var j = 0; j < bn.length; j++) {
+                if (bn[j] && String(bn[j]).toLowerCase() === x) return true;
+            }
         }
         return false;
     }
@@ -3280,10 +4306,14 @@
         var section = findMyShowsSection();
         if (section) {
             var cards = section.querySelectorAll(".card");
-            for (var i = 0; i < cards.length; i++) if (sameShow(cards[i].card_data, showData)) return true;
+            for (var i = 0; i < cards.length; i++) {
+                if (sameShow(cards[i].card_data, showData)) return true;
+            }
         }
         var arr = line.data && line.data.results || [];
-        for (var k = 0; k < arr.length; k++) if (sameShow(arr[k], showData)) return true;
+        for (var k = 0; k < arr.length; k++) {
+            if (sameShow(arr[k], showData)) return true;
+        }
         return false;
     }
     function insertViaLine(showData) {
@@ -3297,7 +4327,10 @@
             return false;
         }
         if (!dom || !document.body.contains(dom)) return false;
-        if (showAlreadyInLine(line, showData)) return true;
+        if (showAlreadyInLine(line, showData)) {
+            Log.info("[MS-line] insertViaLine: дубль, пропуск");
+            return true;
+        }
         try {
             line.emit("createAndAppend", showData);
             var item = line.items && line.items[line.items.length - 1];
@@ -3314,18 +4347,34 @@
                 addProgressMarkerToCard(el, showData);
             }
         } catch (e) {
+            Log.error("insertViaLine error", e);
             return false;
         }
         return true;
     }
     function insertNewCardIntoMyShowsSection(showData, retryCount) {
-        if (showData && showData._renderToken !== void 0 && showData._renderToken !== _profileRenderToken) return;
-        if (showData && !showData.release_date && showData.first_air_date) showData.release_date = showData.first_air_date;
-        showData.name || showData.title, showData.progress_marker, showData.remaining, showData.next_episode;
-        if (insertViaLine(showData)) return;
-        if (typeof retryCount === "undefined") retryCount = 0;
+        if (showData && showData._renderToken !== undefined && showData._renderToken !== _profileRenderToken) {
+            Log.info("insertNewCardIntoMyShowsSection: пропущено — карточка от другого профиля");
+            return;
+        }
+        if (showData && !showData.release_date && showData.first_air_date) {
+            showData.release_date = showData.first_air_date;
+        }
+        Log.info("insertNewCardIntoMyShowsSection called with:", {
+            name: showData.name || showData.title,
+            progress_marker: showData.progress_marker,
+            remaining: showData.remaining,
+            next_episode: showData.next_episode
+        });
+        if (insertViaLine(showData)) {
+            Log.info("Card inserted via line instance");
+            return;
+        }
+        if (typeof retryCount === "undefined") {
+            retryCount = 0;
+        }
         if (retryCount > 5) {
-            showData.name || showData.title;
+            Log.error("Max retries reached for:", showData.name || showData.title);
             return;
         }
         var titleElements = document.querySelectorAll(".items-line__title");
@@ -3338,24 +4387,32 @@
             }
         }
         if (!targetSection) {
+            Log.warn("MyShows section not found, retrying in 500ms... (attempt " + (retryCount + 1) + ")");
             setTimeout(function() {
                 insertNewCardIntoMyShowsSection(showData, retryCount + 1);
             }, 500);
             return;
         }
+        Log.info("Found MyShows section");
         var scrollElement = targetSection.querySelector(".scroll");
-        if (!scrollElement) return;
+        if (!scrollElement) {
+            Log.error("Scroll element not found");
+            return;
+        }
         if (!scrollElement.Scroll) {
+            Log.warn("Scroll.Scroll not available, retrying in 500ms... (attempt " + (retryCount + 1) + ")");
             setTimeout(function() {
                 insertNewCardIntoMyShowsSection(showData, retryCount + 1);
             }, 500);
             return;
         }
         var scroll = scrollElement.Scroll;
+        Log.info("Scroll object available");
         try {
             var newCard = Lampa.Maker.make("Card", showData, function(module) {
                 return module.only("Card", "Release", "Callback");
             });
+            Log.info("Card created");
             newCard.use({
                 onEnter: function(html, data) {
                     Lampa.Activity.push({
@@ -3377,15 +4434,25 @@
             newCard.create();
             var cardElement = newCard.render(true);
             if (cardElement) {
+                Log.info("Card rendered");
                 var domEl = cardElement[0] || cardElement;
                 domEl.card_data = showData;
                 scroll.append(cardElement);
+                Log.info("Card appended to scroll");
                 reorderCardsInMyShowsSection();
                 addProgressMarkerToCard(cardElement, showData);
                 newCard.visible();
-                if (window.Lampa && window.Lampa.Controller) window.Lampa.Controller.collectionAppend(cardElement);
+                if (window.Lampa && window.Lampa.Controller) {
+                    window.Lampa.Controller.collectionAppend(cardElement);
+                    Log.info("Card added to controller collection");
+                }
+                Log.info("Card successfully added to DOM");
+            } else {
+                Log.error("Card element is null after render");
             }
-        } catch (error) {}
+        } catch (error) {
+            Log.error("Error creating card:", error);
+        }
     }
     function addProgressMarkerStyles() {
         var style = document.createElement("style");
@@ -3413,7 +4480,7 @@
             if (!map.hasOwnProperty(k)) continue;
             var e = map[k];
             if (!e || String(e.tmdbId) !== String(tmdbKey)) continue;
-            if (e.seasonNumber === void 0 || e.episodeNumber === void 0) continue;
+            if (e.seasonNumber === undefined || e.episodeNumber === undefined) continue;
             lookup["h:" + e.hash] = e;
             lookup["se:" + e.seasonNumber + "_" + e.episodeNumber] = e;
         }
@@ -3448,10 +4515,14 @@
                 imgBox.appendChild(badge);
                 if (imgBox === cardEl) {
                     var thumb = cardEl.querySelector("img");
-                    if (thumb && thumb.offsetWidth && thumb.offsetWidth < cardEl.offsetWidth * .6) badge.style.right = cardEl.offsetWidth - thumb.offsetLeft - thumb.offsetWidth + 6 + "px";
+                    if (thumb && thumb.offsetWidth && thumb.offsetWidth < cardEl.offsetWidth * .6) {
+                        badge.style.right = cardEl.offsetWidth - thumb.offsetLeft - thumb.offsetWidth + 6 + "px";
+                    }
                 }
             }
-        } else if (existing) existing.remove();
+        } else if (existing) {
+            existing.remove();
+        }
     }
     function episodeLineSeason(cardEl) {
         var line = cardEl.parentNode;
@@ -3473,7 +4544,9 @@
             if (n.classList) {
                 if (n.classList.contains("card-watched")) return null;
                 if (n.classList.contains("full-episode") || n.classList.contains("season-episode") || n.classList.contains("online-prestige")) return n;
-                if (n.classList.contains("selector")) return n.classList.contains("card") ? null : n;
+                if (n.classList.contains("selector")) {
+                    return n.classList.contains("card") ? null : n;
+                }
             }
             n = n.parentNode;
             depth++;
@@ -3516,9 +4589,11 @@
         var tmdbKey = String(card.id);
         var lookup = buildEpisodeLookupForShow(tmdbKey);
         var stale = false;
-        for (var key in lookup) if (lookup.hasOwnProperty(key) && key.indexOf("se:") === 0 && lookup[key].airDate === void 0) {
-            stale = true;
-            break;
+        for (var key in lookup) {
+            if (lookup.hasOwnProperty(key) && key.indexOf("se:") === 0 && lookup[key].airDate === undefined) {
+                stale = true;
+                break;
+            }
         }
         if ((!hasOwn(lookup) || stale) && !_episodeMapAttempted[tmdbKey]) {
             _episodeMapAttempted[tmdbKey] = true;
@@ -3528,11 +4603,15 @@
             return;
         }
         var strict = !!_pendingWatchedShows[tmdbKey];
-        for (var i = 0; i < cards.length; i++) decorateOneEpisodeCard(cards[i], lookup, episodeLineSeason(cards[i]), strict);
+        for (var i = 0; i < cards.length; i++) {
+            decorateOneEpisodeCard(cards[i], lookup, episodeLineSeason(cards[i]), strict);
+        }
     }
     var _episodeMapAttempted = {};
     function hasOwn(obj) {
-        for (var k in obj) if (obj.hasOwnProperty(k)) return true;
+        for (var k in obj) {
+            if (obj.hasOwnProperty(k)) return true;
+        }
         return false;
     }
     function removeAllEpisodeBadges() {
@@ -3546,10 +4625,12 @@
             _episodeBadgeTimer = null;
             try {
                 decorateEpisodeCards();
-            } catch (e) {}
+            } catch (e) {
+                Log.warn("decorateEpisodeCards error", e);
+            }
         }, 150);
     }
-    function addMyShowsData(data, oncomplite) {
+    function addMyShowsData(data, oncomplite, sourceRequest) {
         if (getProfileSetting("myshows_view_in_main", true)) {
             var token = getProfileSetting("myshows_token", "");
             if (token) {
@@ -3570,7 +4651,7 @@
                         data.unshift(myshowsCategory);
                     }
                     oncomplite(data);
-                });
+                }, null, sourceRequest);
                 return true;
             }
         }
@@ -3582,11 +4663,13 @@
         window._myshows_activity_patched = true;
         var originalPush = Lampa.Activity.push;
         Lampa.Activity.push = function(params) {
-            if (params && params.url === "myshows://unwatched") return originalPush.call(this, {
-                component: "myshows_unwatched",
-                title: params.title || "Непросмотренные сериалы (MyShows)",
-                page: params.page || 1
-            });
+            if (params && params.url === "myshows://unwatched") {
+                return originalPush.call(this, {
+                    component: "myshows_unwatched",
+                    title: params.title || "Непросмотренные сериалы (MyShows)",
+                    page: params.page || 1
+                });
+            }
             return originalPush.call(this, params);
         };
     }
@@ -3596,7 +4679,7 @@
         var originalTMDBMain = Lampa.Api.sources.tmdb.main;
         Lampa.Api.sources.tmdb.main = function(params, oncomplite, onerror) {
             return originalTMDBMain.call(this, params, function(data) {
-                addMyShowsData(data, oncomplite);
+                addMyShowsData(data, oncomplite, params);
             }, onerror);
         };
     }
@@ -3606,7 +4689,7 @@
         var originalCUBMain = Lampa.Api.sources.cub.main;
         Lampa.Api.sources.cub.main = function(params, oncomplite, onerror) {
             var originalLoadPart = originalCUBMain.call(this, params, function(data) {
-                addMyShowsData(data, oncomplite);
+                addMyShowsData(data, oncomplite, params);
             }, onerror);
             return originalLoadPart;
         };
@@ -3615,7 +4698,9 @@
         if (!e || !e.object || !e.object.activity) return;
         var container = e.object.activity.render().find(".full-start-new__buttons");
         if (!container.length) return;
-        if (container.data("myshows-initialized")) return;
+        if (container.data("myshows-initialized")) {
+            return;
+        }
         container.data("myshows-initialized", true);
         if (container.find(".myshows-btn").length) {
             container.data("myshows-initialized", true);
@@ -3675,7 +4760,7 @@
             btn.on("hover:enter", function() {
                 var activeStatus = getCardStatusCache(e.data.movie.id, isMovie) || "remove";
                 if (activeStatus === buttonData.status) {
-                    buttonData.title;
+                    Log.info('[MS-guard] кнопка "' + buttonData.title + '" — карточка уже в статусе "' + activeStatus + '", запрос не шлём');
                     updateButtonStates(buttonData.status, isMovie, false);
                     return;
                 }
@@ -3685,15 +4770,21 @@
                     if (success) {
                         Lampa.Noty.show('Статус "' + buttonData.title + '" установлен на MyShows');
                         updateButtonStates(buttonData.status, isMovie, false);
-                        if (!isMovie && activeStatus === "watching" && buttonData.status !== "watching") removeUnwatchedTraces(e.data.movie);
-                        if (!isMovie && activeStatus !== "watching" && buttonData.status === "watching") addUnwatchedTraces(e.data.movie);
+                        if (!isMovie && activeStatus === "watching" && buttonData.status !== "watching") {
+                            removeUnwatchedTraces(e.data.movie);
+                        }
+                        if (!isMovie && activeStatus !== "watching" && buttonData.status === "watching") {
+                            addUnwatchedTraces(e.data.movie);
+                        }
                     } else {
                         Lampa.Noty.show("Ошибка установки статуса");
                         updateButtonStates(currentStatus, isMovie, false);
                     }
                 });
             });
-            if (!isMovie) e.object.activity.render().find(".full-start-new__buttons").addClass("myshows-btn-series");
+            if (!isMovie) {
+                e.object.activity.render().find(".full-start-new__buttons").addClass("myshows-btn-series");
+            }
             e.object.activity.render().find(".full-start-new__buttons").append(btn);
         });
         if (window.Lampa && window.Lampa.Controller) {
@@ -3702,7 +4793,9 @@
                 return $(this).is(":visible");
             });
             Lampa.Controller.collectionSet(container);
-            if (allButtons.length > 0) Lampa.Controller.collectionFocus(allButtons.eq(0)[0], container);
+            if (allButtons.length > 0) {
+                Lampa.Controller.collectionFocus(allButtons.eq(0)[0], container);
+            }
         }
     }
     function updateButtonStates(newStatus, isMovie, useAnimation) {
@@ -3727,8 +4820,12 @@
         buttons.forEach(function(button) {
             var svg = button.querySelector("svg");
             button.classList.remove("myshows-active");
-            if (useAnimation && svg) svg.style.transition = "color 0.5s ease, filter 0.5s ease";
-            if (newStatus && statusMap[newStatus] && button.classList.contains(statusMap[newStatus])) button.classList.add("myshows-active");
+            if (useAnimation && svg) {
+                svg.style.transition = "color 0.5s ease, filter 0.5s ease";
+            }
+            if (newStatus && statusMap[newStatus] && button.classList.contains(statusMap[newStatus])) {
+                button.classList.add("myshows-active");
+            }
         });
     }
     function getShowStatus(showId, callback) {
@@ -3736,12 +4833,16 @@
             if (showsData && showsData.shows) {
                 var numericShowId = parseInt(showId);
                 var userShow = null;
-                for (var _ui = 0; _ui < showsData.shows.length; _ui++) if (showsData.shows[_ui].id === numericShowId) {
-                    userShow = showsData.shows[_ui];
-                    break;
+                for (var _ui = 0; _ui < showsData.shows.length; _ui++) {
+                    if (showsData.shows[_ui].id === numericShowId) {
+                        userShow = showsData.shows[_ui];
+                        break;
+                    }
                 }
                 callback(userShow ? userShow.watchStatus : "remove");
-            } else callback("remove");
+            } else {
+                callback("remove");
+            }
         });
     }
     function addMyShowsButtonStyles() {
@@ -3768,7 +4869,9 @@
                     }
                 }
                 callback(foundItem ? foundItem[statusField] : "remove");
-            } else callback("remove");
+            } else {
+                callback("remove");
+            }
         });
     }
     function addToHistory(contentData) {
@@ -3791,7 +4894,9 @@
             if (movies && movies.result) {
                 callback(movies);
                 return;
-            } else callback(null);
+            } else {
+                callback(null);
+            }
         });
     }
     function getUnwatchedMovies(callback) {
@@ -3800,7 +4905,9 @@
             if (movies && movies.result) {
                 callback(movies);
                 return;
-            } else callback(null);
+            } else {
+                callback(null);
+            }
         });
     }
     function fetchStatusMovies(callback) {
@@ -3821,61 +4928,80 @@
         });
     }
     function processMovieData(movieData, defaultStatus, targetArray) {
-        if (movieData && movieData.result && Array.isArray(movieData.result)) movieData.result.forEach(function(item) {
-            if (item && item.id) targetArray.push({
-                id: item.id,
-                title: item.title,
-                titleOriginal: item.titleOriginal,
-                watchStatus: item.userMovie && item.userMovie.watchStatus ? item.userMovie.watchStatus : defaultStatus
+        if (movieData && movieData.result && Array.isArray(movieData.result)) {
+            movieData.result.forEach(function(item) {
+                if (item && item.id) {
+                    targetArray.push({
+                        id: item.id,
+                        title: item.title,
+                        titleOriginal: item.titleOriginal,
+                        watchStatus: item.userMovie && item.userMovie.watchStatus ? item.userMovie.watchStatus : defaultStatus
+                    });
+                }
             });
-        });
+        }
     }
     function syncMyShows(callback) {
         syncInProgress = true;
         var screensaver = Lampa.Storage.get("screensaver", "true");
         Lampa.Storage.set("screensaver", "false");
+        Log.info("Starting sequential sync process");
+        Log.info("syncInProgress", syncInProgress);
         var allTimecodes = [];
         watchedMoviesData(function(movies, error) {
             if (error) {
+                Log.error("Movie sync error:", error);
                 if (callback) callback(false, "Ошибка синхронизации фильмов: " + error);
                 return;
             }
-            movies.length;
+            Log.info("Got", movies.length, "movies");
             processMovies(movies, allTimecodes, function(movieResult) {
-                movieResult.processed, movieResult.errors;
+                Log.info("Movies processed:", movieResult.processed, "errors:", movieResult.errors);
                 getWatchedShows(function(shows, showError) {
                     if (showError) {
+                        Log.error("Show sync error:", showError);
                         if (callback) callback(false, "Ошибка синхронизации сериалов: " + showError);
                         return;
                     }
-                    shows.length;
+                    Log.info("Got", shows.length, "shows");
                     processShows(shows, allTimecodes, function(showResult) {
-                        showResult.processed, showResult.errors;
+                        Log.info("Shows processed:", showResult.processed, "errors:", showResult.errors);
                         var totalProcessed = movieResult.processed + showResult.processed;
                         var totalErrors = movieResult.errors + showResult.errors;
                         if (allTimecodes.length > 0) {
-                            allTimecodes.length;
+                            Log.info("Syncing", allTimecodes.length, "timecodes to database");
                             Lampa.Noty.show("Синхронизация таймкодов: " + allTimecodes.length + " записей");
                             syncTimecodesToDatabase(allTimecodes, function(syncSuccess) {
                                 if (syncSuccess) {
+                                    Log.info("Timecodes synced successfully");
                                     addAllCardsAtOnce(cardsToAdd);
                                     fetchStatusMovies(function(data) {
                                         fetchShowStatus(function(data) {
-                                            if (callback) callback(true, "Синхронизация завершена. Обработано: " + totalProcessed + ", ошибок: " + totalErrors);
-                                            if (screensaver) localStorage.removeItem("screensaver");
+                                            if (callback) {
+                                                callback(true, "Синхронизация завершена. Обработано: " + totalProcessed + ", ошибок: " + totalErrors);
+                                            }
+                                            if (screensaver) {
+                                                localStorage.removeItem("screensaver");
+                                            }
                                             Lampa.Noty.show("Синхронизация завершена! Приложение будет перезагружено через 3 секунды...");
                                             setTimeout(function() {
                                                 window.location.reload();
                                             }, 3e3);
                                         });
                                     });
-                                } else if (callback) callback(false, "Ошибка записи таймкодов в базу данных");
+                                } else {
+                                    if (callback) {
+                                        callback(false, "Ошибка записи таймкодов в базу данных");
+                                    }
+                                }
                             });
                         } else {
                             addAllCardsAtOnce(cardsToAdd);
                             fetchStatusMovies(function(data) {
                                 fetchShowStatus(function(data) {
-                                    if (callback) callback(true, "Синхронизация завершена. Обработано: " + totalProcessed + ", ошибок: " + totalErrors);
+                                    if (callback) {
+                                        callback(true, "Синхронизация завершена. Обработано: " + totalProcessed + ", ошибок: " + totalErrors);
+                                    }
                                 });
                             });
                         }
@@ -3889,21 +5015,31 @@
         var uid = Lampa.Storage.get("lampac_unic_id", "");
         var profileId = Lampa.Storage.get("lampac_profile_id", "");
         if (!uid) {
+            Log.error("No lampac_unic_id found");
             callback(false);
             return;
         }
         var url = window.location.origin + "/timecode/batch_add?uid=" + encodeURIComponent(uid);
-        if (profileId) url += "&profile_id=" + encodeURIComponent(profileId);
+        if (profileId) {
+            url += "&profile_id=" + encodeURIComponent(profileId);
+        }
         var payload = {
             timecodes: timecodes
         };
+        Log.info("Sending batch timecode request to:", url);
+        Log.info("Payload:", payload);
         network.timeout(1e3 * 60);
         network.native(url, function(response) {
+            Log.info("Batch sync response:", response);
             if (response && response.success) {
-                response.added, response.updated;
+                Log.info("Successfully synced", response.added, "added,", response.updated, "updated");
                 callback(true);
-            } else callback(false);
+            } else {
+                Log.error("Batch sync failed:", response);
+                callback(false);
+            }
         }, function(error) {
+            Log.error("Batch sync error:", error);
             callback(false);
         }, JSON.stringify(payload), {
             headers: {
@@ -3924,31 +5060,37 @@
                 return;
             }
             var movie = movies[currentIndex];
-            movies.length, movie.title;
+            Log.info("Processing movie", currentIndex + 1, "of", movies.length, ":", movie.title);
             Lampa.Noty.show("Обрабатываю фильм: " + movie.title + " (" + (currentIndex + 1) + "/" + movies.length + ")");
             findTMDBId(movie.title, movie.titleOriginal, movie.year, movie.imdbId, movie.kinopoiskId, false, function(tmdbId, tmdbData) {
-                if (tmdbId) getTMDBCard(tmdbId, false, function(card, error) {
-                    if (card) try {
-                        var hash = Lampa.Utils.hash([ movie.titleOriginal || movie.title ].join(""));
-                        var duration = movie.runtime ? movie.runtime * 60 : 7200;
-                        allTimecodes.push({
-                            card_id: tmdbId + "_movie",
-                            item: hash.toString(),
-                            data: JSON.stringify({
-                                duration: duration,
-                                time: duration,
-                                percent: 100
-                            })
-                        });
-                        cardsToAdd.push(card);
-                        processed++;
-                    } catch (e) {
-                        movie.title;
-                        errors++;
-                    } else errors++;
-                    currentIndex++;
-                    setTimeout(processNextMovie, 1);
-                }); else {
+                if (tmdbId) {
+                    getTMDBCard(tmdbId, false, function(card, error) {
+                        if (card) {
+                            try {
+                                var hash = Lampa.Utils.hash([ movie.titleOriginal || movie.title ].join(""));
+                                var duration = movie.runtime ? movie.runtime * 60 : 7200;
+                                allTimecodes.push({
+                                    card_id: tmdbId + "_movie",
+                                    item: hash.toString(),
+                                    data: JSON.stringify({
+                                        duration: duration,
+                                        time: duration,
+                                        percent: 100
+                                    })
+                                });
+                                cardsToAdd.push(card);
+                                processed++;
+                            } catch (e) {
+                                Log.error("Error processing movie:", movie.title, e);
+                                errors++;
+                            }
+                        } else {
+                            errors++;
+                        }
+                        currentIndex++;
+                        setTimeout(processNextMovie, 1);
+                    });
+                } else {
                     errors++;
                     currentIndex++;
                     setTimeout(processNextMovie, 50);
@@ -3971,24 +5113,26 @@
                 return;
             }
             var show = shows[currentShowIndex];
-            shows.length, show.title;
+            Log.info("Processing show", currentShowIndex + 1, "of", shows.length, ":", show.title);
             Lampa.Noty.show("Обрабатываю сериал: " + show.title + " (" + (currentShowIndex + 1) + "/" + shows.length + ")");
             findTMDBId(show.title, show.titleOriginal, show.year, show.imdbId, show.kinopoiskId, true, function(tmdbId, tmdbData) {
-                if (tmdbId) getTMDBCard(tmdbId, true, function(card, error) {
-                    if (card) {
-                        tmdbCache[show.myshowsId] = card;
-                        processShowEpisodes(show, card, tmdbId, allTimecodes, function(episodeResult) {
-                            processed += episodeResult.processed;
-                            errors += episodeResult.errors;
+                if (tmdbId) {
+                    getTMDBCard(tmdbId, true, function(card, error) {
+                        if (card) {
+                            tmdbCache[show.myshowsId] = card;
+                            processShowEpisodes(show, card, tmdbId, allTimecodes, function(episodeResult) {
+                                processed += episodeResult.processed;
+                                errors += episodeResult.errors;
+                                currentShowIndex++;
+                                setTimeout(processNextShow, 1);
+                            });
+                        } else {
+                            errors++;
                             currentShowIndex++;
-                            setTimeout(processNextShow, 1);
-                        });
-                    } else {
-                        errors++;
-                        currentShowIndex++;
-                        setTimeout(processNextShow, 50);
-                    }
-                }); else {
+                            setTimeout(processNextShow, 50);
+                        }
+                    });
+                } else {
                     errors++;
                     currentShowIndex++;
                     setTimeout(processNextShow, 50);
@@ -3998,7 +5142,7 @@
         processNextShow();
     }
     function processShowEpisodes(show, tmdbCard, tmdbId, allTimecodes, callback) {
-        show.title, show.episodes && show.episodes.length;
+        Log.info("Processing episodes for show:", show.title, "Episodes count:", show.episodes ? show.episodes.length : 0);
         var watchedEpisodeIds = show.watchedEpisodes.map(function(ep) {
             return ep.id;
         });
@@ -4007,7 +5151,7 @@
         var currentEpisodeIndex = 0;
         function processNextEpisode() {
             if (currentEpisodeIndex >= show.episodes.length) {
-                show.title;
+                Log.info("Finished processing show:", show.title, "Processed:", processedEpisodes, "Errors:", errorEpisodes);
                 cardsToAdd.push(tmdbCard);
                 callback({
                     processed: processedEpisodes,
@@ -4016,34 +5160,39 @@
                 return;
             }
             var episode = show.episodes[currentEpisodeIndex];
-            episode.seasonNumber, episode.episodeNumber, show.title, tmdbCard.original_name, 
-            tmdbCard.original_title;
-            if (watchedEpisodeIds.indexOf(episode.id) !== -1) try {
-                var hash = Lampa.Utils.hash([ episode.seasonNumber, episode.seasonNumber > 10 ? ":" : "", episode.episodeNumber, tmdbCard.original_name || tmdbCard.original_title || show.titleOriginal || show.title ].join(""));
-                var duration = episode.runtime ? episode.runtime * 60 : show.runtime ? show.runtime * 60 : 2700;
-                episode.seasonNumber, episode.episodeNumber;
-                allTimecodes.push({
-                    card_id: tmdbId + "_tv",
-                    item: hash.toString(),
-                    data: JSON.stringify({
-                        duration: duration,
-                        time: duration,
-                        percent: 100
-                    })
-                });
-                processedEpisodes++;
-                episode.seasonNumber, episode.episodeNumber;
-            } catch (timelineError) {
-                episode.seasonNumber, episode.episodeNumber;
-                errorEpisodes++;
-            } else episode.seasonNumber, episode.episodeNumber;
+            Log.info("Processing episode:", episode.seasonNumber + "x" + episode.episodeNumber, "for show:", show.title, "TMDB Name", tmdbCard.original_name, "TMDB Original Title", tmdbCard.original_title);
+            if (watchedEpisodeIds.indexOf(episode.id) !== -1) {
+                try {
+                    var hash = Lampa.Utils.hash([ episode.seasonNumber, episode.seasonNumber > 10 ? ":" : "", episode.episodeNumber, tmdbCard.original_name || tmdbCard.original_title || show.titleOriginal || show.title ].join(""));
+                    var duration = episode.runtime ? episode.runtime * 60 : show.runtime ? show.runtime * 60 : 2700;
+                    Log.info("Adding timecode for episode:", episode.seasonNumber + "x" + episode.episodeNumber, "Hash:", hash);
+                    allTimecodes.push({
+                        card_id: tmdbId + "_tv",
+                        item: hash.toString(),
+                        data: JSON.stringify({
+                            duration: duration,
+                            time: duration,
+                            percent: 100
+                        })
+                    });
+                    processedEpisodes++;
+                    Log.info("Successfully processed episode:", episode.seasonNumber + "x" + episode.episodeNumber);
+                } catch (timelineError) {
+                    Log.error("Error processing episode:", episode.seasonNumber + "x" + episode.episodeNumber, timelineError);
+                    errorEpisodes++;
+                }
+            } else {
+                Log.info("Episode not watched, skipping:", episode.seasonNumber + "x" + episode.episodeNumber);
+            }
             currentEpisodeIndex++;
             setTimeout(processNextEpisode, 1);
         }
         processNextEpisode();
     }
     function getFirstEpisodeYear(show) {
-        if (!show.episodes || show.episodes.length === 0) return show.year;
+        if (!show.episodes || show.episodes.length === 0) {
+            return show.year;
+        }
         var firstRealEpisode = null;
         for (var _ei = 0; _ei < show.episodes.length; _ei++) {
             var _ep = show.episodes[_ei];
@@ -4060,6 +5209,7 @@
     }
     function findTMDBId(title, originalTitle, year, imdbId, kinopoiskId, isTV, callback, showData) {
         var network = new Lampa.Reguest;
+        Log.info("Searching for:", title, "Original:", originalTitle, "IMDB:", imdbId, "Year:", year);
         if (imdbId) {
             var imdbIdFormatted = imdbId.toString().replace("tt", "");
             var url = Lampa.TMDB.api("find/tt" + imdbIdFormatted + "?external_source=imdb_id&api_key=" + Lampa.TMDB.key());
@@ -4067,12 +5217,14 @@
             network.silent(url, function(results) {
                 var items = isTV ? results.tv_results : results.movie_results;
                 if (items && items.length > 0) {
-                    items[0].id;
+                    Log.info("Found by IMDB ID:", items[0].id, "for", title);
                     callback(items[0].id, items[0]);
                     return;
                 }
+                Log.info("No IMDB results, trying title search");
                 searchByTitle();
             }, function(error) {
+                Log.error("IMDB search error:", error);
                 searchByTitle();
             });
             return;
@@ -4080,11 +5232,14 @@
         searchByTitle();
         function searchByTitle() {
             var searchQueries = [];
-            if (originalTitle && originalTitle !== title) searchQueries.push(originalTitle);
+            if (originalTitle && originalTitle !== title) {
+                searchQueries.push(originalTitle);
+            }
             searchQueries.push(title);
             var currentQueryIndex = 0;
             function tryNextQuery() {
                 if (currentQueryIndex >= searchQueries.length) {
+                    Log.info("Not found in TMDB, using fallback hash for:", title);
                     callback(Lampa.Utils.hash(originalTitle || title), null);
                     return;
                 }
@@ -4093,9 +5248,13 @@
                 tryWithYear(searchQuery, year);
                 function tryWithYear(query, searchYear) {
                     var url = Lampa.TMDB.api("search/" + searchType + "?query=" + encodeURIComponent(query) + "&api_key=" + Lampa.TMDB.key());
-                    if (searchYear) url += "&" + (isTV ? "first_air_date_year" : "year") + "=" + searchYear;
+                    if (searchYear) {
+                        url += "&" + (isTV ? "first_air_date_year" : "year") + "=" + searchYear;
+                    }
+                    Log.info("Title search:", url, "Query:", query, "Year:", searchYear || "no year");
                     network.timeout(1e3 * 10);
                     network.silent(url, function(results) {
+                        Log.info("Title search results:", query, "year:", searchYear, results);
                         if (results && results.results && results.results.length > 0) {
                             var exactMatch = null;
                             for (var i = 0; i < results.results.length; i++) {
@@ -4107,19 +5266,20 @@
                                 }
                             }
                             if (exactMatch) {
-                                exactMatch.id, exactMatch.title || exactMatch.name;
+                                Log.info("Found exact match:", exactMatch.id, exactMatch.title || exactMatch.name);
                                 callback(exactMatch.id, exactMatch);
                                 return;
                             }
                             if (results.results.length === 1) {
                                 var singleMatch = results.results[0];
-                                singleMatch.id, singleMatch.title || singleMatch.name;
+                                Log.info("Single result found:", singleMatch.id, singleMatch.title || singleMatch.name);
                                 callback(singleMatch.id, singleMatch);
                                 return;
                             }
                             if (results.results.length > 1 && !searchYear && showData && isTV) {
                                 var firstEpisodeYear = getFirstEpisodeYear(showData);
                                 if (firstEpisodeYear) {
+                                    Log.info("Multiple results, filtering by S01E01 year:", firstEpisodeYear);
                                     var yearFilteredResults = results.results.filter(function(item) {
                                         if (item.first_air_date) {
                                             var itemYear = new Date(item.first_air_date).getFullYear();
@@ -4129,29 +5289,31 @@
                                     });
                                     if (yearFilteredResults.length === 1) {
                                         var filteredMatch = yearFilteredResults[0];
-                                        filteredMatch.id, filteredMatch.name;
+                                        Log.info("Found by S01E01 year filter:", filteredMatch.id, filteredMatch.name);
                                         callback(filteredMatch.id, filteredMatch);
                                         return;
                                     } else if (yearFilteredResults.length > 1) {
                                         var firstFiltered = yearFilteredResults[0];
-                                        firstFiltered.id, firstFiltered.name;
+                                        Log.info("Using first from S01E01 filtered results:", firstFiltered.id, firstFiltered.name);
                                         callback(firstFiltered.id, firstFiltered);
                                         return;
                                     }
                                 }
                             }
                             var fallbackMatch = results.results[0];
-                            fallbackMatch.id, fallbackMatch.title || fallbackMatch.name;
+                            Log.info("Using first result as fallback:", fallbackMatch.id, fallbackMatch.title || fallbackMatch.name);
                             callback(fallbackMatch.id, fallbackMatch);
                             return;
                         }
                         if (searchYear) {
+                            Log.info("No results with year, trying without year");
                             tryWithYear(query, null);
                             return;
                         }
                         if (showData && isTV && !searchYear) {
                             var firstEpisodeYear = getFirstEpisodeYear(showData);
                             if (firstEpisodeYear && firstEpisodeYear !== year) {
+                                Log.info("No results without year, trying S01E01 year:", firstEpisodeYear);
                                 tryWithYear(query, firstEpisodeYear);
                                 return;
                             }
@@ -4159,6 +5321,7 @@
                         currentQueryIndex++;
                         tryNextQuery();
                     }, function(error) {
+                        Log.error("Title search error:", error);
                         if (searchYear) {
                             tryWithYear(query, null);
                             return;
@@ -4173,6 +5336,7 @@
     }
     function getTMDBCard(tmdbId, isTV, callback) {
         if (!tmdbId || typeof tmdbId !== "number") {
+            Log.info("Invalid TMDB ID:", tmdbId);
             callback(null, "Invalid TMDB ID");
             return;
         }
@@ -4189,7 +5353,10 @@
                 if (response.recomend) movieData.recommendations = response.recomend;
                 if (response.simular) movieData.similar = response.simular;
                 callback(movieData, null);
-            } else callback(null, "Invalid card data");
+            } else {
+                Log.info("Invalid card response for ID:", tmdbId, response);
+                callback(null, "Invalid card data");
+            }
         }, function(error) {
             callback(null, error);
         });
@@ -4197,18 +5364,30 @@
     var cardsToAdd = [];
     function addAllCardsAtOnce(cards) {
         try {
-            cards.length;
+            Log.info("Adding", cards.length, "cards to favorites");
             var sortedCards = cards.sort(function(a, b) {
                 var dateA, dateB;
-                if (a.number_of_seasons || a.seasons) dateA = a.last_air_date || a.first_air_date || "0000-00-00"; else dateA = a.release_date || "0000-00-00";
-                if (b.number_of_seasons || b.seasons) dateB = b.last_air_date || b.first_air_date || "0000-00-00"; else dateB = b.release_date || "0000-00-00";
+                if (a.number_of_seasons || a.seasons) {
+                    dateA = a.last_air_date || a.first_air_date || "0000-00-00";
+                } else {
+                    dateA = a.release_date || "0000-00-00";
+                }
+                if (b.number_of_seasons || b.seasons) {
+                    dateB = b.last_air_date || b.first_air_date || "0000-00-00";
+                } else {
+                    dateB = b.release_date || "0000-00-00";
+                }
                 return new Date(dateB) - new Date(dateA);
             });
             var cardsToAddToHistory = sortedCards.slice(0, 100).reverse();
-            cardsToAddToHistory.length;
-            for (var i = 0; i < cardsToAddToHistory.length; i++) Lampa.Favorite.add("history", cardsToAddToHistory[i], 100);
-            cardsToAddToHistory.length;
-        } catch (error) {}
+            Log.info("Adding", cardsToAddToHistory.length, "cards to history with limit 100");
+            for (var i = 0; i < cardsToAddToHistory.length; i++) {
+                Lampa.Favorite.add("history", cardsToAddToHistory[i], 100);
+            }
+            Log.info("Successfully added", cardsToAddToHistory.length, "cards to history");
+        } catch (error) {
+            Log.error("Error adding cards:", error);
+        }
     }
     function watchedMoviesData(callback) {
         getWatchedMovies(function(watchedMoviesData) {
@@ -4224,9 +5403,13 @@
                         kinopoiskId: movie.kinopoiskId
                     };
                 });
-                movies.length;
+                Log.info("===== СПИСОК ФИЛЬМОВ =====");
+                Log.info("Всего фильмов:", movies.length);
+                Log.info("===== КОНЕЦ СПИСКА ФИЛЬМОВ =====");
                 callback(movies, null);
-            } else callback(null, "Ошибка получения фильмов");
+            } else {
+                callback(null, "Ошибка получения фильмов");
+            }
         });
     }
     function getWatchedShows(callback) {
@@ -4247,7 +5430,9 @@
             var currentIndex = 0;
             function processNextShow() {
                 if (currentIndex >= totalShows) {
-                    shows.length;
+                    Log.info("===== СПИСОК СЕРИАЛОВ =====");
+                    Log.info("Всего сериалов с просмотренными эпизодами:", shows.length);
+                    Log.info("===== КОНЕЦ СПИСКА СЕРИАЛОВ =====");
                     callback(shows, null);
                     return;
                 }
@@ -4288,24 +5473,29 @@
                         currentIndex++;
                         setTimeout(processNextShow, 10);
                     }, function(error) {
+                        Log.info("Error getting episodes for show", showId, error);
                         currentIndex++;
                         setTimeout(processNextShow, 100);
                     });
                 }, function(error) {
+                    Log.info("Error getting show details for", showId, error);
                     currentIndex++;
                     setTimeout(processNextShow, 100);
                 });
             }
             processNextShow();
         }, function(error) {
+            Log.info("Error getting shows:", error);
             callback(null, "Ошибка получения сериалов");
         });
     }
-    if (window.Lampa && Lampa.Player && Lampa.Player.listener) Lampa.Player.listener.follow("start", function(data) {
-        var card = data.card || Lampa.Activity.active() && Lampa.Activity.active().movie;
-        if (!card) return;
-        Lampa.Storage.set("myshows_last_card", card);
-    });
+    if (window.Lampa && Lampa.Player && Lampa.Player.listener) {
+        Lampa.Player.listener.follow("start", function(data) {
+            var card = data.card || Lampa.Activity.active() && Lampa.Activity.active().movie;
+            if (!card) return;
+            Lampa.Storage.set("myshows_last_card", card);
+        });
+    }
     if (window.Lampa && Lampa.Player && Lampa.Player.listener) {
         Lampa.Player.listener.follow("start", function(data) {
             Lampa.Storage.set("myshows_was_watching", "true");
@@ -4330,7 +5520,11 @@
                     net.silent(statusUrl, function(response) {
                         var cacheType = response && response.cache_type;
                         var status;
-                        if (isTV) if (cacheType === "watchlist") status = "later"; else if (cacheType === "watching" || cacheType === "cancelled") status = cacheType; else status = "remove"; else if (cacheType === "watched") status = "finished"; else if (cacheType === "watchlist") status = "later"; else status = "remove";
+                        if (isTV) {
+                            if (cacheType === "watchlist") status = "later"; else if (cacheType === "watching" || cacheType === "cancelled") status = cacheType; else status = "remove";
+                        } else {
+                            if (cacheType === "watched") status = "finished"; else if (cacheType === "watchlist") status = "later"; else status = "remove";
+                        }
                         setCardStatusCache(identifiers.tmdbId, !isTV, status);
                         createMyShowsButtons(e, status, !isTV);
                         updateButtonStates(status, !isTV, true);
@@ -4342,21 +5536,36 @@
             }
             if (isTV) {
                 getStatusByTitle(originalTitle, false, function(cachedStatus) {
+                    Log.info("cachedStatus TV", cachedStatus);
                     if (cachedStatus) setCardStatusCache(identifiers.tmdbId, false, cachedStatus);
-                    if (!cachedStatus || cachedStatus === "remove") updateButtonStates("remove", false, false);
-                    if (getProfileSetting("myshows_button_view", true) && getProfileSetting("myshows_token", false)) createMyShowsButtons(e, cachedStatus, false);
+                    if (!cachedStatus || cachedStatus === "remove") {
+                        updateButtonStates("remove", false, false);
+                    }
+                    if (getProfileSetting("myshows_button_view", true) && getProfileSetting("myshows_token", false)) {
+                        createMyShowsButtons(e, cachedStatus, false);
+                    }
                 });
                 getShowIdByExternalIds(identifiers.imdbId, identifiers.kinopoiskId, title, originalTitle, identifiers.tmdbId, identifiers.year, identifiers.alternativeTitles, function(showId) {
-                    if (showId) getShowStatus(showId, function(currentStatus) {
-                        setCardStatusCache(identifiers.tmdbId, false, currentStatus);
-                        updateButtonStates(currentStatus, false, true);
-                    });
+                    if (showId) {
+                        getShowStatus(showId, function(currentStatus) {
+                            Log.info("currentStatus TV", currentStatus);
+                            setCardStatusCache(identifiers.tmdbId, false, currentStatus);
+                            updateButtonStates(currentStatus, false, true);
+                        });
+                    }
                 });
-            } else getStatusByTitle(originalTitle, true, function(cachedStatus) {
-                if (cachedStatus) setCardStatusCache(identifiers.tmdbId, true, cachedStatus);
-                if (!cachedStatus || cachedStatus === "remove") updateButtonStates("remove", true, false);
-                if (getProfileSetting("myshows_button_view", true) && getProfileSetting("myshows_token", false)) createMyShowsButtons(e, cachedStatus, true);
-            });
+            } else {
+                getStatusByTitle(originalTitle, true, function(cachedStatus) {
+                    Log.info("cachedStatus Movie", cachedStatus);
+                    if (cachedStatus) setCardStatusCache(identifiers.tmdbId, true, cachedStatus);
+                    if (!cachedStatus || cachedStatus === "remove") {
+                        updateButtonStates("remove", true, false);
+                    }
+                    if (getProfileSetting("myshows_button_view", true) && getProfileSetting("myshows_token", false)) {
+                        createMyShowsButtons(e, cachedStatus, true);
+                    }
+                });
+            }
         }
     });
     var cachedShuffledItems = {};
@@ -4364,11 +5573,13 @@
     function _populateProgressMap(shows) {
         if (!shows) return;
         shows.forEach(function(s) {
-            if (s.myshowsId && (s.progress_marker || s.next_episode || s.remaining !== void 0)) _unwatchedProgressMap[s.myshowsId] = {
-                progress_marker: s.progress_marker,
-                next_episode: s.next_episode,
-                remaining: s.remaining
-            };
+            if (s.myshowsId && (s.progress_marker || s.next_episode || s.remaining !== undefined)) {
+                _unwatchedProgressMap[s.myshowsId] = {
+                    progress_marker: s.progress_marker,
+                    next_episode: s.next_episode,
+                    remaining: s.remaining
+                };
+            }
         });
     }
     function _applyProgressFromMap(cardData) {
@@ -4381,6 +5592,7 @@
         cardData.remaining = p.remaining;
     }
     function ApiMyShows() {
+        Log.info("=== ApiMyShows Factory START ===");
         function myshowsWatchlist(object, oncomplite, onerror) {
             var currentPage = object.page || 1;
             var PAGE_SIZE_W = 20;
@@ -4405,26 +5617,30 @@
             _doFetchWatchlist();
             function _doFetchWatchlist() {
                 makeMyShowsJSONRPCRequest("profile.Shows", {}, function(success, showsData) {
-                    showsData && JSON.stringify(showsData).substring(0, 200);
+                    Log.info("API myshowsWatchlist: Shows request - success:", success);
+                    Log.info("API myshowsWatchlist: Shows data:", showsData ? JSON.stringify(showsData).substring(0, 200) + "..." : "null");
                     makeMyShowsJSONRPCRequest("profile.UnwatchedMovies", {}, function(success, moviesData) {
-                        moviesData && JSON.stringify(moviesData).substring(0, 200);
+                        Log.info("API myshowsWatchlist: Movies request - success:", success);
+                        Log.info("API myshowsWatchlist: Movies data:", moviesData ? JSON.stringify(moviesData).substring(0, 200) + "..." : "null");
                         var allItems = [];
                         if (showsData && showsData.result) {
-                            showsData.result.length;
+                            Log.info("API myshowsWatchlist: Processing", showsData.result.length, "shows");
                             for (var i = 0; i < showsData.result.length; i++) {
                                 var item = showsData.result[i];
-                                if (item.watchStatus === "later") allItems.push({
-                                    myshowsId: item.show.id,
-                                    title: item.show.title,
-                                    originalTitle: item.show.titleOriginal,
-                                    year: item.show.year,
-                                    watchStatus: item.watchStatus,
-                                    type: "show"
-                                });
+                                if (item.watchStatus === "later") {
+                                    allItems.push({
+                                        myshowsId: item.show.id,
+                                        title: item.show.title,
+                                        originalTitle: item.show.titleOriginal,
+                                        year: item.show.year,
+                                        watchStatus: item.watchStatus,
+                                        type: "show"
+                                    });
+                                }
                             }
                         }
                         if (moviesData && moviesData.result) {
-                            moviesData.result.length;
+                            Log.info("API myshowsWatchlist: Processing", moviesData.result.length, "movies");
                             for (var i = 0; i < moviesData.result.length; i++) {
                                 var movie = moviesData.result[i];
                                 allItems.push({
@@ -4437,37 +5653,44 @@
                                 });
                             }
                         }
-                        allItems.length;
+                        Log.info("API myshowsWatchlist: Total items before TMDB:", allItems.length);
                         var cacheKey = "watchlist";
                         if (!cachedShuffledItems[cacheKey]) {
                             Lampa.Arrays.shuffle(allItems);
                             cachedShuffledItems[cacheKey] = allItems.slice();
-                        } else allItems = cachedShuffledItems[cacheKey].slice();
+                        } else {
+                            allItems = cachedShuffledItems[cacheKey].slice();
+                        }
                         var PAGE_SIZE = 20;
                         var currentPage = object.page || 1;
                         var totalPages = Math.ceil(allItems.length / PAGE_SIZE);
                         var start = (currentPage - 1) * PAGE_SIZE;
                         var end = start + PAGE_SIZE;
                         var itemsForPage = allItems.slice(start, end);
-                        itemsForPage.length;
-                        if (useNpServer()) getTMDBDetailsSimple(allItems, function(allEnriched) {
-                            saveCacheToServer({
-                                results: allEnriched.results
-                            }, "watchlist", function() {}, startProfile);
-                            var enrichedTotal = allEnriched.results.length;
-                            var enrichedPages = Math.ceil(enrichedTotal / PAGE_SIZE_W) || 1;
-                            oncomplite({
-                                results: allEnriched.results.slice(start, end),
-                                page: currentPage,
-                                total_pages: enrichedPages,
-                                total_results: enrichedTotal
+                        Log.info("myshowsWatchlist: page " + currentPage + "/" + totalPages + ", sending " + itemsForPage.length + " items");
+                        Log.info("API myshowsWatchlist: allItems:", allItems);
+                        if (useNpServer()) {
+                            getTMDBDetailsSimple(allItems, function(allEnriched) {
+                                saveCacheToServer({
+                                    results: allEnriched.results
+                                }, "watchlist", function() {}, startProfile);
+                                var enrichedTotal = allEnriched.results.length;
+                                var enrichedPages = Math.ceil(enrichedTotal / PAGE_SIZE_W) || 1;
+                                oncomplite({
+                                    results: allEnriched.results.slice(start, end),
+                                    page: currentPage,
+                                    total_pages: enrichedPages,
+                                    total_results: enrichedTotal
+                                });
                             });
-                        }); else getTMDBDetailsSimple(itemsForPage, function(result) {
-                            result.page = currentPage;
-                            result.total_pages = totalPages;
-                            result.total_results = allItems.length;
-                            oncomplite(result);
-                        });
+                        } else {
+                            getTMDBDetailsSimple(itemsForPage, function(result) {
+                                result.page = currentPage;
+                                result.total_pages = totalPages;
+                                result.total_results = allItems.length;
+                                oncomplite(result);
+                            });
+                        }
                     });
                 });
             }
@@ -4498,57 +5721,69 @@
                 makeMyShowsJSONRPCRequest("profile.Shows", {}, function(success, showsData) {
                     makeMyShowsJSONRPCRequest("profile.WatchedMovies", {}, function(success, moviesData) {
                         var allItems = [];
-                        if (showsData && showsData.result) for (var i = 0; i < showsData.result.length; i++) {
-                            var item = showsData.result[i];
-                            if (item.watchStatus === "watching" || item.watchStatus === "finished") allItems.push({
-                                myshowsId: item.show.id,
-                                title: item.show.title,
-                                originalTitle: item.show.titleOriginal,
-                                year: item.show.year,
-                                watchStatus: item.watchStatus,
-                                type: "show"
-                            });
+                        if (showsData && showsData.result) {
+                            for (var i = 0; i < showsData.result.length; i++) {
+                                var item = showsData.result[i];
+                                if (item.watchStatus === "watching" || item.watchStatus === "finished") {
+                                    allItems.push({
+                                        myshowsId: item.show.id,
+                                        title: item.show.title,
+                                        originalTitle: item.show.titleOriginal,
+                                        year: item.show.year,
+                                        watchStatus: item.watchStatus,
+                                        type: "show"
+                                    });
+                                }
+                            }
                         }
-                        if (moviesData && moviesData.result) for (var i = 0; i < moviesData.result.length; i++) {
-                            var movie = moviesData.result[i];
-                            allItems.push({
-                                myshowsId: movie.id,
-                                title: movie.title,
-                                originalTitle: movie.titleOriginal,
-                                year: movie.year,
-                                watchStatus: "finished",
-                                type: "movie"
-                            });
+                        if (moviesData && moviesData.result) {
+                            for (var i = 0; i < moviesData.result.length; i++) {
+                                var movie = moviesData.result[i];
+                                allItems.push({
+                                    myshowsId: movie.id,
+                                    title: movie.title,
+                                    originalTitle: movie.titleOriginal,
+                                    year: movie.year,
+                                    watchStatus: "finished",
+                                    type: "movie"
+                                });
+                            }
                         }
-                        allItems.length;
+                        Log.info("myshowsWatched: TOTAL ITEMS = " + allItems.length);
                         var cacheKey = "watched";
                         if (!cachedShuffledItems[cacheKey]) {
                             Lampa.Arrays.shuffle(allItems);
                             cachedShuffledItems[cacheKey] = allItems.slice();
-                        } else allItems = cachedShuffledItems[cacheKey].slice();
+                        } else {
+                            allItems = cachedShuffledItems[cacheKey].slice();
+                        }
                         var totalPages = Math.ceil(allItems.length / PAGE_SIZE);
                         var start = (currentPage - 1) * PAGE_SIZE;
                         var end = start + PAGE_SIZE;
                         var itemsForPage = allItems.slice(start, end);
-                        itemsForPage.length;
-                        if (useNpServer()) getTMDBDetailsSimple(allItems, function(allEnriched) {
-                            saveCacheToServer({
-                                results: allEnriched.results
-                            }, "watched", function() {}, startProfile);
-                            var enrichedTotal = allEnriched.results.length;
-                            var enrichedPages = Math.ceil(enrichedTotal / PAGE_SIZE) || 1;
-                            oncomplite({
-                                results: allEnriched.results.slice(start, end),
-                                page: currentPage,
-                                total_pages: enrichedPages,
-                                total_results: enrichedTotal
+                        Log.info("myshowsWatched: page " + currentPage + "/" + totalPages + ", sending " + itemsForPage.length + " items");
+                        if (useNpServer()) {
+                            getTMDBDetailsSimple(allItems, function(allEnriched) {
+                                saveCacheToServer({
+                                    results: allEnriched.results
+                                }, "watched", function() {}, startProfile);
+                                var enrichedTotal = allEnriched.results.length;
+                                var enrichedPages = Math.ceil(enrichedTotal / PAGE_SIZE) || 1;
+                                oncomplite({
+                                    results: allEnriched.results.slice(start, end),
+                                    page: currentPage,
+                                    total_pages: enrichedPages,
+                                    total_results: enrichedTotal
+                                });
                             });
-                        }); else getTMDBDetailsSimple(itemsForPage, function(result) {
-                            result.page = currentPage;
-                            result.total_pages = totalPages;
-                            result.total_results = allItems.length;
-                            oncomplite(result);
-                        });
+                        } else {
+                            getTMDBDetailsSimple(itemsForPage, function(result) {
+                                result.page = currentPage;
+                                result.total_pages = totalPages;
+                                result.total_results = allItems.length;
+                                oncomplite(result);
+                            });
+                        }
                     });
                 });
             }
@@ -4578,44 +5813,54 @@
             function _doFetchCancelled() {
                 makeMyShowsJSONRPCRequest("profile.Shows", {}, function(success, showsData) {
                     var allItems = [];
-                    if (showsData && showsData.result) for (var i = 0; i < showsData.result.length; i++) {
-                        var item = showsData.result[i];
-                        if (item.watchStatus === "cancelled") allItems.push({
-                            myshowsId: item.show.id,
-                            title: item.show.title,
-                            originalTitle: item.show.titleOriginal,
-                            year: item.show.year,
-                            watchStatus: item.watchStatus,
-                            type: "show"
-                        });
+                    if (showsData && showsData.result) {
+                        for (var i = 0; i < showsData.result.length; i++) {
+                            var item = showsData.result[i];
+                            if (item.watchStatus === "cancelled") {
+                                allItems.push({
+                                    myshowsId: item.show.id,
+                                    title: item.show.title,
+                                    originalTitle: item.show.titleOriginal,
+                                    year: item.show.year,
+                                    watchStatus: item.watchStatus,
+                                    type: "show"
+                                });
+                            }
+                        }
                     }
                     var cacheKey = "cancelled";
                     if (!cachedShuffledItems[cacheKey]) {
                         Lampa.Arrays.shuffle(allItems);
                         cachedShuffledItems[cacheKey] = allItems.slice();
-                    } else allItems = cachedShuffledItems[cacheKey].slice();
+                    } else {
+                        allItems = cachedShuffledItems[cacheKey].slice();
+                    }
                     var totalPages = Math.ceil(allItems.length / PAGE_SIZE);
                     var start = (currentPage - 1) * PAGE_SIZE;
                     var end = start + PAGE_SIZE;
                     var itemsForPage = allItems.slice(start, end);
-                    if (useNpServer()) getTMDBDetailsSimple(allItems, function(allEnriched) {
-                        saveCacheToServer({
-                            results: allEnriched.results
-                        }, "cancelled", function() {}, startProfile);
-                        var enrichedTotal = allEnriched.results.length;
-                        var enrichedPages = Math.ceil(enrichedTotal / PAGE_SIZE) || 1;
-                        oncomplite({
-                            results: allEnriched.results.slice(start, end),
-                            page: currentPage,
-                            total_pages: enrichedPages,
-                            total_results: enrichedTotal
+                    if (useNpServer()) {
+                        getTMDBDetailsSimple(allItems, function(allEnriched) {
+                            saveCacheToServer({
+                                results: allEnriched.results
+                            }, "cancelled", function() {}, startProfile);
+                            var enrichedTotal = allEnriched.results.length;
+                            var enrichedPages = Math.ceil(enrichedTotal / PAGE_SIZE) || 1;
+                            oncomplite({
+                                results: allEnriched.results.slice(start, end),
+                                page: currentPage,
+                                total_pages: enrichedPages,
+                                total_results: enrichedTotal
+                            });
                         });
-                    }); else getTMDBDetailsSimple(itemsForPage, function(result) {
-                        result.page = currentPage;
-                        result.total_pages = totalPages;
-                        result.total_results = allItems.length;
-                        oncomplite(result);
-                    });
+                    } else {
+                        getTMDBDetailsSimple(itemsForPage, function(result) {
+                            result.page = currentPage;
+                            result.total_pages = totalPages;
+                            result.total_results = allItems.length;
+                            oncomplite(result);
+                        });
+                    }
                 });
             }
         }
@@ -4623,12 +5868,14 @@
             var PAGE_SIZE = 20;
             var currentPage = object.page || 1;
             var cacheKey = "unwatched_raw";
-            if (useNpServer()) {
+            if (useNpServer() && getProfileSetting("myshows_sort_order", "progress") !== "relevance") {
                 loadCacheFromServer("unwatched_serials", "shows", function(response) {
                     if (response && response.results) {
                         var all = response.results;
                         all.forEach(function(s) {
-                            if (s.remaining === void 0 && s.unwatched_count !== void 0) s.remaining = s.unwatched_count;
+                            if (s.remaining === undefined && s.unwatched_count !== undefined) {
+                                s.remaining = s.unwatched_count;
+                            }
                         });
                         var totalPages = Math.ceil(all.length / PAGE_SIZE) || 1;
                         var start = (currentPage - 1) * PAGE_SIZE;
@@ -4638,7 +5885,9 @@
                             total_pages: totalPages,
                             total_results: all.length
                         });
-                    } else if (onerror) onerror();
+                    } else {
+                        if (onerror) onerror();
+                    }
                 }, {
                     page: 1
                 });
@@ -4649,7 +5898,9 @@
                     if (onerror) onerror();
                     return;
                 }
-                if (!cachedShuffledItems[cacheKey]) cachedShuffledItems[cacheKey] = result.shows.slice();
+                if (!cachedShuffledItems[cacheKey] || getProfileSetting("myshows_sort_order", "progress") === "relevance") {
+                    cachedShuffledItems[cacheKey] = result.shows.slice();
+                }
                 var cached = cachedShuffledItems[cacheKey];
                 var totalPages = Math.ceil(cached.length / PAGE_SIZE);
                 var start = (currentPage - 1) * PAGE_SIZE;
@@ -4659,8 +5910,9 @@
                     total_pages: totalPages,
                     total_results: cached.length
                 });
-            });
+            }, null, object);
         }
+        Log.info("=== ApiMyShows Factory END ===");
         return {
             myshowsWatchlist: myshowsWatchlist,
             myshowsWatched: myshowsWatched,
@@ -4669,7 +5921,7 @@
         };
     }
     var Api = ApiMyShows();
-    Object.keys(Api);
+    Log.info("Api object created:", typeof Api, "methods:", Object.keys(Api));
     function addMyShowsComponents() {
         Lampa.Component.add("myshows_all", function(object) {
             var comp = Lampa.Maker.make("Main", object);
@@ -4690,17 +5942,17 @@
                     var _times = {};
                     function checkComplete(label) {
                         _times[label] = Date.now() - _t0;
-                        _times[label];
+                        Log.info("myshows_all timing: " + label + " → " + _times[label] + "ms");
                         loaded++;
                         if (loaded === total) {
-                            Date.now();
+                            Log.info("myshows_all timing: ALL DONE → " + (Date.now() - _t0) + "ms", _times);
                             buildLines();
                         }
                     }
                     getUnwatchedShowsWithDetails(function(result) {
                         allData.unwatched = result;
                         checkComplete("unwatched");
-                    });
+                    }, null, object);
                     Api.myshowsWatchlist({
                         page: 1
                     }, function(result) {
@@ -4766,7 +6018,9 @@
                             window.surs_getCustomButtonsRow(sursParts);
                             if (sursParts.length > 0) {
                                 sursParts[0](function(buttonsData) {
-                                    if (buttonsData && buttonsData.results && buttonsData.results.length) lines.unshift(buttonsData);
+                                    if (buttonsData && buttonsData.results && buttonsData.results.length) {
+                                        lines.unshift(buttonsData);
+                                    }
                                     finish();
                                 });
                                 return;
@@ -4870,12 +6124,16 @@
     function _getCardFromCache(myshowsId) {
         if (!myshowsId) return null;
         var entry = _tmdbCardCache[String(myshowsId)];
-        if (!entry) return null;
+        if (!entry) {
+            Log.info("TMDB card cache MISS: myshows_id", myshowsId);
+            return null;
+        }
         if (entry.t && Date.now() - entry.t > _cardCacheTTL()) {
+            Log.info("TMDB card cache EXPIRED: myshows_id", myshowsId);
             delete _tmdbCardCache[String(myshowsId)];
             return null;
         }
-        entry.card.title || entry.card.name;
+        Log.info("TMDB card cache HIT: myshows_id", myshowsId, "→", entry.card.title || entry.card.name);
         return entry.card;
     }
     function _saveCardToCache(myshowsId, card) {
@@ -4884,15 +6142,16 @@
             card: card,
             t: Date.now()
         };
-        card.title || card.name;
+        Log.info("TMDB card cache SAVE: myshows_id", myshowsId, "→", card.title || card.name);
         Lampa.Storage.set(_TMDB_CARD_CACHE_KEY, _tmdbCardCache);
     }
     function getTMDBDetailsSimple(items, callback) {
-        items.length;
+        Log.info("getTMDBDetailsSimple: Started with", items.length, "items to enrich");
         var data = {
             results: []
         };
         if (items.length === 0) {
+            Log.info("getTMDBDetailsSimple: No items to process, returning empty result");
             callback({
                 page: 1,
                 results: [],
@@ -4903,106 +6162,123 @@
         }
         var status = new Lampa.Status(items.length);
         status.onComplite = function() {
-            data.results.length;
+            Log.info("getTMDBDetailsSimple: All requests completed, have", data.results.length, "enriched items");
             callback({
                 results: data.results
             });
         };
-        for (var i = 0; i < items.length; i++) (function(currentItem, index) {
-            var cachedCard = _getCardFromCache(currentItem.myshowsId);
-            if (cachedCard) {
-                var cardCopy = {};
-                for (var _k in cachedCard) if (cachedCard.hasOwnProperty(_k)) cardCopy[_k] = cachedCard[_k];
-                cardCopy.myshowsId = currentItem.myshowsId;
-                cardCopy.watchStatus = currentItem.watchStatus;
-                data.results.push(cardCopy);
-                status.append("item_" + index, {});
-                return;
-            }
-            var originalTitle = currentItem.originalTitle || currentItem.title;
-            var cleanedTitle = cleanTitle(originalTitle);
-            var titles = [ originalTitle ];
-            if (cleanedTitle !== originalTitle) titles.push(cleanedTitle);
-            var attempts = [];
-            titles.forEach(function(t) {
-                if (currentItem.year > 1900 && currentItem.year < 2100) attempts.push({
-                    query: t,
-                    year: currentItem.year
-                });
-                attempts.push({
-                    query: t,
-                    year: null
-                });
-            });
-            var attemptIndex = 0;
-            var found = false;
-            var bestUnverified = null;
-            function acceptResult(result, unverified) {
-                found = true;
-                var enriched = result;
-                enriched.myshowsId = currentItem.myshowsId;
-                enriched.watchStatus = currentItem.watchStatus;
-                enriched.type = currentItem.type === "movie" ? "movie" : "tv";
-                if (enriched.type === "tv") {
-                    enriched.last_episode_date = enriched.first_air_date;
-                    enriched.release_date = enriched.first_air_date || "";
-                }
-                enriched.release_year = extractYear(enriched);
-                _saveCardToCache(currentItem.myshowsId, enriched);
-                data.results.push(enriched);
-                if (unverified) currentItem.title, enriched.title || enriched.name; else enriched.title || enriched.name, 
-                currentItem.myshowsId;
-                status.append("item_" + index, {});
-            }
-            function findVerifiedMatch(results) {
-                for (var r = 0; r < results.length; r++) {
-                    var res = results[r];
-                    var resTitle = normalizeForComparison(res.title || res.name || "");
-                    var resOrig = normalizeForComparison(res.original_title || res.original_name || "");
-                    var titleOk = false;
-                    for (var t = 0; t < titles.length; t++) {
-                        var qn = normalizeForComparison(titles[t]);
-                        if (qn && (qn === resTitle || qn === resOrig)) {
-                            titleOk = true;
-                            break;
-                        }
+        for (var i = 0; i < items.length; i++) {
+            (function(currentItem, index) {
+                var cachedCard = _getCardFromCache(currentItem.myshowsId);
+                if (cachedCard) {
+                    var cardCopy = {};
+                    for (var _k in cachedCard) {
+                        if (cachedCard.hasOwnProperty(_k)) cardCopy[_k] = cachedCard[_k];
                     }
-                    if (!titleOk) continue;
-                    var resYear = extractYear(res);
-                    var yearOk = !currentItem.year || !resYear || Math.abs(parseInt(resYear) - parseInt(currentItem.year)) <= 1;
-                    if (yearOk) return res;
-                }
-                return null;
-            }
-            function tryAttempt() {
-                if (found || attemptIndex >= attempts.length) {
-                    if (!found && bestUnverified) acceptResult(bestUnverified, true); else if (!found) status.append("item_" + index, {});
+                    cardCopy.myshowsId = currentItem.myshowsId;
+                    cardCopy.watchStatus = currentItem.watchStatus;
+                    data.results.push(cardCopy);
+                    status.append("item_" + index, {});
                     return;
                 }
-                var attempt = attempts[attemptIndex];
-                var isMovie = currentItem.type === "movie";
-                var endpoint = isMovie ? "search/movie" : "search/tv";
-                var yearParam = isMovie ? "year" : "first_air_date_year";
-                var searchUrl = endpoint + "?api_key=" + Lampa.TMDB.key() + "&query=" + encodeURIComponent(attempt.query) + (attempt.year ? "&" + yearParam + "=" + attempt.year : "") + "&language=" + Lampa.Storage.get("tmdb_lang", "ru");
-                var network = new Lampa.Reguest;
-                network.silent(Lampa.TMDB.api(searchUrl), function(response) {
-                    if (!found && response && response.results && response.results.length > 0) {
-                        if (!bestUnverified) bestUnverified = response.results[0];
-                        var match = findVerifiedMatch(response.results);
-                        if (match) acceptResult(match, false);
+                var originalTitle = currentItem.originalTitle || currentItem.title;
+                var cleanedTitle = cleanTitle(originalTitle);
+                var titles = [ originalTitle ];
+                if (cleanedTitle !== originalTitle) titles.push(cleanedTitle);
+                var attempts = [];
+                titles.forEach(function(t) {
+                    if (currentItem.year > 1900 && currentItem.year < 2100) {
+                        attempts.push({
+                            query: t,
+                            year: currentItem.year
+                        });
                     }
-                    if (!found) {
+                    attempts.push({
+                        query: t,
+                        year: null
+                    });
+                });
+                var attemptIndex = 0;
+                var found = false;
+                var bestUnverified = null;
+                function acceptResult(result, unverified) {
+                    found = true;
+                    var enriched = result;
+                    enriched.myshowsId = currentItem.myshowsId;
+                    enriched.watchStatus = currentItem.watchStatus;
+                    enriched.type = currentItem.type === "movie" ? "movie" : "tv";
+                    if (enriched.type === "tv") {
+                        enriched.last_episode_date = enriched.first_air_date;
+                        enriched.release_date = enriched.first_air_date || "";
+                    }
+                    enriched.release_year = extractYear(enriched);
+                    _saveCardToCache(currentItem.myshowsId, enriched);
+                    data.results.push(enriched);
+                    if (unverified) {
+                        Log.info("getTMDBDetailsSimple: no exact title match for", currentItem.title, "— using best guess", enriched.title || enriched.name);
+                    } else {
+                        Log.info("getTMDBDetailsSimple: Found", enriched.title || enriched.name, "for MyShows ID:", currentItem.myshowsId);
+                    }
+                    status.append("item_" + index, {});
+                }
+                function findVerifiedMatch(results) {
+                    for (var r = 0; r < results.length; r++) {
+                        var res = results[r];
+                        var resTitle = normalizeForComparison(res.title || res.name || "");
+                        var resOrig = normalizeForComparison(res.original_title || res.original_name || "");
+                        var titleOk = false;
+                        for (var t = 0; t < titles.length; t++) {
+                            var qn = normalizeForComparison(titles[t]);
+                            if (qn && (qn === resTitle || qn === resOrig)) {
+                                titleOk = true;
+                                break;
+                            }
+                        }
+                        if (!titleOk) continue;
+                        var resYear = extractYear(res);
+                        var yearOk = !currentItem.year || !resYear || Math.abs(parseInt(resYear) - parseInt(currentItem.year)) <= 1;
+                        if (yearOk) return res;
+                    }
+                    return null;
+                }
+                function tryAttempt() {
+                    if (found || attemptIndex >= attempts.length) {
+                        if (!found && bestUnverified) {
+                            acceptResult(bestUnverified, true);
+                        } else if (!found) {
+                            status.append("item_" + index, {});
+                        }
+                        return;
+                    }
+                    var attempt = attempts[attemptIndex];
+                    var isMovie = currentItem.type === "movie";
+                    var endpoint = isMovie ? "search/movie" : "search/tv";
+                    var yearParam = isMovie ? "year" : "first_air_date_year";
+                    var searchUrl = endpoint + "?api_key=" + Lampa.TMDB.key() + "&query=" + encodeURIComponent(attempt.query) + (attempt.year ? "&" + yearParam + "=" + attempt.year : "") + "&language=" + Lampa.Storage.get("tmdb_lang", "ru");
+                    var network = new Lampa.Reguest;
+                    network.silent(Lampa.TMDB.api(searchUrl), function(response) {
+                        if (!found && response && response.results && response.results.length > 0) {
+                            if (!bestUnverified) bestUnverified = response.results[0];
+                            var match = findVerifiedMatch(response.results);
+                            if (match) acceptResult(match, false);
+                        }
+                        if (!found) {
+                            attemptIndex++;
+                            tryAttempt();
+                        }
+                    }, function(error) {
+                        Log.info("getTMDBDetailsSimple: Search error for", currentItem.title, ":", error);
                         attemptIndex++;
                         tryAttempt();
-                    }
-                }, function(error) {
-                    currentItem.title;
-                    attemptIndex++;
+                    });
+                }
+                if (attempts.length > 0) {
                     tryAttempt();
-                });
-            }
-            if (attempts.length > 0) tryAttempt(); else status.append("item_" + index, {});
-        })(items[i], i);
+                } else {
+                    status.append("item_" + index, {});
+                }
+            })(items[i], i);
+        }
     }
     function addMyShowsMenuItems() {
         function updateMyShowsMenuItem() {
@@ -5019,40 +6295,53 @@
                         });
                     });
                     $(".menu .menu__list").eq(0).append(allButton);
+                    Log.info("MyShows menu item added for profile");
                 }
-            } else if (menuItem.length > 0) menuItem.remove();
+            } else {
+                if (menuItem.length > 0) {
+                    menuItem.remove();
+                    Log.info("MyShows menu item removed for profile");
+                }
+            }
         }
         updateMyShowsMenuItem();
         Lampa.Listener.follow("profile", function(e) {
             if (e.type === "changed") {
+                Log.info("Profile changed, updating MyShows menu");
                 setTimeout(updateMyShowsMenuItem, 100);
                 setTimeout(addMyShowsButtonStyles, 100);
                 setTimeout(addProgressMarkerStyles, 100);
             }
         });
         Lampa.Listener.follow("state:changed", function(e) {
-            if (e.target === "favorite" && e.reason === "profile") setTimeout(updateMyShowsMenuItem, 100);
+            if (e.target === "favorite" && e.reason === "profile") {
+                Log.info("Profile changed, updating MyShows menu");
+                setTimeout(updateMyShowsMenuItem, 100);
+            }
         });
     }
     Lampa.Listener.follow("line", function(event) {
-        if (event.data && event.data.title && event.data.title.indexOf("MyShows") !== -1) if (event.type === "create") {
-            _myShowsLine = event.line || null;
-            if (event.data && event.data.results && event.line) event.data.results.forEach(function(show) {
-                if (!show.ready && event.line.append) event.line.append(show);
-            });
-            var shows = event.data && event.data.results;
-            if (shows && shows.length) setTimeout(function() {
-                shows.forEach(function(show) {
-                    var name = getCardName(show);
-                    if (name && (show.progress_marker || show.remaining || show.next_episode)) updateAllMyShowsCards(name, show.myshowsId, show.progress_marker, show.next_episode, show.remaining);
-                });
-            }, 500);
+        if (event.data && event.data.title && event.data.title.indexOf("MyShows") !== -1) {
+            if (event.type === "create") {
+                _myShowsLine = event.line || null;
+                var shows = event.data && event.data.results;
+                if (shows && shows.length) {
+                    setTimeout(function() {
+                        shows.forEach(function(show) {
+                            var name = getCardName(show);
+                            if (name && (show.progress_marker || show.remaining || show.next_episode)) {
+                                updateAllMyShowsCards(name, show.myshowsId, show.progress_marker, show.next_episode, show.remaining);
+                            }
+                        });
+                    }, 500);
+                }
+            }
         }
     });
     var _onUnwatchedSaved = null;
     var _msttT0 = Date.now();
     function _fireUnwatchedSaved(shows) {
-        Date.now();
+        Log.info("[MS-TT] _fireUnwatchedSaved called, _onUnwatchedSaved:", !!_onUnwatchedSaved, "t=", Date.now() - _msttT0, "ms");
         if (_onUnwatchedSaved) {
             _onUnwatchedSaved(shows);
             _onUnwatchedSaved = null;
@@ -5065,10 +6354,11 @@
         } catch (e) {}
     }
     function initMyShowsTimetable() {
-        Lampa.TimeTable;
-        Lampa.Component;
-        Lampa.Scroll;
-        Lampa.Api && Lampa.Api.sources && Lampa.Api.sources.tmdb;
+        Log.info("[MS-TT] initMyShowsTimetable called");
+        Log.info("[MS-TT] Lampa.TimeTable:", !!Lampa.TimeTable);
+        Log.info("[MS-TT] Lampa.Component:", !!Lampa.Component);
+        Log.info("[MS-TT] Lampa.Scroll:", !!Lampa.Scroll);
+        Log.info("[MS-TT] Lampa.Api.sources.tmdb:", !!(Lampa.Api && Lampa.Api.sources && Lampa.Api.sources.tmdb));
         if (!Lampa.TimeTable || !Lampa.Component) return;
         function pad(n) {
             return n < 10 ? "0" + n : "" + n;
@@ -5201,7 +6491,7 @@
                                 return ep.airDate && parseDate(ep.airDate.substring(0, 10)) >= today;
                             });
                             if (future.length) {
-                                future.length, future[0].airDate.substring(0, 10);
+                                Log.info("[MS-TT]", showName, "- future eps:", future.length, "| next:", future[0].airDate.substring(0, 10));
                                 cacheData.push({
                                     msId: msId,
                                     episodes: future.map(function(ep) {
@@ -5213,7 +6503,9 @@
                                         };
                                     })
                                 });
-                            } else eps.length;
+                            } else {
+                                Log.info("[MS-TT]", showName, "- no future eps (total:", eps.length, ")");
+                            }
                         }
                         done();
                     });
@@ -5221,17 +6513,19 @@
             });
         }
         function fetchUpcoming(msMap, onCache, onRefresh) {
-            if (onCache) readUpcomingCache(function(cached) {
-                var items = buildItemsFromCache(cached, msMap);
-                if (items.length > 0) onCache(items);
-            });
+            if (onCache) {
+                readUpcomingCache(function(cached) {
+                    var items = buildItemsFromCache(cached, msMap);
+                    if (items.length > 0) onCache(items);
+                });
+            }
             if (!getProfileSetting("myshows_token", "")) {
                 if (!onCache && onRefresh) onRefresh([]);
                 return;
             }
             (function() {
                 var mode = getStorageMode();
-                window.IS_NP, Date.now();
+                Log.info("[MS-TT] refresh mode:", mode, "IS_NP:", !!window.IS_NP, "t=", Date.now() - _msttT0, "ms");
                 if (mode === "np") {
                     function refreshNpTimetable(shows, doSync) {
                         var reqList = [], localMap = {};
@@ -5243,7 +6537,7 @@
                                 myshows_id: s.myshowsId || 0
                             });
                         });
-                        reqList.length, Date.now();
+                        Log.info("[MS-TT] np POST timetable, shows:", reqList.length, "sync:", !!doSync, "t=", Date.now() - _msttT0, "ms");
                         if (!reqList.length) {
                             if (onRefresh) onRefresh([]);
                             return;
@@ -5297,7 +6591,7 @@
                                     }
                                 });
                             });
-                            resp.episodes.length, items.length, Date.now();
+                            Log.info("[MS-TT] np timetable resp:", resp.episodes.length, "eps,", items.length, "shows, sync:", !!doSync, "t=", Date.now() - _msttT0, "ms");
                             if (onRefresh) onRefresh(items);
                         };
                         xhr.onerror = function() {
@@ -5313,13 +6607,13 @@
                     });
                     if (currentShows.length) refreshNpTimetable(currentShows, false);
                     _onUnwatchedSaved = function(freshShows) {
-                        freshShows.length, Date.now();
+                        Log.info("[MS-TT] np _onUnwatchedSaved fired, freshShows:", freshShows.length, "t=", Date.now() - _msttT0, "ms");
                         refreshNpTimetable(freshShows, true);
                     };
                 } else {
-                    Date.now();
+                    Log.info("[MS-TT] _onUnwatchedSaved registered, t=", Date.now() - _msttT0, "ms");
                     _onUnwatchedSaved = function(freshShows) {
-                        freshShows.length, Date.now();
+                        Log.info("[MS-TT] _onUnwatchedSaved fired, freshShows:", freshShows.length, "t=", Date.now() - _msttT0, "ms");
                         var freshMap = {};
                         freshShows.forEach(function(s) {
                             if (s && s.myshowsId) freshMap[String(s.myshowsId)] = s;
@@ -5330,13 +6624,15 @@
             })();
         }
         function makeScroll() {
-            if (Lampa.Scroll) try {
-                return new Lampa.Scroll({
-                    mask: true,
-                    over: true,
-                    step: 300
-                });
-            } catch (e) {}
+            if (Lampa.Scroll) {
+                try {
+                    return new Lampa.Scroll({
+                        mask: true,
+                        over: true,
+                        step: 300
+                    });
+                } catch (e) {}
+            }
             var wrap = $('<div style="overflow-y:auto;height:100%;position:relative"></div>');
             var content = $("<div></div>");
             wrap.append(content);
@@ -5354,6 +6650,7 @@
                 }
             };
         }
+        Log.info("[MS-TT] registering timetable component");
         Lampa.Component.add("timetable", function(object) {
             var scroll = makeScroll();
             var html = $("<div></div>");
@@ -5368,6 +6665,7 @@
                 return r;
             }
             this.create = function() {
+                Log.info("[MS-TT] component create() called");
                 self.activity.loader(true);
                 scroll.minus();
                 scroll.append(body);
@@ -5393,17 +6691,17 @@
                     lampaTableIds[e.id] = true;
                 });
                 function applyItems(msItems) {
-                    msItems.length;
+                    Log.info("[MS-TT] applyItems:", msItems.length, "items");
                     var msTable = [];
                     msItems.forEach(function(item) {
                         if (lampaTableIds[item.tableEntry.id]) {
-                            item.card.name;
+                            Log.info("[MS-TT] skip (in lampaTable):", item.card.name);
                             return;
                         }
                         cardsMap[item.tableEntry.id] = item.card;
                         msTable.push(item.tableEntry);
                     });
-                    msTable.length, lampaTable.length, msTable.length;
+                    Log.info("[MS-TT] msTable:", msTable.length, "total:", lampaTable.length + msTable.length);
                     self._fill(lampaTable.concat(msTable), cardsMap);
                 }
                 function buildMsMap(shows) {
@@ -5451,7 +6749,7 @@
                             saveCacheToServer({
                                 shows: allCards
                             }, "timetable_extra", function() {}, getProfileId());
-                            allCards.length;
+                            Log.info("[MS-TT] timetable_extra saved:", allCards.length, "shows");
                             onDone(map);
                         }
                         if (!toEnrich.length) {
@@ -5463,7 +6761,7 @@
                                 if (!card.myshowsId || !card.id) return;
                                 msMap[String(card.myshowsId)] = card;
                             });
-                            toEnrich.length, Object.keys(msMap).length;
+                            Log.info("[MS-TT] profile.Shows enriched:", toEnrich.length, "missing, total:", Object.keys(msMap).length);
                             saveAndDone(msMap);
                         });
                     });
@@ -5472,22 +6770,24 @@
                     var extraShows = extraResult && extraResult.shows;
                     if (extraShows && extraShows.length > 0) {
                         var msMap = buildMsMap(extraShows);
-                        extraShows.length;
+                        Log.info("[MS-TT] timetable_extra hit:", extraShows.length, "shows");
                         fetchUpcoming(msMap, applyItems, applyItems);
                         loadCacheFromServer("unwatched_serials", "shows", function(uwResult) {
                             var baseMap = buildMsMap(uwResult && uwResult.shows);
                             refreshTimetableExtra(baseMap, function(freshMap) {
-                                Object.keys(freshMap).length;
+                                Log.info("[MS-TT] timetable_extra bg refresh done:", Object.keys(freshMap).length);
                                 fetchUpcoming(freshMap, null, applyItems);
                             });
                         }, getProfileId());
-                    } else loadCacheFromServer("unwatched_serials", "shows", function(uwResult) {
-                        var baseMap = buildMsMap(uwResult && uwResult.shows);
-                        refreshTimetableExtra(baseMap, function(fullMap) {
-                            Object.keys(fullMap).length;
-                            fetchUpcoming(fullMap, null, applyItems);
-                        });
-                    }, getProfileId());
+                    } else {
+                        loadCacheFromServer("unwatched_serials", "shows", function(uwResult) {
+                            var baseMap = buildMsMap(uwResult && uwResult.shows);
+                            refreshTimetableExtra(baseMap, function(fullMap) {
+                                Log.info("[MS-TT] timetable_extra cold built:", Object.keys(fullMap).length);
+                                fetchUpcoming(fullMap, null, applyItems);
+                            });
+                        }, getProfileId());
+                    }
                 }, getProfileId());
                 return self.render();
             };
@@ -5507,7 +6807,9 @@
                     self._day(new Date(cur), table, cardsMap);
                     cur.setDate(cur.getDate() + 1);
                 }
-                if (!last || !document.body.contains(last)) last = (lastDate ? body.find('.timetable__item[data-air="' + lastDate + '"]')[0] : null) || body.find(".timetable__item").first()[0];
+                if (!last || !document.body.contains(last)) {
+                    last = (lastDate ? body.find('.timetable__item[data-air="' + lastDate + '"]')[0] : null) || body.find(".timetable__item").first()[0];
+                }
                 try {
                     var enabled = Lampa.Controller.enabled();
                     if (enabled && enabled.name === "content") Lampa.Controller.toggle("content");
@@ -5581,21 +6883,25 @@
                     foot.append("<div>E&nbsp;&mdash;&nbsp;<b>" + elem.episode.episode_number + "</b></div>");
                     noty.find(".notice__descr").append(foot);
                     var img = cardImg(elem.card, null);
-                    if (img) noty.find("img").attr("src", img).on("load", function() {
-                        noty.addClass("image--loaded");
-                    }).on("error", function() {
-                        $(this).remove();
-                    });
+                    if (img) {
+                        noty.find("img").attr("src", img).on("load", function() {
+                            noty.addClass("image--loaded");
+                        }).on("error", function() {
+                            $(this).remove();
+                        });
+                    }
                     noty.on("hover:enter", function() {
                         Lampa.Modal.close();
-                        if (!elem.card._ms) Lampa.Activity.push({
-                            url: "",
-                            component: "full",
-                            id: elem.card.id,
-                            method: "tv",
-                            card: elem.card,
-                            source: elem.card.source
-                        });
+                        if (!elem.card._ms) {
+                            Lampa.Activity.push({
+                                url: "",
+                                component: "full",
+                                id: elem.card.id,
+                                method: "tv",
+                                card: elem.card,
+                                source: elem.card.source
+                            });
+                        }
                     });
                     modal.append(noty);
                 });
@@ -5664,7 +6970,7 @@
                 var cardData = cardElement.card_data;
                 _applyProgressFromMap(cardData);
                 if (cardData && (cardData.progress_marker || cardData.next_episode || cardData.remaining)) {
-                    cardData.original_title || cardData.title;
+                    Log.info("Card visible, adding markers:", cardData.original_title || cardData.title);
                     addProgressMarkerToCard(cardElement, cardData);
                 }
             }
@@ -5674,16 +6980,22 @@
                 var cards = document.querySelectorAll(".card");
                 cards.forEach(function(cardElement) {
                     var cardData = cardElement.card_data;
-                    if (cardData && (cardData.progress_marker || cardData.next_episode || cardData.remaining)) addProgressMarkerToCard(cardElement, cardData);
+                    if (cardData && (cardData.progress_marker || cardData.next_episode || cardData.remaining)) {
+                        addProgressMarkerToCard(cardElement, cardData);
+                    }
                 });
             }, 100);
         });
     }
     function addProgressMarkerToCard(htmlElement, cardData) {
         var cardElement = htmlElement;
-        if (htmlElement && (htmlElement.get || htmlElement.jquery)) cardElement = htmlElement.get ? htmlElement.get(0) : htmlElement[0];
+        if (htmlElement && (htmlElement.get || htmlElement.jquery)) {
+            cardElement = htmlElement.get ? htmlElement.get(0) : htmlElement[0];
+        }
         if (!cardElement) return;
-        if (!cardData) cardData = cardElement.card_data || cardElement.data;
+        if (!cardData) {
+            cardData = cardElement.card_data || cardElement.data;
+        }
         if (!cardData) return;
         var cardView = cardElement.querySelector(".card__view");
         if (!cardView) return;
@@ -5696,7 +7008,9 @@
             if (progressMarker) {
                 var oldText = progressMarker.textContent || "";
                 var newText = cardData.progress_marker;
-                if (oldText !== newText) updateCardWithAnimation(cardElement, newText, "myshows-progress");
+                if (oldText !== newText) {
+                    updateCardWithAnimation(cardElement, newText, "myshows-progress");
+                }
             } else {
                 progressMarker = document.createElement("div");
                 progressMarker.className = "myshows-progress";
@@ -5713,12 +7027,14 @@
             var existingProgress = cardView.querySelector(".myshows-progress");
             if (existingProgress) existingProgress.remove();
         }
-        if (cardData.remaining !== void 0 && cardData.remaining !== null && (showRemaining === true || showRemaining === "true")) {
+        if (cardData.remaining !== undefined && cardData.remaining !== null && (showRemaining === true || showRemaining === "true")) {
             var remainingMarker = cardView.querySelector(".myshows-remaining");
             if (remainingMarker) {
                 var oldRemaining = remainingMarker.textContent || "";
                 var newRemaining = cardData.remaining.toString();
-                if (oldRemaining !== newRemaining) updateCardWithAnimation(cardElement, newRemaining, "myshows-remaining");
+                if (oldRemaining !== newRemaining) {
+                    updateCardWithAnimation(cardElement, newRemaining, "myshows-remaining");
+                }
             } else {
                 remainingMarker = document.createElement("div");
                 remainingMarker.className = "myshows-remaining";
@@ -5740,7 +7056,9 @@
             if (nextEpisodeMarker) {
                 var oldNext = nextEpisodeMarker.textContent || "";
                 var newNext = cardData.next_episode;
-                if (oldNext !== newNext) updateCardWithAnimation(cardElement, newNext, "myshows-next-episode");
+                if (oldNext !== newNext) {
+                    updateCardWithAnimation(cardElement, newNext, "myshows-next-episode");
+                }
             } else {
                 nextEpisodeMarker = document.createElement("div");
                 nextEpisodeMarker.className = "myshows-next-episode";
@@ -5764,8 +7082,9 @@
         patchActivityForMyShows();
         checkLampacEnvironment(function(isLampac) {
             IS_LAMPAC = isLampac;
-            if (IS_LAMPAC) ;
+            if (IS_LAMPAC) Log.info("✅ Среда: Lampac");
             initCurrentProfile();
+            if (!channelEnabled() || !getProfileSetting("myshows_token", "")) clearAndroidChannel(false);
             applyBadgeStyleAttr();
             registerNMSync();
             setTimeout(function() {
@@ -5806,7 +7125,9 @@
             } catch (e) {}
             MYSHOWS_SYNC_KEYS.forEach(function(key) {
                 var profileKey = getProfileKey(key);
-                if (serverKeys.indexOf(profileKey) < 0 && hasProfileSetting(key)) setProfileSetting(key, getProfileSetting(key));
+                if (serverKeys.indexOf(profileKey) < 0 && hasProfileSetting(key)) {
+                    setProfileSetting(key, getProfileSetting(key));
+                }
             });
         });
     }
@@ -5826,9 +7147,11 @@
                 setProfileSetting("myshows_use_np", value);
                 if (value) {
                     var cached = cachedShuffledItems["unwatched_raw"];
-                    if (cached && cached.length) saveCacheToServer({
-                        shows: cached
-                    }, "unwatched_serials", function() {});
+                    if (cached && cached.length) {
+                        saveCacheToServer({
+                            shows: cached
+                        }, "unwatched_serials", function() {});
+                    }
                 }
             }
         });
@@ -5845,7 +7168,13 @@
         } catch (e) {}
         console.log("MyShows", "plugin ready, version", VERSION);
     }
-    if (window.appready) boot(); else Lampa.Listener.follow("app", function(event) {
-        if (event.type === "ready") boot();
-    });
+    if (window.appready) {
+        boot();
+    } else {
+        Lampa.Listener.follow("app", function(event) {
+            if (event.type === "ready") {
+                boot();
+            }
+        });
+    }
 })();

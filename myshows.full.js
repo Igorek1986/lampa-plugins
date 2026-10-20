@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    var VERSION = '1.0.12';
+    var VERSION = '1.0.17';
 
     var DEFAULT_ADD_THRESHOLD = '0';
     var DEFAULT_MIN_PROGRESS = 90;
@@ -105,6 +105,229 @@
     // Инкрементируется при каждой смене профиля. Асинхронные рендеры карточек
     // сверяют захваченный токен, чтобы не вставлять данные предыдущего профиля.
     var _profileRenderToken = 0;
+
+    // Device-local opt-in, per profile. Native booleans acknowledge enqueue,
+    // not completion of a TvProvider write.
+    var _channelGeneration = 0;
+    var _channelShows = null;
+    var _channelPublication = 0;
+
+    function channelSupported() {
+        return window.AndroidJS &&
+            typeof window.AndroidJS.publishPluginChannel === 'function' &&
+            typeof window.AndroidJS.clearPluginChannel === 'function';
+    }
+
+    function channelEnabled() {
+        var enabled = getProfileSetting('myshows_android_tv', false);
+        return enabled === true || enabled === 'true';
+    }
+
+    function channelContext() {
+        return { generation: _channelGeneration, profile: getProfileId(),
+            token: getProfileSetting('myshows_token', '') };
+    }
+
+    function channelContextCurrent(context) {
+        return context && context.generation === _channelGeneration &&
+            context.profile === getProfileId() && context.token &&
+            context.token === getProfileSetting('myshows_token', '');
+    }
+
+    function clearAndroidChannel(notify) {
+        if (!channelSupported()) return;
+        try {
+            if (window.AndroidJS.clearPluginChannel('myshows') === true) return;
+        } catch (e) { /* Some native implementations throw instead of returning false. */ }
+        Log.warn('Android TV channel clear rejected');
+        if (notify) Lampa.Noty.show('Android TV: не удалось очистить канал MyShows');
+    }
+
+    function invalidateAndroidChannel(notify) {
+        _channelGeneration++;
+        _channelShows = null;
+        clearAndroidChannel(notify);
+    }
+
+    function publishAndroidChannel(shows, context, prepared) {
+        if (!channelSupported() || !channelEnabled() || !channelContextCurrent(context) ||
+            !Array.isArray(shows)) return;
+        if (!prepared && getProfileSetting('myshows_sort_order', 'progress') === 'relevance') {
+            var publication = ++_channelPublication;
+            publishAndroidChannel(shows, context, true);
+            prepareRelevance(shows, context, function() {
+                if (publication === _channelPublication) publishAndroidChannel(shows, context, true);
+            });
+            return;
+        }
+        var sorted = shows.slice();
+        sortShows(sorted, getProfileSetting('myshows_sort_order', 'progress'));
+        var items = [];
+        // Explicit allowlist: cached cards may contain unrelated/private properties.
+        var fields = ['name', 'title', 'original_name', 'original_title', 'poster_path',
+            'backdrop_path', 'first_air_date', 'release_date', 'release_year', 'vote_average'];
+        sorted.forEach(function(show) {
+            if (!show || !show.id || !(show.name || show.title)) return;
+            var item = { id: String(show.id), source: 'tmdb', type: 'tv' };
+            fields.forEach(function(key) {
+                if (typeof show[key] === 'string' || typeof show[key] === 'number') item[key] = show[key];
+            });
+            var description = typeof show.overview === 'string' ? show.overview : '';
+            var details = [];
+            if (show.next_episode) details.push('Next: ' + show.next_episode);
+            var remaining = show.remaining !== undefined ? show.remaining : show.unwatched_count;
+            if (typeof remaining === 'number' && remaining >= 0) details.push('Unwatched: ' + remaining);
+            item.overview = description + (description && details.length ? '\n' : '') + details.join(' · ');
+            items.push(item);
+        });
+        // A malformed nonempty list is not a successful empty result.
+        if (shows.length && !items.length) return;
+        if (!shows.length) {
+            _channelShows = [];
+            clearAndroidChannel(false);
+            return;
+        }
+        try {
+            if (window.AndroidJS.publishPluginChannel(JSON.stringify({
+                id: 'myshows', title: 'MyShows', items: items
+            })) === true) {
+                _channelShows = sorted;
+                return;
+            }
+        } catch (e) { /* Preserve the last successful list on a native rejection. */ }
+        Log.warn('Android TV channel publish rejected');
+    }
+
+    // Device-local history survives NP cards without dates and completed shows.
+    var _relevancePending = {};
+    var _relevanceQueue = [];
+    var _relevanceActive = 0;
+
+    function relevanceDate(value) {
+        if (typeof value !== 'string') return 0;
+        var match = /^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(Z|[+-](\d{2}):?(\d{2})))?$/.exec(value);
+        if (!match) return 0;
+        var day = new Date(Date.UTC(+match[1], +match[2] - 1, +match[3]));
+        if (day.getUTCFullYear() !== +match[1] || day.getUTCMonth() !== +match[2] - 1 ||
+            day.getUTCDate() !== +match[3]) return 0;
+        if (match[4] !== undefined && (+match[4] > 23 || +match[5] > 59 || +match[6] > 59 ||
+            +match[8] > 23 || +match[9] > 59)) return 0;
+        // MyShows v3 returns compact offsets, e.g. +0300. Normalize for engines
+        // that support only the colon form; never infer an absent timezone.
+        var normalized = value.replace(/([+-]\d{2})(\d{2})$/, '$1:$2');
+        var time = Date.parse(normalized);
+        return isFinite(time) && time > 0 && time <= Date.now() ? time : 0;
+    }
+
+    function relevanceHistory() {
+        return getProfileSetting('myshows_relevance_history', {});
+    }
+
+    function relevanceRelease(show) {
+        var ep = show.last_episode_to_myshows;
+        var hasDates = ep && (ep.air_date_utc !== undefined || ep.air_date !== undefined);
+        var latest = ep ? relevanceDate(ep.air_date_utc || ep.air_date) : 0;
+        (show.unwatchedEpisodes || []).forEach(function(episode) {
+            if (!episode) return;
+            if (episode.airDateUTC !== undefined || episode.airDate !== undefined) hasDates = true;
+            latest = Math.max(latest, relevanceDate(episode.airDateUTC || episode.airDate));
+        });
+        return hasDates ? latest : null;
+    }
+
+    function rememberReleaseDates(shows) {
+        var map = relevanceHistory();
+        shows.forEach(function(show) {
+            if (!show || !show.myshowsId || (!show.last_episode_to_myshows && !show.unwatchedEpisodes)) return;
+            var entry = map[show.myshowsId] || {};
+            var release = relevanceRelease(show);
+            if (release !== null) entry.release = release;
+            map[show.myshowsId] = entry;
+        });
+        setProfileSetting('myshows_relevance_history', map, false);
+    }
+
+    function pumpRelevanceHistory() {
+        while (_relevanceActive < 2 && _relevanceQueue.length) {
+            var task = _relevanceQueue.shift();
+            if (!channelContextCurrent(task.context)) {
+                delete _relevancePending[task.key];
+                task.callbacks.forEach(function(fn) { fn(); });
+                continue;
+            }
+            _relevanceActive++;
+            (function(request) {
+                makeMyShowsJSONRPCRequest('profile.Episodes', {showId: request.id}, function(ok, response) {
+                    _relevanceActive--;
+                    delete _relevancePending[request.key];
+                    if (channelContextCurrent(request.context)) {
+                        var map = relevanceHistory();
+                        var entry = map[request.id] || {};
+                        // Successful local marks invalidate an older history response.
+                        if ((entry.version || 0) === request.version) {
+                            if (ok && response && Array.isArray(response.result)) {
+                                var latest = 0;
+                                response.result.forEach(function(ep) {
+                                    latest = Math.max(latest, relevanceDate(ep && ep.watchDate));
+                                });
+                                entry.watch = latest;
+                                entry.checked = Date.now();
+                            } else {
+                                Log.warn('MyShows viewing history unavailable');
+                                entry.checked = Date.now() - 3540000; // Retry in one minute, retain date.
+                            }
+                            entry.dateParser = 2;
+                            map[request.id] = entry;
+                            setProfileSetting('myshows_relevance_history', map, false);
+                        }
+                    }
+                    request.callbacks.forEach(function(fn) { fn(); });
+                    pumpRelevanceHistory();
+                });
+            })(task);
+        }
+    }
+
+    function prepareRelevance(shows, context, callback) {
+        if (getProfileSetting('myshows_sort_order', 'progress') !== 'relevance') { callback(); return; }
+        if (!shows.length && context.generation === _channelGeneration && context.profile === getProfileId() &&
+            context.token === getProfileSetting('myshows_token', '')) { callback(); return; }
+        if (!channelContextCurrent(context)) return;
+        rememberReleaseDates(shows);
+        var map = relevanceHistory(), waiting = 0;
+        var ids = {};
+        shows.forEach(function(show) { if (show && show.myshowsId) ids[show.myshowsId] = true; });
+        function complete() {
+            if (--waiting === 0 && channelContextCurrent(context)) callback();
+        }
+        Object.keys(ids).forEach(function(id) {
+            var entry = map[id] || {};
+            // Revalidate pre-compact-offset caches once, preserving known dates
+            // until a successful response. Errors retain the normal retry window.
+            if (entry.dateParser === 2 && entry.checked && Date.now() - entry.checked < 3600000) return;
+            waiting++;
+            var key = context.generation + ':' + context.profile + ':' + id + ':' + (entry.version || 0);
+            if (_relevancePending[key]) { _relevancePending[key].callbacks.push(complete); return; }
+            var task = {id: parseInt(id, 10), key: key, context: context,
+                version: entry.version || 0, callbacks: [complete]};
+            _relevancePending[key] = task;
+            _relevanceQueue.push(task);
+        });
+        if (!waiting) callback();
+        else pumpRelevanceHistory();
+    }
+
+    function sortByRelevance(a, b) {
+        var map = relevanceHistory();
+        function time(show) {
+            var entry = map[show.myshowsId] || {};
+            var release = entry.release !== undefined ? entry.release : relevanceRelease(show);
+            if (release === null) release = entry.release || 0;
+            var watch = entry.watch > 0 && entry.watch <= Date.now() ? entry.watch : 0;
+            return Math.max(watch, release <= Date.now() ? release : 0);
+        }
+        return time(b) - time(a) || sortByAlphabet(a, b);
+    }
 
     function getNpBaseUrl() {
         return Lampa.Storage.get('base_url_numparser', '');
@@ -280,9 +503,42 @@
     // profileId — профиль-источник запроса. Если запрос стартовал в профиле A,
     // а пользователь успел переключиться на B, данные всё равно лягут в кэш A.
     // Не передан → текущий профиль (backward-compat).
-    function saveCacheToServer(cacheData, path, callback, profileId) {
+    function saveCacheToServer(cacheData, path, callback, profileId, channelRequest, channelUpdate) {
         var mode = getStorageMode();
         if (profileId === undefined || profileId === null) profileId = getProfileId();
+        // Data publication is independent of cache persistence. Async callers carry
+        // the original generation so profile ABA/logout cannot restore old cards.
+        if (path === 'unwatched_serials' && profileId === getProfileId() && cacheData) {
+            var publication = cacheData.shows;
+            // An episode change updates one show, not the entire list. NP reads
+            // can return only one page; retain unrelated already-published cards.
+            if (channelUpdate && _channelShows && channelContextCurrent(channelRequest)) {
+                publication = _channelShows.slice();
+                var previous = matchShowInArray(publication, channelUpdate.show);
+                var index = previous ? publication.indexOf(previous) : -1;
+                if (channelUpdate.remove) {
+                    if (index >= 0) publication.splice(index, 1);
+                } else {
+                    var updated = {};
+                    var key;
+                    if (previous) {
+                        for (key in previous) {
+                            if (previous.hasOwnProperty(key)) updated[key] = previous[key];
+                        }
+                    }
+                    for (key in channelUpdate.show) {
+                        if (channelUpdate.show.hasOwnProperty(key)) updated[key] = channelUpdate.show[key];
+                    }
+                    if (index >= 0) publication[index] = updated;
+                    else publication.push(updated);
+                }
+            }
+            var listContext = channelRequest || channelContext();
+            publishAndroidChannel(publication, listContext);
+            if (Array.isArray(publication)) prepareRelevance(publication, listContext, function() {
+                reorderCardsInMyShowsSection();
+            });
+        }
         Log.info('Save', 'Cache: ', cacheData, 'Path:', path, 'Mode:', mode, 'Profile:', profileId);
 
         var NP_PATHS = {
@@ -561,9 +817,17 @@
         // не должен вставлять карточки предыдущего профиля.
         var renderToken = _profileRenderToken;
 
+        var channelRequest = channelContext();
+
         loadCacheFromServer('unwatched_serials', 'shows', function(cachedResult) {
             if (renderToken !== _profileRenderToken) return;
             var cachedShows = cachedResult && cachedResult.shows;
+            if (cachedShows) {
+                publishAndroidChannel(cachedShows, channelRequest);
+                prepareRelevance(cachedShows, channelRequest, function() {
+                    reorderCardsInMyShowsSection();
+                });
+            }
             // Сидим in-memory set непросмотренных серий из кэша СРАЗУ (local/Storage, Lampac/файл,
             // NP/БД — все теперь хранят id серий) — чтобы на холодном старте уже знать серии,
             // не дожидаясь fetchFromMyShowsAPI (он обновит через updateDelay).
@@ -817,6 +1081,11 @@
 
     function setProfileSetting(key, value, sync) {
         value = storableValue(value);
+        if (key === 'myshows_token' && value !== getProfileSetting(key, '') && getProfileSetting(key, '')) {
+            // A different account may sign into the same Lampa profile.
+            setProfileSetting('myshows_relevance_history', {}, false);
+            invalidateAndroidChannel(!value);
+        }
         Lampa.Storage.set(getProfileKey(key), value);
         if (sync !== false && !_syncApplying && window.__NMSync) window.__NMSync.patch('myshows', getProfileKey(key), value);
     }
@@ -829,17 +1098,24 @@
         if (profileKey.indexOf('_profile_') < 0) return;
 
         value = storableValue(value);
+        var base = profileKey.slice(0, profileKey.lastIndexOf('_profile_'));
+        var tokenChanged = base === 'myshows_token' && value !== Lampa.Storage.get(profileKey, '');
+        if (tokenChanged) {
+            var targetProfile = profileKey.slice(profileKey.lastIndexOf('_profile_') + 9);
+            Lampa.Storage.set(profileKeyFor('myshows_relevance_history', targetProfile), {});
+        }
         _syncApplying = true;
         Lampa.Storage.set(profileKey, value);
-        var base = profileKey.slice(0, profileKey.lastIndexOf('_profile_'));
         if (getProfileKey(base) === profileKey) {
             Lampa.Storage.set(base, value, true);
             if (base === 'myshows_badge_style') applyBadgeStyleAttr();
+            if (tokenChanged) invalidateAndroidChannel(!value);
         }
         _syncApplying = false;
     }
 
     function loadProfileSettings() {
+        if (!hasProfileSetting('myshows_android_tv')) setProfileSetting('myshows_android_tv', false, false);
         if (!hasProfileSetting('myshows_view_in_main')) {
             setProfileSetting('myshows_view_in_main', true, false);
         }
@@ -903,6 +1179,7 @@
             setProfileSetting('myshows_badge_style', '1', false);
         }
 
+        Lampa.Storage.set('myshows_android_tv', storableValue(getProfileSetting('myshows_android_tv', false)), true);
         Lampa.Storage.set('myshows_view_in_main',  storableValue(getProfileSetting('myshows_view_in_main',  true)), true);
         Lampa.Storage.set('myshows_button_view',   storableValue(getProfileSetting('myshows_button_view',   true)), true);
         Lampa.Storage.set('myshows_sort_order',    getProfileSetting('myshows_sort_order',    'progress'), true);
@@ -1035,6 +1312,22 @@
         autoSetupToken();
         var tokenValue = getProfileSetting('myshows_token', '');
 
+        Lampa.SettingsApi.addParam({
+            component: 'myshows',
+            param: { name: 'myshows_android_tv', type: 'trigger',
+                default: getProfileSetting('myshows_android_tv', false) },
+            field: { name: 'MyShows на главном экране Android TV',
+                description: channelSupported() ?
+                    'Публиковать непросмотренные сериалы отдельным каналом. Обновляется, пока работает Lampa.' :
+                    'Нужна версия Lampa для Android TV с поддержкой каналов плагинов. Текущая версия не поддерживает публикацию.' },
+            onChange: function(value) {
+                setProfileSetting('myshows_android_tv', value, false);
+                if (!channelEnabled()) invalidateAndroidChannel(true);
+                else if (channelSupported()) initMyShowsCaches();
+                else Lampa.Noty.show('Нужна Lampa для Android TV с поддержкой каналов плагинов');
+            }
+        });
+
         if (tokenValue) {
             Lampa.SettingsApi.addParam({
                 component: 'myshows',
@@ -1076,6 +1369,7 @@
                     values: {
                         'alphabet': 'По алфавиту',
                         'progress': 'По прогрессу',
+                        'relevance': 'По актуальности',
                         'unwatched_count': 'По количеству непросмотренных',
                         'air_date': 'По дате последнего эпизода ↓',
                         'air_date_asc': 'По дате последнего эпизода ↑',
@@ -1089,7 +1383,9 @@
                     description: 'Порядок отображения сериалов на главной странице'
                 },
                 onChange: function(value) {
+                    _channelPublication++;
                     setProfileSetting('myshows_sort_order', value);
+                    if (_channelShows) publishAndroidChannel(_channelShows, channelContext());
                     cachedShuffledItems = {};
                     setTimeout(function() {
                         var activity = Lampa.Activity.active();
@@ -1404,6 +1700,7 @@
 
         // Инвалидируем все незавершённые async-рендеры предыдущего профиля
         _profileRenderToken++;
+        invalidateAndroidChannel(true);
 
         Log.info('🔄 Profile changed to:', newProfileId);
 
@@ -1869,8 +2166,10 @@
     }
 
      // Получить непросмотренные серии
-    function fetchFromMyShowsAPI(callback) {
+    function fetchFromMyShowsAPI(callback, originalChannelRequest) {
         var startProfile = getProfileId();
+        var channelRequest = originalChannelRequest || channelContext();
+        if (originalChannelRequest && !channelContextCurrent(originalChannelRequest)) return;
         makeMyShowsJSONRPCRequest('lists.EpisodesUnwatched', {}, function(success, response) {
             if (!response || !response.result) {
                 callback({ error: response ? response.error : 'Empty response' });
@@ -2005,13 +2304,20 @@
                         // долетели до бэкенда — теперь можно снова доверять cachedShows.
                         if (ok) _skipCachedShowsOnce = false;
                         _fireUnwatchedSaved(result.shows);
-                    }, startProfile);
+                    }, startProfile, channelRequest);
 
                     // In-memory карта прогресса — только если профиль не сменился
                     if (sameProfile) _populateProgressMap(result.shows);
                 }
                 // callback (двигает UI) — только для текущего профиля
-                callback(sameProfile ? result : { error: 'profile changed' });
+                if (sameProfile && result && result.shows) {
+                    if (!channelContextCurrent(channelRequest)) return;
+                    sortShows(result.shows, getProfileSetting('myshows_sort_order', 'progress'));
+                    callback(result);
+                    prepareRelevance(result.shows, channelRequest, function() {
+                        reorderCardsInMyShowsSection();
+                    });
+                } else callback({ error: 'profile changed' });
             });
         });
     }
@@ -2563,6 +2869,7 @@
         var hash = data.data.hash;
         var percent = data.data.road.percent;
         var token = getProfileSetting('myshows_token', '');
+        var channelRequest = channelContext();
         var minProgress = parseInt(getProfileSetting('myshows_min_progress', DEFAULT_MIN_PROGRESS));
         var addThreshold = parseInt(getProfileSetting('myshows_add_threshold', DEFAULT_ADD_THRESHOLD));
 
@@ -2626,7 +2933,7 @@
                         var newEntry = newMap[mapKey];
                         var newEpisodeId = newEntry && newEntry.episodeId ? newEntry.episodeId : newEntry;
                         if (newEpisodeId) {
-                            processEpisode(newEpisodeId, hash, percent, card, token, minProgress, addThreshold, newEntry && newEntry.airDate);
+                            processEpisode(newEpisodeId, hash, percent, card, token, minProgress, addThreshold, newEntry && newEntry.airDate, channelRequest);
                         } else {
                             Log.info('Нет newEpisodeId — ищем в EPISODES_CACHE');
                             var episodes_hash = EPISODES_CACHE[tmdbKey] || EPISODES_CACHE[card.original_name || card.original_title || card.title];
@@ -2645,7 +2952,7 @@
                             }
 
                             if (episodeId) {
-                                processEpisode(episodeId, hash, percent, card, token, minProgress, addThreshold, hitAirDate);
+                                processEpisode(episodeId, hash, percent, card, token, minProgress, addThreshold, hitAirDate, channelRequest);
                             } else {
                                 Log.warn('❌ Не найден episodeId даже в EPISODES_CACHE для хеша:', hash);
                             }
@@ -2655,7 +2962,7 @@
                 }
                  Log.info('CheckEpisode episodeId', episodeId);
 
-                processEpisode(episodeId, hash, percent, card, token, minProgress, addThreshold, airDate);
+                processEpisode(episodeId, hash, percent, card, token, minProgress, addThreshold, airDate, channelRequest);
             });
         }
     }
@@ -2676,7 +2983,7 @@
         return d.getTime() >= today.getTime();
     }
 
-    function processEpisode(episodeId, hash, percent, card, token, minProgress, addThreshold, airDate) {
+    function processEpisode(episodeId, hash, percent, card, token, minProgress, addThreshold, airDate, channelRequest) {
 
         var originalName = card.original_name || card.original_title || card.title;
         var firstEpisodeHash = Lampa.Utils.hash('11' + originalName);
@@ -2707,7 +3014,7 @@
                     delete checkedEpisodes[episodeId];
                     _unwatchedEpisodeIds[parseInt(episodeId)] = true; // снова непросмотрена
                     Log.info('[MS-guard] ✅ episodeId ' + episodeId + ' отметка снята');
-                    applyEpisodeMarkLocally(card, episodeId, false);
+                    applyEpisodeMarkLocally(card, episodeId, false, channelRequest);
                 });
             });
             return;
@@ -2751,7 +3058,7 @@
                     if (!alreadyWatching) {
                         ensureWatchingStatus(card, 'отметка серии при статусе "' + currentStatus + '"', function() {});
                     }
-                    applyEpisodeMarkLocally(card, episodeId, true);
+                    applyEpisodeMarkLocally(card, episodeId, true, channelRequest);
                 });
             };
 
@@ -2833,8 +3140,52 @@
         }
     }
 
-    function getUnwatchedShowsWithDetails(callback, show) {
+    function getUnwatchedShowsWithDetails(callback, show, sourceRequest) {
         Log.info('getUnwatchedShowsWithDetails called');
+        var requestedContext = channelContext();
+        var originalCallback = callback;
+        // Native components are created before Activity.push activates them.
+        // Bind to the request handle, not the previous screen on the stack.
+        var owner = sourceRequest && sourceRequest.activity ? sourceRequest : Lampa.Activity.active();
+        var handle = owner && owner.activity;
+        var request = sourceRequest || owner || {};
+        var source = request.source, url = request.url, page = request.page, query = request.query;
+        callback = function(result) {
+            if (!result || !result.shows) { originalCallback(result); return; }
+            if (requestedContext.generation !== _channelGeneration || requestedContext.profile !== getProfileId() ||
+                requestedContext.token !== getProfileSetting('myshows_token', '')) return;
+            var delivered = false, order;
+            function signature() {
+                return result.shows.map(function(item) { return item.myshowsId || item.id || getCardName(item); }).join('|');
+            }
+            // Cached history and fresh release metadata must participate BEFORE
+            // consumers slice the first page. Async history keeps the fast callback.
+            prepareRelevance(result.shows, requestedContext, function() {
+                if (getProfileSetting('myshows_sort_order', 'progress') !== 'relevance') return;
+                sortShows(result.shows, 'relevance');
+                if (!delivered || signature() === order) return;
+                function current() {
+                    var active = Lampa.Activity.active();
+                    return channelContextCurrent(requestedContext) &&
+                        getProfileSetting('myshows_sort_order', 'progress') === 'relevance' &&
+                        handle && active && active.activity === handle && owner.activity === handle &&
+                        request.source === source && request.url === url && request.page === page && request.query === query &&
+                        /^(main|category|myshows_all|myshows_unwatched)$/.test(active.component || '');
+                }
+                if (!current()) return;
+                // ActivitySlide.refresh queues an unguarded replacement. Own only
+                // this delay and recheck at execution; never touch native timers.
+                setTimeout(function() {
+                    if (!current() || typeof Lampa.Activity.replace !== 'function') return;
+                    if (handle.component && typeof handle.component.beforeRefresh === 'function') handle.component.beforeRefresh();
+                    if (current()) Lampa.Activity.replace();
+                }, 400);
+            });
+            sortShows(result.shows, getProfileSetting('myshows_sort_order', 'progress'));
+            order = signature();
+            originalCallback(result);
+            delivered = true;
+        };
 
         // isNpConfigured(): читаем с NP по настройке, не дожидаясь пинга — иначе на
         // холодном старте страница соберётся раньше IS_NP и уйдёт в медленный
@@ -3081,6 +3432,7 @@
 
     function getShowComparator(order) {
         switch (order) {
+            case 'relevance':                return sortByRelevance;
             case 'progress':                 return sortByProgress;
             case 'unwatched_count':          return sortByUnwatched;
             case 'air_date':                 return sortByAirDate;
@@ -4076,14 +4428,45 @@
     // к серверу (lists.EpisodesUnwatched обновляется не мгновенно и давал прогресс «назад»).
     // Базовые числа берём из кэша (а не из DOM, который мог отстать), пишем результат обратно
     // в кэш и, если открыта та же карточка, обновляем бейджи. watched=true — серия отмечена.
-    function applyEpisodeMarkLocally(card, episodeId, watched) {
+    function applyEpisodeMarkLocally(card, episodeId, watched, channelRequest) {
+        if (!channelContextCurrent(channelRequest)) return;
+        function recordHistory(id) {
+            if (!id) return;
+            var historyMap = relevanceHistory();
+            var historyEntry = historyMap[id] || {};
+            historyEntry.version = (historyEntry.version || 0) + 1;
+            if (watched) { historyEntry.watch = Date.now(); historyEntry.checked = Date.now(); }
+            else historyEntry.checked = 0;
+            historyMap[id] = historyEntry;
+            setProfileSetting('myshows_relevance_history', historyMap, false);
+        }
+        var historyId = card.myshowsId;
+        if (!historyId && _channelShows) {
+            var knownShow = matchShowInArray(_channelShows, card);
+            if (knownShow) historyId = knownShow.myshowsId;
+        }
+        recordHistory(historyId);
+        if (!watched && historyId) prepareRelevance([{myshowsId: historyId}], channelRequest, function() {
+            if (_channelShows) publishAndroidChannel(_channelShows, channelRequest);
+            reorderCardsInMyShowsSection();
+        });
         episodeId = parseInt(episodeId);
         // _unwatchedEpisodeIds уже обновлён вызывающим → сразу обновляем галочки на сериях.
         scheduleEpisodeBadgeDecorate();
         loadCacheFromServer('unwatched_serials', 'shows', function(result) {
+            if (!channelContextCurrent(channelRequest)) return;
             var arr = result && result.shows;
             if (!arr) return;
             var show = matchShowInArray(arr, card);
+            if (!historyId && show) recordHistory(show.myshowsId);
+            // Completion removes the cached card. Undoing that mark needs the
+            // existing authoritative list once; ordinary marks stay local.
+            if (!show && !watched && (getProfileSetting('myshows_sort_order', 'progress') === 'relevance' ||
+                (channelSupported() && channelEnabled())) &&
+                channelContextCurrent(channelRequest)) {
+                fetchFromMyShowsAPI(function() {}, channelRequest);
+                return;
+            }
             if (!show || !show.progress_marker || show.progress_marker.indexOf('/') === -1) return;
 
             var pp = show.progress_marker.split('/');
@@ -4115,7 +4498,8 @@
             if (watched && show.remaining <= 0) {
                 var idx = arr.indexOf(show);
                 if (idx > -1) arr.splice(idx, 1);
-                saveCacheToServer({ shows: arr }, 'unwatched_serials', function() {}, getProfileId());
+                saveCacheToServer({ shows: arr }, 'unwatched_serials', function() {}, channelRequest.profile, channelRequest,
+                    { show: show, remove: true });
                 if (isSameFullCardOpen(card)) completeFullCardMarkers(card);
                 updateCompletedShowCard(showName, show.myshowsId);
                 return;
@@ -4126,7 +4510,8 @@
             var nextEp = computeNextUnwatchedEpisode(card);
             if (nextEp !== undefined) show.next_episode = nextEp; // undefined = нет метаданных, оставляем как было
 
-            saveCacheToServer({ shows: arr }, 'unwatched_serials', function() {}, getProfileId());
+            saveCacheToServer({ shows: arr }, 'unwatched_serials', function() {}, channelRequest.profile, channelRequest,
+                { show: show, remove: false });
 
             if (isSameFullCardOpen(card)) updateFullCardMarkers(show);
             // Карточка в секции "Непросмотренные" (если открыта главная) — синхронно
@@ -5616,7 +6001,7 @@
         }, 150);
     }
 
-    function addMyShowsData(data, oncomplite) {
+    function addMyShowsData(data, oncomplite, sourceRequest) {
         if (getProfileSetting('myshows_view_in_main', true)) {
             var token = getProfileSetting('myshows_token', '');
 
@@ -5639,7 +6024,7 @@
                         data.unshift(myshowsCategory);
                     }
                     oncomplite(data);
-                });
+                }, null, sourceRequest);
                 return true;
             }
         }
@@ -5675,7 +6060,7 @@
 
         Lampa.Api.sources.tmdb.main = function(params, oncomplite, onerror) {
             return originalTMDBMain.call(this, params, function(data) {
-                addMyShowsData(data, oncomplite);
+                addMyShowsData(data, oncomplite, params);
             }, onerror);
         };
     }
@@ -5689,7 +6074,7 @@
 
         Lampa.Api.sources.cub.main = function(params, oncomplite, onerror) {
             var originalLoadPart = originalCUBMain.call(this, params, function(data) {
-                addMyShowsData(data, oncomplite);
+                addMyShowsData(data, oncomplite, params);
             }, onerror);
 
             return originalLoadPart;
@@ -7198,7 +7583,7 @@
             var currentPage = object.page || 1;
             var cacheKey = 'unwatched_raw';
 
-            if (useNpServer()) {
+            if (useNpServer() && getProfileSetting('myshows_sort_order', 'progress') !== 'relevance') {
                 // Сервер отдаёт все карточки сразу — пагинируем на клиенте
                 loadCacheFromServer('unwatched_serials', 'shows', function(response) {
                     if (response && response.results) {
@@ -7229,7 +7614,7 @@
                     if (onerror) onerror();
                     return;
                 }
-                if (!cachedShuffledItems[cacheKey]) {
+                if (!cachedShuffledItems[cacheKey] || getProfileSetting('myshows_sort_order', 'progress') === 'relevance') {
                     cachedShuffledItems[cacheKey] = result.shows.slice();
                 }
                 var cached = cachedShuffledItems[cacheKey];
@@ -7241,7 +7626,7 @@
                     total_pages: totalPages,
                     total_results: cached.length
                 });
-            });
+            }, null, object);
         }
 
         Log.info('=== ApiMyShows Factory END ===');
@@ -7296,7 +7681,7 @@
                     getUnwatchedShowsWithDetails(function(result) {
                         allData.unwatched = result;
                         checkComplete('unwatched');
-                    });
+                    }, null, object);
 
                     Api.myshowsWatchlist({ page: 1 }, function(result) {
                         allData.watchlist = result;
@@ -7718,15 +8103,6 @@
                 // Запоминаем инстанс линии — через него вставляем новые карточки штатно
                 // (createAndAppend → попадают в this.items, навигация их видит).
                 _myShowsLine = event.line || null;
-
-                // Принудительно создаем все карточки после создания Line
-                if (event.data && event.data.results && event.line) {
-                    event.data.results.forEach(function(show) {
-                        if (!show.ready && event.line.append) {
-                            event.line.append(show);
-                        }
-                    });
-                }
 
                 // На медленных платформах (WebOS, старый Android) visible стреляет
                 // раньше, чем Lampa записывает card_data на DOM-элемент.
@@ -8525,6 +8901,7 @@
             if (IS_LAMPAC) Log.info('✅ Среда: Lampac');
             // initCurrentProfile синхронно — не зависит от пинга
             initCurrentProfile();
+            if (!channelEnabled() || !getProfileSetting('myshows_token', '')) clearAndroidChannel(false);
             // Вариант меток применяем сразу, не дожидаясь initSettings (он через
             // 2с после пинга) — иначе при старте мигает первый вариант
             applyBadgeStyleAttr();
