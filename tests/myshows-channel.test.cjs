@@ -30,7 +30,11 @@ function launch(options = {}) {
     function Reguest() {
         this.timeout = () => {};
         this.silent = this.native = (url, success, failure, body, config) => {
-            requests.push({url, success, failure, body: body && JSON.parse(body), config});
+            const parsed = body && JSON.parse(body);
+            if (!options.deferRatingLookup && ['profile.Episode','profile.Movie'].includes(parsed?.method)) {
+                success({result:{rating:0}}); return;
+            }
+            requests.push({url, success, failure, body: parsed, config});
         };
     }
     function Status(count) {
@@ -344,10 +348,10 @@ test('logout rejects a pending episode-mark publication after token restoration'
 module.exports = {launch, cards};
 
 // Ratings exercise registered timeline/player/full handlers, never private exports.
-function ratingsEpisode() {
+function ratingsEpisode(options = {}) {
     const card = {id:1,name:'Alpha',original_name:'Alpha',myshowsId:10,remaining:2,
         progress_marker:'0/2',unwatchedEpisodes:[{id:101},{id:102}]};
-    const app = launch({ratings:true,sync:true,cards:[card],storage:{
+    const app = launch({...options,ratings:true,sync:true,cards:[card],storage:{
         myshows_serial_status_profile_a:{shows:[{id:10,title:'Alpha',watchStatus:'watching'}]},
         myshows_hash_map:{'1:first':{tmdbId:1,episodeId:101,seasonNumber:1,episodeNumber:1,airDate:'2020-01-01',timestamp:Date.now()},
             '1:second':{tmdbId:1,episodeId:102,seasonNumber:1,episodeNumber:2,airDate:'2020-01-02',timestamp:Date.now()}}}});
@@ -373,6 +377,74 @@ test('ratings wait for player destroy and preserve distinct episode identities a
     assert.deepEqual(rating[0].body.params,{id:101,rating:4});app.answer('manage.RateEpisode',{result:true});app.flush();
     assert.match(app.context.ratingDialogs.at(-1).title,/Alpha.*S01\/E02/);app.choose('skip');
     assert.equal(app.context.controller,'content');assert.equal(app.requests.filter(r=>r.body?.method==='manage.CheckEpisode').length,0);
+});
+test('episode prompt explicitly rates the episode, not the whole show',()=>{
+    const app=ratingsEpisode();app.mark('first');app.answer('manage.CheckEpisode',{result:true});app.leave();
+    const d=app.context.ratingDialogs[0];
+    assert.match(d.title,/Оцените серию.*Alpha.*S01\/E01/);
+    assert.match(d.items[0].subtitle,/отдельной серии.*не всего сериала/);
+    assert.equal(d.items.at(-1).title,'Пропустить оценку серии');
+});
+for(const rating of [1,4,5])test('already rated episode is not prompted: '+rating,()=>{
+    const app=ratingsEpisode({deferRatingLookup:true});app.mark('first');
+    assert.deepEqual(app.requests.find(r=>r.body?.method==='manage.CheckEpisode').body.params,{id:101});
+    app.answer('manage.CheckEpisode',{result:true});app.leave();
+    assert.deepEqual(app.requests.find(r=>r.body?.method==='profile.Episode').body.params,{episodeId:101});
+    app.answer('profile.Episode',{result:{id:101,rating}});app.flush();
+    assert.equal(app.context.ratingDialogs.length,0);
+});
+for(const response of [{error:{code:500}},{result:null},{result:{}},{result:{rating:'bad'}}])test('unknown episode rating skips automatic prompt '+JSON.stringify(response),()=>{
+    const app=ratingsEpisode({deferRatingLookup:true});app.mark('first');app.answer('manage.CheckEpisode',{result:true});app.leave();
+    app.answer('profile.Episode',response);app.flush();assert.equal(app.context.ratingDialogs.length,0);
+});
+test('rated episode is skipped and next unrated episode retains its identity',()=>{
+    const app=ratingsEpisode({deferRatingLookup:true});
+    app.mark('first');app.answer('manage.CheckEpisode',{result:true});
+    app.mark('second');app.answer('manage.CheckEpisode',{result:true});app.leave();
+    app.answer('profile.Episode',{result:{id:101,rating:4}});app.flush();
+    assert.deepEqual(app.requests.find(r=>r.body?.method==='profile.Episode').body.params,{episodeId:102});
+    app.answer('profile.Episode',{result:{id:102,rating:0}});app.flush();
+    assert.equal(app.context.ratingDialogs.length,1);assert.match(app.context.ratingDialogs[0].title,/S01\/E02/);
+});
+test('rating lookup cannot open over resumed playback or an unrelated selector',()=>{
+    const app=ratingsEpisode({deferRatingLookup:true});app.mark('first');app.answer('manage.CheckEpisode',{result:true});app.leave();
+    app.context.playing=true;app.emit('start',{card:app.card});
+    app.answer('profile.Episode',{result:{rating:0}});app.flush();assert.equal(app.context.ratingDialogs.length,0);
+    app.context.Lampa.Select.show({title:'Other',items:[]});app.leave();assert.equal(app.context.ratingDialogs.length,1);
+    app.context.Lampa.Select.hide();app.flush();assert.equal(app.context.ratingDialogs.length,2);
+});
+for(const change of ['profile','token'])test('stale rating lookup is discarded after '+change+' ABA',()=>{
+    const app=ratingsEpisode({deferRatingLookup:true});app.run(2000);app.mark('first');app.answer('manage.CheckEpisode',{result:true});app.leave();
+    if(change==='profile'){app.changeProfile('b');app.changeProfile('a');}
+    else {app.context.applySync('myshows_token_profile_a','replacement');app.context.applySync('myshows_token_profile_a','test-token');}
+    app.answer('profile.Episode',{result:{rating:0}});app.flush();assert.equal(app.context.ratingDialogs.length,0);
+});
+test('already rated movie skips automatic prompt but manual re-rating stays available',()=>{
+    const app=ratingsMovieCard({deferRatingLookup:true});
+    app.context.MyShows.setStatus({id:5,title:'Film',original_title:'Film',release_date:'2020-01-01'},'finished',true,()=>{});
+    app.answer('movies.GetCatalog',{result:[{movie:{id:501,title:'Film',titleOriginal:'Film',year:2020}}]});
+    app.answer('manage.SetMovieStatus',{result:true});app.flush();
+    assert.deepEqual(app.requests.find(r=>r.body?.method==='profile.Movie').body.params,{movieId:501});
+    app.answer('profile.Movie',{result:{rating:5}});app.flush();assert.equal(app.context.ratingDialogs.length,0);
+    app.context.ratingButtons.findLast(b=>b.html.includes('Оценить в MyShows'))['hover:enter']();
+    // Existing identity cache resolves the same film without a rating lookup.
+    if(app.requests.some(r=>r.body?.method==='movies.GetCatalog'))app.answer('movies.GetCatalog',{result:[{movie:{id:501,title:'Film',titleOriginal:'Film',year:2020}}]});
+    app.flush();assert.equal(app.context.ratingDialogs.length,1);assert.match(app.context.ratingDialogs[0].title,/Оцените фильм/);
+    assert.equal(app.requests.filter(r=>r.body?.method==='profile.Movie').length,0);
+});
+for(const response of [{result:{rating:5}},{error:{code:500}}])test('manual rating takes priority over pending automatic lookup '+JSON.stringify(response),()=>{
+    const app=ratingsMovieCard({deferRatingLookup:true});
+    app.context.MyShows.setStatus({id:5,title:'Film',original_title:'Film',release_date:'2020-01-01'},'finished',true,()=>{});
+    const catalog={result:[{movie:{id:501,title:'Film',titleOriginal:'Film',year:2020}}]};
+    app.answer('movies.GetCatalog',catalog);app.answer('manage.SetMovieStatus',{result:true});app.flush();
+    assert.ok(app.requests.some(r=>r.body?.method==='profile.Movie'));
+    app.context.ratingButtons.findLast(b=>b.html.includes('Оценить в MyShows'))['hover:enter']();
+    if(app.requests.some(r=>r.body?.method==='movies.GetCatalog'))app.answer('movies.GetCatalog',catalog);
+    app.flush();assert.equal(app.context.ratingDialogs.length,1,'manual action does not wait for automatic lookup');
+    app.answer('profile.Movie',response);app.flush();
+    assert.equal(app.context.ratingDialogs.length,1);assert.equal(app.context.selectOpen,true,'obsolete read cannot dismiss manual dialog');
+    const d=app.context.ratingDialogs[0];app.context.selectOpen=false;d.onSelect(d.items.find(i=>i.rating===3));
+    assert.deepEqual(app.requests.find(r=>r.body?.method==='manage.RateMovie').body.params,{movieId:501,rating:3});
 });
 test('late watched success after destroy still offers an episode rating',()=>{
     const app=ratingsEpisode();app.mark('first');app.leave();app.answer('manage.CheckEpisode',{result:true});app.flush();

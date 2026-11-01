@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    var VERSION = '1.0.20';
+    var VERSION = '1.0.21';
 
     // Registry migrations may leave a second copy in the current load queue.
     if (window.__myshowsPluginStarted) return;
@@ -144,11 +144,26 @@
         if (!id || !channelContextCurrent(context)) return;
         var key = type + ':' + id;
         if (!manual && _ratingSeen[key]) return;
-        if ((_ratingActive && _ratingActive.key === key) || _ratingQueue.some(function(e) { return e.key === key; })) return;
+        if (_ratingActive && _ratingActive.key === key) {
+            if (manual && !_ratingActive.ratingChecked) {
+                // A card action takes priority over an invisible automatic read.
+                var pending = _ratingActive;
+                pending.ratingChecked = true;
+                _ratingActive = null;
+                _ratingQueue.unshift(pending);
+                ratingLater();
+            }
+            return;
+        }
+        var queued = _ratingQueue.filter(function(e) { return e.key === key; })[0];
+        if (queued) {
+            if (manual) queued.ratingChecked = true;
+            return;
+        }
         if (!manual) _ratingSeen[key] = true;
         var title = card.title || card.name || card.original_title || card.original_name || 'MyShows';
         if (episode) title += ' · S' + padTwo(episode.seasonNumber) + '/E' + padTwo(episode.episodeNumber);
-        _ratingQueue.push({key:key, type:type, id:id, card:card, title:title, context:context});
+        _ratingQueue.push({key:key, type:type, id:id, card:card, title:title, context:context, ratingChecked:!!manual});
         ratingLater();
     }
 
@@ -163,6 +178,28 @@
         if (!entry) return;
         _ratingActive = entry;
         entry.controller = Lampa.Controller.enabled().name;
+        if (!entry.ratingChecked) {
+            // Read personal state, never the aggregate show/episode rating. Unknown
+            // state skips this automatic proposal rather than asking again blindly.
+            var movie = entry.type === 'movie';
+            makeMyShowsJSONRPCRequest(movie ? 'profile.Movie' : 'profile.Episode',
+                movie ? {movieId:entry.id} : {episodeId:entry.id}, function(ok, data) {
+                    if (entry.ratingChecked || _ratingActive !== entry || !channelContextCurrent(entry.context)) return;
+                    _ratingActive = null;
+                    var result = ok && data && !data.error && data.result;
+                    var value = result && result.rating;
+                    if (result && (value === null || (typeof value === 'number' && value >= 0 && value <= 5))) {
+                        if (!value) {
+                            entry.ratingChecked = true;
+                            _ratingQueue.unshift(entry);
+                        }
+                    } else Log.warn('[MyShows] Не удалось проверить личную оценку — автоматический запрос пропущен');
+                    // Re-enter through the queue: playback or another selector may
+                    // have started while the request was in flight.
+                    ratingLater();
+                }, entry.context);
+            return;
+        }
         openRating(entry);
     }
 
@@ -171,14 +208,14 @@
         entry.visible = true;
         var settled = false, items = [];
         for (var rating = 5; rating >= 1; rating--) items.push({title:rating + ' / 5',rating:rating,
-            subtitle:entry.type === 'movie' && getCardStatusCache(entry.card.id, true) !== 'finished' ?
-                'MyShows также отметит фильм просмотренным' : ''});
-        items.push({title:'Пропустить'});
+            subtitle:entry.type === 'episode' ? 'Оценка отдельной серии, не всего сериала' :
+                (getCardStatusCache(entry.card.id, true) !== 'finished' ? 'MyShows также отметит фильм просмотренным' : '')});
+        items.push({title:entry.type === 'episode' ? 'Пропустить оценку серии' : 'Пропустить'});
         function restore() {
             entry.visible = false;
             if (Lampa.Controller.enabled().name === 'select') Lampa.Controller.toggle(entry.controller);
         }
-        var dialog = {title:'Оценить в MyShows: ' + entry.title, items:items,
+        var dialog = {title:(entry.type === 'episode' ? 'Оцените серию в MyShows: ' : 'Оцените фильм в MyShows: ') + entry.title, items:items,
             onBack:function() {
                 if (settled || _ratingActive !== entry || entry.dialog !== dialog) return;
                 settled = true; restore(); _ratingActive = null; ratingLater();
@@ -2827,8 +2864,7 @@
     // Отметить эпизод на myshows
     function checkEpisodeMyShows(episodeId, callback) {
         makeMyShowsJSONRPCRequest('manage.CheckEpisode', {
-            id: episodeId,
-            rating: 0
+            id: episodeId
         }, function(success, data) {
             callback(success);
         });

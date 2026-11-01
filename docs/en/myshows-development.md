@@ -67,7 +67,21 @@ numbers and the existing profile/token/generation context. Only a confirmed
 successful watched mutation produces an automatic prompt. Card opening and
 already-watched timeline updates do not. The independent movie card action
 reuses existing literal title/year lookup and its localized fallback, then the
-same selector. Re-rating bypasses only the automatic prompt's seen guard.
+same selector. Manual re-rating bypasses the automatic prompt's seen guard and
+personal-rating lookup, so an existing movie rating can still be changed.
+
+Before each automatic proposal the existing account-scoped RPC transport reads
+`profile.Episode({episodeId})` or `profile.Movie({movieId})`. These are personal
+ratings, not aggregate ratings or a whole-show rating. A positive numeric rating
+suppresses the proposal; zero/null allows it. Unknown shapes and read failures
+skip the proposal without a retry loop or a watched-status rollback. Async replies
+re-enter the queue and recheck player/selector/account state before display.
+`manage.CheckEpisode` omits its optional `rating` argument instead of sending zero,
+keeping the watched mark separate from a rating change. Official Swagger confirms
+the episode contract; the public client `geOJrgU2.js` and `Movie.Dno5cp5T.js`
+inspected 2026-11-01 confirm `profile.Movie({movieId})` and `userMovie.rating`.
+The episode selector explicitly labels the individual episode and explains that
+it does not rate the entire show.
 
 The inspected Lampa 3.3.4 snapshot has SHA-256
 `6caf01e110bc5278db897b8f3c766ee1f2672b432cdcb5c3686f45ca75962bda`.

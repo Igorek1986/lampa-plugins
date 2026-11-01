@@ -53,8 +53,11 @@ the mark. The separate **Оценить в MyShows** star opens rating. **Не �
 also removes the watched mark. A failed request keeps the original state.
 For shows, the eye retains the existing Watching action.
 
-After a movie or episode is successfully marked watched, the plugin offers a
-rating from 1 to 5. The prompt waits until playback ends, including a successful
+After a movie or episode is successfully marked watched, the plugin reads the
+personal MyShows rating and offers 1 to 5 only if it is still unrated. A failed
+or unrecognized rating lookup skips the automatic prompt. Episode dialogs
+explicitly say **Оцените серию** (Rate this episode), include the season/episode
+number, and explain that the rating is for the episode, not the whole show. The prompt waits until playback ends, including a successful
 MyShows reply arriving after player closure. Multiple episodes keep separate
 queued prompts with the show title and episode number. Repeated progress updates
 do not offer the same rating again.
