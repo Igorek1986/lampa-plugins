@@ -1,7 +1,11 @@
 (function () {
     'use strict';
 
-    var VERSION = '1.0.12';
+    var VERSION = '1.0.21';
+
+    // Registry migrations may leave a second copy in the current load queue.
+    if (window.__myshowsPluginStarted) return;
+    window.__myshowsPluginStarted = VERSION;
 
     var DEFAULT_ADD_THRESHOLD = '0';
     var DEFAULT_MIN_PROGRESS = 90;
@@ -96,6 +100,7 @@
     // Контурные иконки (stroke, без заливки) — чтобы активный цвет/свечение ложились на
     // обводку, а не превращали иконку в сплошной залитый круг.
     var watch_icon = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="2"/></svg>';
+    var rating_icon = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="m12 3 2.8 5.7 6.3.9-4.6 4.4 1.1 6.3-5.6-3-5.6 3 1.1-6.3L2.9 9.6l6.3-.9L12 3z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>';
     var later_icon = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2"/><path d="M8 12l3 3 5-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
     var remove_icon = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2"/><path d="M9 9l6 6M15 9l-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
     var cancelled_icon = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2"/><path d="M8 12h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
@@ -105,6 +110,1004 @@
     // Инкрементируется при каждой смене профиля. Асинхронные рендеры карточек
     // сверяют захваченный токен, чтобы не вставлять данные предыдущего профиля.
     var _profileRenderToken = 0;
+
+    // Device-local opt-in, per profile. Native booleans acknowledge enqueue,
+    // not completion of a TvProvider write.
+    var _channelGeneration = 0;
+    var _channelShows = null;
+    var _channelPublication = 0;
+
+    // Prompts are session-local and retain the exact watched identity/account.
+    var _ratingQueue = [], _ratingActive = null, _ratingSeen = {};
+    var _ratingPlaying = false, _ratingExternal = false, _ratingAway = false;
+    var _movieStatusRevision = 0;
+
+    function ratingPlaying() {
+        return _ratingPlaying || (Lampa.Player.opened && Lampa.Player.opened());
+    }
+
+    function ratingLater() { setTimeout(showNextRating, 0); }
+
+    function cancelRatings() {
+        _ratingQueue = [];
+        _ratingSeen = {};
+        var entry = _ratingActive;
+        _ratingActive = null;
+        if (entry && entry.visible && Lampa.Select && Lampa.Select.opened() &&
+            Lampa.Controller.enabled().name === 'select') {
+            Lampa.Select.hide();
+            Lampa.Controller.toggle(entry.controller);
+        }
+    }
+
+    function enqueueRating(type, id, card, context, episode, manual) {
+        if (!id || !channelContextCurrent(context)) return;
+        var key = type + ':' + id;
+        if (!manual && _ratingSeen[key]) return;
+        if (_ratingActive && _ratingActive.key === key) {
+            if (manual && !_ratingActive.ratingChecked) {
+                // A card action takes priority over an invisible automatic read.
+                var pending = _ratingActive;
+                pending.ratingChecked = true;
+                _ratingActive = null;
+                _ratingQueue.unshift(pending);
+                ratingLater();
+            }
+            return;
+        }
+        var queued = _ratingQueue.filter(function(e) { return e.key === key; })[0];
+        if (queued) {
+            if (manual) queued.ratingChecked = true;
+            return;
+        }
+        if (!manual) _ratingSeen[key] = true;
+        var title = card.title || card.name || card.original_title || card.original_name || 'MyShows';
+        if (episode) title += ' · S' + padTwo(episode.seasonNumber) + '/E' + padTwo(episode.episodeNumber);
+        _ratingQueue.push({key:key, type:type, id:id, card:card, title:title, context:context, ratingChecked:!!manual});
+        ratingLater();
+    }
+
+    function showNextRating() {
+        if (_ratingActive || ratingPlaying() || !Lampa.Select || !Lampa.Controller ||
+            (Lampa.Select.opened && Lampa.Select.opened())) return;
+        var entry;
+        while (_ratingQueue.length && !entry) {
+            var next = _ratingQueue.shift();
+            if (channelContextCurrent(next.context)) entry = next;
+        }
+        if (!entry) return;
+        _ratingActive = entry;
+        entry.controller = Lampa.Controller.enabled().name;
+        if (!entry.ratingChecked) {
+            // Read personal state, never the aggregate show/episode rating. Unknown
+            // state skips this automatic proposal rather than asking again blindly.
+            var movie = entry.type === 'movie';
+            makeMyShowsJSONRPCRequest(movie ? 'profile.Movie' : 'profile.Episode',
+                movie ? {movieId:entry.id} : {episodeId:entry.id}, function(ok, data) {
+                    if (entry.ratingChecked || _ratingActive !== entry || !channelContextCurrent(entry.context)) return;
+                    _ratingActive = null;
+                    var result = ok && data && !data.error && data.result;
+                    var value = result && result.rating;
+                    if (result && (value === null || (typeof value === 'number' && value >= 0 && value <= 5))) {
+                        if (!value) {
+                            entry.ratingChecked = true;
+                            _ratingQueue.unshift(entry);
+                        }
+                    } else Log.warn('[MyShows] Не удалось проверить личную оценку — автоматический запрос пропущен');
+                    // Re-enter through the queue: playback or another selector may
+                    // have started while the request was in flight.
+                    ratingLater();
+                }, entry.context);
+            return;
+        }
+        openRating(entry);
+    }
+
+    function openRating(entry) {
+        if (_ratingActive !== entry || !channelContextCurrent(entry.context) || ratingPlaying()) return;
+        entry.visible = true;
+        var settled = false, items = [];
+        for (var rating = 5; rating >= 1; rating--) items.push({title:rating + ' / 5',rating:rating,
+            subtitle:entry.type === 'episode' ? 'Оценка отдельной серии, не всего сериала' :
+                (getCardStatusCache(entry.card.id, true) !== 'finished' ? 'MyShows также отметит фильм просмотренным' : '')});
+        items.push({title:entry.type === 'episode' ? 'Пропустить оценку серии' : 'Пропустить'});
+        function restore() {
+            entry.visible = false;
+            if (Lampa.Controller.enabled().name === 'select') Lampa.Controller.toggle(entry.controller);
+        }
+        var dialog = {title:(entry.type === 'episode' ? 'Оцените серию в MyShows: ' : 'Оцените фильм в MyShows: ') + entry.title, items:items,
+            onBack:function() {
+                if (settled || _ratingActive !== entry || entry.dialog !== dialog) return;
+                settled = true; restore(); _ratingActive = null; ratingLater();
+            },
+            onSelect:function(item) {
+                if (settled || _ratingActive !== entry || entry.dialog !== dialog ||
+                    !channelContextCurrent(entry.context) || ratingPlaying()) return;
+                settled = true; restore();
+                if (item.rating === undefined) { _ratingActive = null; ratingLater(); return; }
+                var params = entry.type === 'movie' ? {movieId:entry.id,rating:item.rating} : {id:entry.id,rating:item.rating};
+                makeMyShowsJSONRPCRequest(entry.type === 'movie' ? 'manage.RateMovie' : 'manage.RateEpisode', params, function(ok, data) {
+                    if (_ratingActive !== entry || !channelContextCurrent(entry.context)) return;
+                    if (!ok || !data || data.error || data.result !== true) {
+                        Lampa.Noty.show('Не удалось сохранить оценку MyShows. Выберите оценку повторно или пропустите.');
+                        _ratingActive = null; _ratingQueue.unshift(entry); ratingLater(); return;
+                    }
+                    if (entry.type === 'movie') {
+                        // MyShows RateMovie also marks a movie watched, as in its official client.
+                        setCardStatusCache(entry.card.id, true, 'finished');
+                        checkedMovies[String(entry.card.id)] = true;
+                        cachedShuffledItems = {};
+                        reconcileRatedMovie(entry);
+                        var active = Lampa.Activity.active && Lampa.Activity.active();
+                        var activeCard = active && (active.card_data || active.card || active.movie);
+                        if (active && active.component === 'full' && activeCard && isMovieContent(activeCard) &&
+                            String(activeCard.id) === String(entry.card.id)) updateButtonStates('finished', true, false);
+                        if (watchedEnabled()) watchedRefresh();
+                    }
+                    Lampa.Noty.show('Оценка сохранена в MyShows');
+                    _ratingActive = null; ratingLater();
+                }, entry.context);
+            }};
+        entry.dialog = dialog;
+        Lampa.Select.show(dialog);
+    }
+
+    if (Lampa.Select && Lampa.Select.listener) {
+        Lampa.Select.listener.follow('hide', ratingLater);
+        Lampa.Select.listener.follow('preshow', function(event) {
+            if (_ratingActive && _ratingActive.visible && event.active !== _ratingActive.dialog) {
+                _ratingActive.visible = false;
+                _ratingQueue.unshift(_ratingActive);
+                _ratingActive = null;
+            }
+        });
+    }
+
+    function rateMovieFromCard(card) {
+        var context = channelContext();
+        var title = card.original_title || card.title, year = getMovieYear(card);
+        function resolved(id) {
+            if (!channelContextCurrent(context)) return;
+            if (!id) { Lampa.Noty.show('Не удалось найти фильм в MyShows для оценки'); return; }
+            enqueueRating('movie', id, card, context, null, true);
+        }
+        getMovieIdByOriginalTitle(title, year, function(id) {
+            if (!channelContextCurrent(context)) return;
+            if (!id && card.title && card.title !== title) getMovieIdByOriginalTitle(title, year, resolved, card.title);
+            else resolved(id);
+        });
+    }
+
+    function reconcileRatedMovie(entry) {
+        var revision = ++_movieStatusRevision;
+        var movie = {id:entry.id,title:entry.card.title,titleOriginal:entry.card.original_title || entry.card.title,
+            watchStatus:'finished'};
+        function current() { return channelContextCurrent(entry.context) && revision === _movieStatusRevision; }
+        function refresh() {
+            if (current()) fetchStatusMovies(function() {}, movie, entry.context);
+        }
+        npSetStatus(entry.id, entry.card.id, 'movie', 'watched');
+        if (useNpServer()) { refresh(); return; }
+        var local = getStorageMode() === 'local';
+        loadCacheFromServer('movie_status', 'movies', function(cached) {
+            if (!current()) return;
+            // A failed remote read is not an empty library: do not replace it with one movie.
+            if ((!cached || !Array.isArray(cached.movies)) && !local) { refresh(); return; }
+            var movies = cached && Array.isArray(cached.movies) ? cached.movies.slice() : [];
+            movies = movies.filter(function(item) { return String(item.id) !== String(movie.id); });
+            movies.push(movie);
+            saveCacheToServer({movies:movies,timestamp:Date.now()}, 'movie_status', refresh, entry.context.profile);
+        });
+    }
+
+    if (Lampa.Player && Lampa.Player.listener) {
+        Lampa.Player.listener.follow('start', function() {
+            _ratingPlaying = true; _ratingExternal = false;
+            if (_ratingActive && _ratingActive.visible) {
+                Lampa.Select.hide(); _ratingActive.visible = false;
+                _ratingQueue.unshift(_ratingActive); _ratingActive = null;
+            }
+        });
+        Lampa.Player.listener.follow('external', function() { _ratingPlaying = true; _ratingExternal = true; _ratingAway = false; });
+        Lampa.Player.listener.follow('destroy', function() { _ratingPlaying = false; _ratingExternal = false; ratingLater(); });
+        document.addEventListener('visibilitychange', function() {
+            if (!_ratingExternal) return;
+            if (document.visibilityState === 'hidden') _ratingAway = true;
+            else if (_ratingAway && document.visibilityState === 'visible' && !(Lampa.Player.opened && Lampa.Player.opened())) {
+                _ratingPlaying = false; _ratingExternal = false; ratingLater();
+            }
+        });
+    }
+
+    // The discovery index is deliberately separate from the status/badge caches:
+    // "watching", fuzzy TMDB mappings and local playback are not proof of completion.
+    var _watchedIndex = null;
+    var _watchedEpoch = 0;
+    var _watchedActivities = [];
+    var _watchedRecommendationProvenance = {};
+
+    function watchedActivityKind(activity) {
+        return activity.component === 'main' ? 'main' : activity.component === 'category' ? 'category' :
+            activity.component === 'recomend' ? 'recomend' : 'list';
+    }
+
+    function watchedMode() {
+        if (!hasProfileSetting('myshows_watched_mode')) {
+            var legacy = getProfileSetting('myshows_hide_watched', false);
+            return legacy === true || legacy === 'true' ? 'hide' : 'show';
+        }
+        var mode = getProfileSetting('myshows_watched_mode', 'show');
+        return mode === 'hide' || mode === 'mark' ? mode : 'show';
+    }
+
+    function watchedEnabled() {
+        return watchedMode() !== 'show' && !!getProfileSetting('myshows_token', '');
+    }
+
+    function clearWatchedDecoration(card) {
+        if (!card || !card.classList) return;
+        card.classList.remove('myshows-watched-card');
+        var badge = card.querySelector('.myshows-watched-check');
+        if (badge) badge.remove();
+    }
+
+    function clearWatchedMarks() {
+        var cards = document.querySelectorAll('.myshows-watched-card');
+        for (var i = 0; i < cards.length; i++) clearWatchedDecoration(cards[i]);
+    }
+
+    function drawWatchedMark(card, data) {
+        clearWatchedDecoration(card);
+        var marker = data && data._myshows_watched, active = Lampa.Activity.active();
+        if (watchedMode() !== 'mark' || !marker || !watchedCurrent(_watchedIndex) ||
+            marker.epoch !== _watchedEpoch || marker.generation !== _channelGeneration ||
+            marker.profile !== getProfileId() || !active ||
+            !watchedRequest(active, watchedActivityKind(active))) return;
+        var view = card.querySelector('.card__view');
+        if (!view) return;
+        card.classList.add('myshows-watched-card');
+        var badge = document.createElement('div');
+        badge.className = 'myshows-watched-check';
+        badge.textContent = '✓';
+        badge.setAttribute('title', 'Просмотрено в MyShows');
+        badge.setAttribute('aria-label', 'Просмотрено в MyShows');
+        view.appendChild(badge);
+    }
+
+    function watchedStyles() {
+        if (document.getElementById('myshows-watched-display-style')) return;
+        var style = document.createElement('style');
+        style.id = 'myshows-watched-display-style';
+        style.textContent = '.card.myshows-watched-card .card__img{filter:brightness(.42);transition:filter .15s}' +
+            '.card.myshows-watched-card.focus .card__img,.card.myshows-watched-card:focus .card__img{filter:none}' +
+            '.myshows-watched-check{position:absolute;top:.5em;right:.5em;background:rgba(0,0,0,.78);color:#fff;' +
+            'border-radius:50%;width:1.55em;height:1.55em;display:flex;align-items:center;justify-content:center;' +
+            'font-weight:bold;z-index:3;pointer-events:none}';
+        document.head.appendChild(style);
+    }
+
+    function invalidateWatched() {
+        _watchedEpoch++;
+        _watchedIndex = null;
+        clearWatchedMarks();
+    }
+
+    function watchedRefresh() {
+        invalidateWatched();
+        var active = Lampa.Activity.active();
+        var refreshed = false;
+        _watchedActivities.forEach(function(object) {
+            if (object.activity && typeof object.activity.refresh === 'function') {
+                object.activity.refresh();
+                if (object === active) refreshed = true;
+            }
+        });
+        if (!refreshed && active && /^(main|category|category_full|recomend)$/.test(active.component || '') &&
+            watchedRequest(active, watchedActivityKind(active)) &&
+            typeof Lampa.Activity.refresh === 'function') Lampa.Activity.refresh();
+    }
+
+    function watchedCurrent(index) {
+        return index && index === _watchedIndex && index.epoch === _watchedEpoch &&
+            channelContextCurrent(index.context) && index.mode === watchedMode() && watchedEnabled();
+    }
+
+    function watchedError(index) {
+        if (!index.notified) {
+            index.notified = true;
+            Lampa.Noty.show('MyShows: не удалось проверить просмотренное. Карточки остаются видимыми.');
+        }
+    }
+
+    function watchedIndex(reset, callback, loadingActivity) {
+        var index = _watchedIndex;
+        if (index && (!channelContextCurrent(index.context) || (reset && index.ready))) {
+            // Native Back resumes retained components without another source
+            // call. Retire their old marks through native deferred refresh.
+            // Wait until create-before-push completes: refreshing the previous
+            // active slide synchronously could schedule replacement of the new one.
+            if (index.mode === 'mark') {
+                var archived = _watchedActivities.filter(function(object) {
+                    return object !== loadingActivity && (!loadingActivity || object.activity !== loadingActivity.activity);
+                });
+                if (archived.length) setTimeout(function() {
+                    archived.forEach(function(object) {
+                        if (object.activity && typeof object.activity.refresh === 'function') object.activity.refresh();
+                    });
+                }, 0);
+            }
+            invalidateWatched();
+            index = null;
+        }
+        if (index) {
+            if (index.ready) callback(index);
+            else index.callbacks.push(callback);
+            return;
+        }
+        index = {epoch: _watchedEpoch, mode: watchedMode(), context: channelContext(), callbacks: [callback],
+            ready: false, movies: [], shows: [], details: {}, pending: {}, queue: [], active: 0};
+        _watchedIndex = index;
+        var remaining = 2;
+        function loaded(ok, data, key) {
+            if (!watchedCurrent(index)) return;
+            if (ok && data && Array.isArray(data.result)) index[key] = data.result;
+            else index.failed = true;
+            if (--remaining) return;
+            index.ready = true;
+            if (index.failed) {
+                index.movies = []; index.shows = [];
+                watchedError(index);
+            }
+            var callbacks = index.callbacks; index.callbacks = [];
+            callbacks.forEach(function(fn) { fn(index); });
+        }
+        makeMyShowsJSONRPCRequest('profile.WatchedMovies', {}, function(ok, data) { loaded(ok, data, 'movies'); });
+        makeMyShowsJSONRPCRequest('profile.Shows', {}, function(ok, data) { loaded(ok, data, 'shows'); });
+    }
+
+    function watchedTitle(value) {
+        // Preserve every script. The old ASCII-only normalizer can turn two
+        // different Japanese/Cyrillic titles into the same empty string.
+        return typeof value === 'string' ? value.toLowerCase().replace(/\s+/g, ' ').trim() : '';
+    }
+
+    function watchedYear(value) {
+        var text = String(value || '');
+        return /^\d{4}(?:$|-\d{2}-\d{2})/.test(text) ? text.slice(0, 4) : '';
+    }
+
+    function watchedMatch(card, index) {
+        var type = card.media_type || (card.first_air_date && !card.release_date ? 'tv' :
+            card.release_date && !card.first_air_date ? 'movie' : '');
+        if (type !== 'movie' && type !== 'tv') return null;
+        var year = watchedYear(type === 'movie' ? card.release_date : card.first_air_date);
+        if (!year) return null;
+        var names = [watchedTitle(card.title || card.name), watchedTitle(card.original_title || card.original_name)];
+        var matches = {}, found = [];
+        (type === 'movie' ? index.movies : index.shows).forEach(function(entry) {
+            var item = type === 'tv' ? entry && entry.show : entry;
+            if (!item || !item.id || watchedYear(item.year) !== year) return;
+            var title = watchedTitle(item.title), original = watchedTitle(item.titleOriginal);
+            var cardOriginal = watchedTitle(type === 'movie' ? card.original_title : card.original_name);
+            // A translated homonym cannot override two contradictory explicit
+            // originals. Missing originals may still use the unique local title.
+            if (cardOriginal && original && cardOriginal !== original) return;
+            if (!names.some(function(name) { return name && (name === title || name === original); })) return;
+            if (!matches[item.id]) { matches[item.id] = true; found.push({type: type, item: item, status: entry.watchStatus}); }
+        });
+        return found.length === 1 ? found[0] : null;
+    }
+
+    function watchedDate(value) {
+        if (typeof value !== 'string') return NaN;
+        var match = /^(\d{4})-(\d{2})-(\d{2})(?:T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2}))?$/.exec(value);
+        if (!match) return NaN;
+        var day = new Date(Date.UTC(+match[1], +match[2] - 1, +match[3]));
+        if (day.getUTCFullYear() !== +match[1] || day.getUTCMonth() !== +match[2] - 1 ||
+            day.getUTCDate() !== +match[3]) return NaN;
+        return Date.parse(value);
+    }
+
+    function watchedComplete(details, history) {
+        if (!details || !Array.isArray(details.episodes) || !details.episodes.length || !Array.isArray(history)) return false;
+        var ids = {}, released = 0, valid = true;
+        history.forEach(function(ep) {
+            if (ep && ep.id && isFinite(watchedDate(ep.watchDate)) && watchedDate(ep.watchDate) <= Date.now()) ids[ep.id] = true;
+        });
+        details.episodes.forEach(function(ep) {
+            var date = watchedDate(ep && (ep.airDateUTC || ep.airDate));
+            if (!ep || !ep.id || !isFinite(date)) { valid = false; return; }
+            if (date <= Date.now()) { released++; if (!ids[ep.id]) valid = false; }
+        });
+        return valid && released > 0;
+    }
+
+    function watchedPump(index) {
+        // At most two series in flight, two reads each, deduplicated for the
+        // lifetime of this catalog. No library-wide detail sweep or poll.
+        while (watchedCurrent(index) && index.active < 2 && index.queue.length) {
+            (function(id) {
+                index.active++;
+                var remaining = 2, details, history, failed = false;
+                function done() {
+                    if (--remaining) return;
+                    index.active--;
+                    if (!watchedCurrent(index)) return;
+                    if (failed) watchedError(index);
+                    index.details[id] = watchedComplete(details, history);
+                    var callbacks = index.pending[id]; delete index.pending[id];
+                    callbacks.forEach(function(fn) { fn(index.details[id]); });
+                    watchedPump(index);
+                }
+                makeMyShowsJSONRPCRequest('shows.GetById', {showId: +id, withEpisodes: true}, function(ok, data) {
+                    if (ok && data && data.result && (!data.result.id || +data.result.id === +id)) details = data.result;
+                    else failed = true;
+                    done();
+                });
+                makeMyShowsJSONRPCRequest('profile.Episodes', {showId: +id}, function(ok, data) {
+                    if (ok && data) history = data.result;
+                    else failed = true;
+                    done();
+                });
+            })(index.queue.shift());
+        }
+    }
+
+    function watchedCard(card, index, callback) {
+        var match = card && watchedMatch(card, index);
+        if (!match || index.failed) { callback(false); return; }
+        if (match.type === 'movie') { callback(true); return; }
+        if (match.status !== 'watching' && match.status !== 'finished') { callback(false); return; }
+        var id = match.item.id;
+        if (Object.prototype.hasOwnProperty.call(index.details, id)) { callback(index.details[id]); return; }
+        if (index.pending[id]) { index.pending[id].push(callback); return; }
+        index.pending[id] = [callback]; index.queue.push(id);
+        watchedPump(index);
+    }
+
+    function watchedUrl(url, source) {
+        if (typeof url !== 'string') return false;
+        if (source === 'tmdb') return /^(?:(?:movie|tv)\/(?:popular|top_rated|now_playing|upcoming|airing_today|on_the_air)|discover\/(?:movie|tv)|trending\/(?:movie|tv|all)\/(?:day|week)|(?:movie|tv)\/\d+\/(?:recommendations|similar)|collection\/\d+)(?:$|\?)/.test(url);
+        if (source === 'cub') return /^(?:top\/(?:hundred|fire)\/(?:movie|tv)|collections\/\d+)(?:$|\?)/.test(url) ||
+            /^\?(?=[^#]*\bsort=)(?![^#]*\bquery=)/.test(url);
+        return false;
+    }
+
+    function watchedRequest(request, method) {
+        if (!request || (request.query !== undefined && request.query !== null && request.query !== '') ||
+            /search|favorite|history|continue|myshows|calendar|person|episode|season/.test(request.url || '')) return false;
+        if (method === 'recomend') return request.component === 'recomend' && /^(movie|tv)$/.test(request.media || '');
+        var source = request.source || Lampa.Storage.field('source');
+        if (source !== 'cub' && source !== 'tmdb') return false;
+        if (method === 'main') return !request.url;
+        if (method === 'category') return /^(movie|tv|anime)$/.test(request.url || '');
+        return watchedUrl(request.url, source);
+    }
+
+    function watchedCopy(value) {
+        var copy = {};
+        Object.keys(value).forEach(function(key) { copy[key] = value[key]; });
+        return copy;
+    }
+
+    function watchedPayload(payload, request, index, callback, refillRow) {
+        if (Array.isArray(payload)) {
+            if (!payload.length) { callback(payload); return; }
+            var rows = new Array(payload.length), left = payload.length;
+            payload.forEach(function(row, i) {
+                var source = row && (row.source || request.source || Lampa.Storage.field('source'));
+                if (!row || row.query || (!watchedUrl(row.url, source) &&
+                    row._myshows_recommendation !== _watchedRecommendationProvenance)) done(row, i);
+                else if (refillRow && index.mode === 'hide') refillRow(row, source, function(result) { done(result, i); });
+                else watchedPayload(row, request, index, function(result) { done(result, i); });
+            });
+            function done(row, i) {
+                rows[i] = row;
+                if (!--left) callback(index.mode === 'mark' ? rows : rows.filter(function(item) { return !item || !item.results || item.results.length; }));
+            }
+            return;
+        }
+        if (!payload || !Array.isArray(payload.results) || !payload.results.length) { callback(payload); return; }
+        var keep = new Array(payload.results.length), marked = new Array(payload.results.length), remaining = keep.length;
+        payload.results.forEach(function(card, i) {
+            watchedCard(card, index, function(hide) {
+                keep[i] = !hide;
+                marked[i] = card;
+                if (index.mode === 'mark' && card && (hide || card._myshows_watched)) {
+                    marked[i] = watchedCopy(card);
+                    delete marked[i]._myshows_watched;
+                    if (hide) marked[i]._myshows_watched = {epoch: index.epoch,
+                        generation: index.context.generation, profile: index.context.profile};
+                }
+                if (--remaining) return;
+                var copy = watchedCopy(payload);
+                copy.results = index.mode === 'mark' ? marked : payload.results.filter(function(item, position) { return keep[position]; });
+                callback(copy);
+            });
+        });
+    }
+
+    function patchWatchedRecommendations() {
+        if (!Lampa.ContentRows || !Lampa.ContentRows.call || !Lampa.Recomends) return;
+        var original = Lampa.ContentRows.call;
+        if (original._myshowsWatched) return;
+        var found = false;
+        function wrapRow(row) {
+            var factory = row.call;
+            if (factory._myshowsWatched) return;
+            var call = function(params, screen) {
+                var result = factory.apply(this, arguments);
+                if (!watchedEnabled() || !watchedRequest(params, screen) || typeof result !== 'function') return result;
+                var context = channelContext(), mode = watchedMode();
+                return function(done) {
+                    var args = Array.prototype.slice.call(arguments);
+                    args[0] = function(payload) {
+                        var values = Array.prototype.slice.call(arguments);
+                        if (payload && channelContextCurrent(context) && watchedMode() === mode && watchedEnabled()) {
+                            values[0] = watchedCopy(payload);
+                            values[0]._myshows_recommendation = _watchedRecommendationProvenance;
+                        }
+                        return done.apply(this, values);
+                    };
+                    return result.apply(this, args);
+                };
+            };
+            call._myshowsWatched = true;
+            row.call = call;
+        }
+        var wrapped = function(screen, params, calls) {
+            if (found || !watchedEnabled() || !watchedRequest(params, screen) ||
+                (screen !== 'main' && screen !== 'category')) return original.apply(this, arguments);
+            // ContentRows has no registry getter. Observe its named native row
+            // once, restoring the prototype BEFORE native/user row iteration.
+            // The original factory, visibility, shuffle, index and More remain.
+            var each = Array.prototype.forEach;
+            Array.prototype.forEach = function() {
+                var registry = Array.isArray(this);
+                for (var j = 0; registry && j < this.length; j++) {
+                    if (!this[j] || typeof this[j].call !== 'function' || !this[j].screen) registry = false;
+                }
+                if (registry) {
+                    // Also restore before custom rows when the built-in is
+                    // disabled/absent. A later call may discover it when enabled.
+                    Array.prototype.forEach = each;
+                    for (var i = 0; i < this.length; i++) {
+                        var row = this[i];
+                        if (row.name === 'recomend_watch') {
+                            found = true;
+                            Lampa.ContentRows.call = original;
+                            wrapRow(row);
+                            break;
+                        }
+                    }
+                }
+                return each.apply(this, arguments);
+            };
+            try { return original.apply(this, arguments); }
+            finally { Array.prototype.forEach = each; }
+        };
+        wrapped._myshowsWatched = true;
+        Lampa.ContentRows.call = wrapped;
+    }
+
+    function patchWatchedDiscovery() {
+        var listProducer = Lampa.Api.list;
+        var recommendationProducer = Lampa.Recomends && Lampa.Recomends.page;
+        var hooks = ['main', 'category', 'list'].map(function(method) { return {api: Lampa.Api, method: method, kind: method}; });
+        if (Lampa.Recomends && typeof Lampa.Recomends.page === 'function') hooks.push({api: Lampa.Recomends, method: 'page', kind: 'recomend'});
+        hooks.forEach(function(hook) {
+            var method = hook.kind, paginated = method === 'list' || method === 'recomend';
+            var original = hook.api[hook.method];
+            if (typeof original !== 'function' || original._myshowsWatched) return;
+            var wrapped = function(request, oncomplete, onerror) {
+                if (!watchedEnabled() || !watchedRequest(request, method)) return original.apply(this, arguments);
+                // Native Activity.push creates the component before putting its
+                // object on the active stack. Bind to its already assigned handle,
+                // never to the previous screen observed during component creation.
+                var owner = this, activity = request.activity ? request : Lampa.Activity.active(), context = channelContext();
+                var activityHandle = activity && activity.activity;
+                if (activity && _watchedActivities.indexOf(activity) < 0) {
+                    _watchedActivities.push(activity);
+                    if (_watchedActivities.length > 8) _watchedActivities.shift();
+                }
+                var sourceUrl = request.url, sourceName = request.source, sourcePage = request.page, sourceQuery = request.query,
+                    sourceMedia = request.media;
+                var continuation, sourceReturned = false, index, delivered = false;
+                var seen = {}, batches = 0;
+                function activityCurrent() {
+                    var active = Lampa.Activity.active();
+                    return activityHandle ? activity.activity === activityHandle && active && active.activity === activityHandle :
+                        active === activity;
+                }
+                function requestCurrent() {
+                    return request.url === sourceUrl && request.source === sourceName &&
+                        request.page === sourcePage && request.query === sourceQuery && request.media === sourceMedia;
+                }
+                function current() {
+                    return channelContextCurrent(context) && watchedCurrent(index) && activityCurrent() && requestCurrent();
+                }
+                function fail() {
+                    var receiver = this, args = arguments;
+                    function deliverError() {
+                        if (channelContextCurrent(context) && activityCurrent() && requestCurrent() && watchedEnabled() &&
+                            (!index || watchedCurrent(index)) && !delivered) {
+                            delivered = true; if (onerror) onerror.apply(receiver, args);
+                        }
+                    }
+                    if (activityHandle && !activityCurrent()) setTimeout(deliverError, 0);
+                    else deliverError();
+                }
+                function refillPage(data, sourceRequest, producer, receiver, done, error, sample) {
+                    if (!data || !Array.isArray(data.results) || !data.results.length) {
+                        watchedPayload(data, request, index, done); return;
+                    }
+                    var target = data.results.length, result = watchedCopy(data), cards = [], identities = {}, pages = {};
+                    function identity(card) {
+                        if (!card || (typeof card.id !== 'number' && typeof card.id !== 'string') ||
+                            card.id === '' || (typeof card.id === 'number' && !isFinite(card.id))) return '';
+                        var type = card.media_type || (card.first_air_date && !card.release_date ? 'tv' :
+                            card.release_date && !card.first_air_date ? 'movie' : '');
+                        return /^(movie|tv)$/.test(type) ? type + ':' + card.id : '';
+                    }
+                    function finish() { result.results = cards; done(result); }
+                    function failed() {
+                        if (!current() || delivered) return;
+                        if (!cards.length) { error.apply(this, arguments); return; }
+                        Lampa.Noty.show('MyShows: не удалось добрать карточки. Повторите загрузку каталога.');
+                        finish();
+                    }
+                    function consume(payload, params, first) {
+                        if (!current() || delivered) return;
+                        if (!payload || !Array.isArray(payload.results)) { failed(); return; }
+                        var page = first && sample ? 0 : +payload.page || +params.page || 1;
+                        if (pages[page]) { finish(); return; }
+                        pages[page] = true;
+                        watchedPayload(payload, request, index, function(filtered) {
+                            if (!current() || delivered) return;
+                            if (first && filtered.results.length >= target) { done(filtered); return; }
+                            filtered.results.forEach(function(card) {
+                                var key = identity(card);
+                                if (!first && key && identities[key]) return;
+                                cards.push(card);
+                                if (!first && key) identities[key] = true;
+                            });
+                            // Include hidden sample identities too: native row shuffle
+                            // and canonical recommendation pages can overlap.
+                            payload.results.forEach(function(card) { var key = identity(card); if (key) identities[key] = true; });
+                            if (!sample) {
+                                result.page = page;
+                                if (payload.total_pages !== undefined) result.total_pages = payload.total_pages;
+                                if (payload.total_results !== undefined) result.total_results = payload.total_results;
+                            }
+                            if (cards.length >= target || !payload.results.length || !(+payload.total_pages > page) ||
+                                typeof producer !== 'function') { finish(); return; }
+                            var next = watchedCopy(params); next.page = page + 1;
+                            setTimeout(function() {
+                                if (!current() || delivered) return;
+                                var called = false;
+                                producer.call(receiver, next, function(value) {
+                                    if (called) return; called = true; consume(value, next, false);
+                                }, function() { if (called) return; called = true; failed.apply(this, arguments); });
+                            }, 0);
+                        });
+                    }
+                    consume(data, sourceRequest, true);
+                }
+                function refillRow(row, source, done) {
+                    var params = watchedCopy(request), producer, receiver, sample = false;
+                    if (row._myshows_recommendation === _watchedRecommendationProvenance) {
+                        var media = method === 'main' ? 'movie' : request.url;
+                        if (!/^(movie|tv)$/.test(media || '')) { watchedPayload(row, request, index, done); return; }
+                        params = {component: 'recomend', media: media, page: 1};
+                        producer = recommendationProducer; receiver = Lampa.Recomends; sample = true;
+                    } else if (+row.page > 0 && +row.total_pages >= +row.page && watchedUrl(row.url, source)) {
+                        params.url = row.url; params.source = source; params.page = +row.page;
+                        producer = listProducer; receiver = Lampa.Api;
+                    } else { watchedPayload(row, request, index, done); return; }
+                    refillPage(row, params, producer, receiver, function(result) {
+                        // Router uses row.page as the NEW grid's start page.
+                        // Only an existing grid owns the consumed-page cursor.
+                        if (result.page !== row.page) {
+                            result = watchedCopy(result);
+                            result.page = row.page;
+                        }
+                        done(result);
+                    }, function() {
+                        Lampa.Noty.show('MyShows: не удалось добрать карточки. Повторите загрузку каталога.');
+                        watchedPayload(row, request, index, done);
+                    }, sample);
+                }
+                function nextBatch() {
+                    if (!current() || delivered) return;
+                    if (!sourceReturned) { setTimeout(nextBatch, 0); return; }
+                    if (typeof continuation !== 'function') { deliver([]); return; }
+                    var called = false;
+                    continuation.call(owner, function(data) {
+                        if (called) return; called = true; accept(data, request);
+                    }, fail);
+                }
+                function deliver(data) {
+                    if (current() && !delivered) {
+                        delivered = true;
+                        // Native grid ignores response.page and increments the owned
+                        // request cursor itself. Advance it past drained source pages.
+                        if (index.mode === 'hide' && paginated && data && +data.page > 0) request.page = sourcePage = +data.page;
+                        oncomplete(data);
+                    }
+                }
+                function accept(data, sourceRequest, deferred) {
+                    // Even fully synchronous boundary/cache callbacks run after
+                    // native create-before-push finishes. A navigation away only
+                    // gets one deferred check and can never revive this result.
+                    if (activityHandle && !activityCurrent() && !deferred) {
+                        setTimeout(function() { accept(data, sourceRequest, true); }, 0);
+                        return;
+                    }
+                    if (!current() || delivered) return;
+                    function filteredData(filtered) {
+                        if (!current() || delivered) return;
+                        if (index.mode === 'mark') { deliver(filtered); return; }
+                        if (Array.isArray(filtered)) {
+                            // Continuations normally consume their internal parts.
+                            // Stop a broken source that repeats explicit row cursors.
+                            var cursor = Array.isArray(data) && data.length && data.every(function(row) {
+                                return row && row.url && +row.page > 0;
+                            }) ? data.map(function(row) { return row.source + ':' + row.url + ':' + row.page; }).join('|') : '';
+                            if (cursor && seen[cursor]) { deliver(filtered); return; }
+                            if (cursor) seen[cursor] = true;
+                            if (filtered.length || !Array.isArray(data) || !data.length || ++batches >= 100) deliver(filtered);
+                            else setTimeout(nextBatch, 0);
+                        } else deliver(filtered);
+                    }
+                    if (paginated && index.mode === 'hide') refillPage(data, sourceRequest, original, owner, filteredData, fail, false);
+                    else watchedPayload(data, request, index, filteredData, refillRow);
+                }
+                // Source calls keep their synchronous return value and receiver.
+                // Waiting for the index happens at the callback boundary.
+                var received = [], ready = false, initialCalled = false;
+                watchedIndex(!paginated || !(+request.page > 1), function(value) {
+                    index = value; ready = true;
+                    received.forEach(function(data) { accept(data, request); }); received = [];
+                }, activity);
+                continuation = original.call(owner, request, function(data) {
+                    if (initialCalled) return;
+                    initialCalled = true;
+                    if (ready) accept(data, request); else if (!received.length) received.push(data);
+                }, fail);
+                sourceReturned = true;
+                if (typeof continuation !== 'function') return continuation;
+                return function(done, error) {
+                    if (!current()) return;
+                    oncomplete = done; onerror = error; delivered = false; batches = 0;
+                    var called = false;
+                    return continuation.call(this, function(data) {
+                        if (called) return; called = true; accept(data, request);
+                    }, fail);
+                };
+            };
+            wrapped._myshowsWatched = true;
+            hook.api[hook.method] = wrapped;
+        });
+    }
+
+    function channelSupported() {
+        return window.AndroidJS &&
+            typeof window.AndroidJS.publishPluginChannel === 'function' &&
+            typeof window.AndroidJS.clearPluginChannel === 'function';
+    }
+
+    function channelEnabled() {
+        var enabled = getProfileSetting('myshows_android_tv', false);
+        return enabled === true || enabled === 'true';
+    }
+
+    function channelContext() {
+        return { generation: _channelGeneration, profile: getProfileId(),
+            token: getProfileSetting('myshows_token', '') };
+    }
+
+    function channelContextCurrent(context) {
+        return context && context.generation === _channelGeneration &&
+            context.profile === getProfileId() && context.token &&
+            context.token === getProfileSetting('myshows_token', '');
+    }
+
+    function clearAndroidChannel(notify) {
+        if (!channelSupported()) return;
+        try {
+            if (window.AndroidJS.clearPluginChannel('myshows') === true) return;
+        } catch (e) { /* Some native implementations throw instead of returning false. */ }
+        Log.warn('Android TV channel clear rejected');
+        if (notify) Lampa.Noty.show('Android TV: не удалось очистить канал MyShows');
+    }
+
+    function invalidateAndroidChannel(notify) {
+        _channelGeneration++;
+        cancelRatings();
+        invalidateWatched();
+        _channelShows = null;
+        clearAndroidChannel(notify);
+    }
+
+    function publishAndroidChannel(shows, context, prepared) {
+        if (!channelSupported() || !channelEnabled() || !channelContextCurrent(context) ||
+            !Array.isArray(shows)) return;
+        if (!prepared && getProfileSetting('myshows_sort_order', 'progress') === 'relevance') {
+            var publication = ++_channelPublication;
+            publishAndroidChannel(shows, context, true);
+            prepareRelevance(shows, context, function() {
+                if (publication === _channelPublication) publishAndroidChannel(shows, context, true);
+            });
+            return;
+        }
+        var sorted = shows.slice();
+        sortShows(sorted, getProfileSetting('myshows_sort_order', 'progress'));
+        var items = [];
+        // Explicit allowlist: cached cards may contain unrelated/private properties.
+        var fields = ['name', 'title', 'original_name', 'original_title', 'poster_path',
+            'backdrop_path', 'first_air_date', 'release_date', 'release_year', 'vote_average'];
+        sorted.forEach(function(show) {
+            if (!show || !show.id || !(show.name || show.title)) return;
+            var item = { id: String(show.id), source: 'tmdb', type: 'tv' };
+            fields.forEach(function(key) {
+                if (typeof show[key] === 'string' || typeof show[key] === 'number') item[key] = show[key];
+            });
+            var description = typeof show.overview === 'string' ? show.overview : '';
+            var details = [];
+            if (show.next_episode) details.push('Next: ' + show.next_episode);
+            var remaining = show.remaining !== undefined ? show.remaining : show.unwatched_count;
+            if (typeof remaining === 'number' && remaining >= 0) details.push('Unwatched: ' + remaining);
+            item.overview = description + (description && details.length ? '\n' : '') + details.join(' · ');
+            items.push(item);
+        });
+        // A malformed nonempty list is not a successful empty result.
+        if (shows.length && !items.length) return;
+        if (!shows.length) {
+            _channelShows = [];
+            clearAndroidChannel(false);
+            return;
+        }
+        try {
+            if (window.AndroidJS.publishPluginChannel(JSON.stringify({
+                id: 'myshows', title: 'MyShows', items: items
+            })) === true) {
+                _channelShows = sorted;
+                return;
+            }
+        } catch (e) { /* Preserve the last successful list on a native rejection. */ }
+        Log.warn('Android TV channel publish rejected');
+    }
+
+    // Device-local history survives NP cards without dates and completed shows.
+    var _relevancePending = {};
+    var _relevanceQueue = [];
+    var _relevanceActive = 0;
+
+    function relevanceDate(value) {
+        if (typeof value !== 'string') return 0;
+        var match = /^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(Z|[+-](\d{2}):?(\d{2})))?$/.exec(value);
+        if (!match) return 0;
+        var day = new Date(Date.UTC(+match[1], +match[2] - 1, +match[3]));
+        if (day.getUTCFullYear() !== +match[1] || day.getUTCMonth() !== +match[2] - 1 ||
+            day.getUTCDate() !== +match[3]) return 0;
+        if (match[4] !== undefined && (+match[4] > 23 || +match[5] > 59 || +match[6] > 59 ||
+            +match[8] > 23 || +match[9] > 59)) return 0;
+        // MyShows v3 returns compact offsets, e.g. +0300. Normalize for engines
+        // that support only the colon form; never infer an absent timezone.
+        var normalized = value.replace(/([+-]\d{2})(\d{2})$/, '$1:$2');
+        var time = Date.parse(normalized);
+        return isFinite(time) && time > 0 && time <= Date.now() ? time : 0;
+    }
+
+    function relevanceHistory() {
+        return getProfileSetting('myshows_relevance_history', {});
+    }
+
+    function relevanceRelease(show) {
+        var ep = show.last_episode_to_myshows;
+        var hasDates = ep && (ep.air_date_utc !== undefined || ep.air_date !== undefined);
+        var latest = ep ? relevanceDate(ep.air_date_utc || ep.air_date) : 0;
+        (show.unwatchedEpisodes || []).forEach(function(episode) {
+            if (!episode) return;
+            if (episode.airDateUTC !== undefined || episode.airDate !== undefined) hasDates = true;
+            latest = Math.max(latest, relevanceDate(episode.airDateUTC || episode.airDate));
+        });
+        return hasDates ? latest : null;
+    }
+
+    function rememberReleaseDates(shows) {
+        var map = relevanceHistory();
+        shows.forEach(function(show) {
+            if (!show || !show.myshowsId || (!show.last_episode_to_myshows && !show.unwatchedEpisodes)) return;
+            var entry = map[show.myshowsId] || {};
+            var release = relevanceRelease(show);
+            if (release !== null) entry.release = release;
+            map[show.myshowsId] = entry;
+        });
+        setProfileSetting('myshows_relevance_history', map, false);
+    }
+
+    function pumpRelevanceHistory() {
+        while (_relevanceActive < 2 && _relevanceQueue.length) {
+            var task = _relevanceQueue.shift();
+            if (!channelContextCurrent(task.context)) {
+                delete _relevancePending[task.key];
+                task.callbacks.forEach(function(fn) { fn(); });
+                continue;
+            }
+            _relevanceActive++;
+            (function(request) {
+                makeMyShowsJSONRPCRequest('profile.Episodes', {showId: request.id}, function(ok, response) {
+                    _relevanceActive--;
+                    delete _relevancePending[request.key];
+                    if (channelContextCurrent(request.context)) {
+                        var map = relevanceHistory();
+                        var entry = map[request.id] || {};
+                        // Successful local marks invalidate an older history response.
+                        if ((entry.version || 0) === request.version) {
+                            if (ok && response && Array.isArray(response.result)) {
+                                var latest = 0;
+                                response.result.forEach(function(ep) {
+                                    latest = Math.max(latest, relevanceDate(ep && ep.watchDate));
+                                });
+                                entry.watch = latest;
+                                entry.checked = Date.now();
+                            } else {
+                                Log.warn('MyShows viewing history unavailable');
+                                entry.checked = Date.now() - 3540000; // Retry in one minute, retain date.
+                            }
+                            entry.dateParser = 2;
+                            map[request.id] = entry;
+                            setProfileSetting('myshows_relevance_history', map, false);
+                        }
+                    }
+                    request.callbacks.forEach(function(fn) { fn(); });
+                    pumpRelevanceHistory();
+                });
+            })(task);
+        }
+    }
+
+    function prepareRelevance(shows, context, callback) {
+        if (getProfileSetting('myshows_sort_order', 'progress') !== 'relevance') { callback(); return; }
+        if (!shows.length && context.generation === _channelGeneration && context.profile === getProfileId() &&
+            context.token === getProfileSetting('myshows_token', '')) { callback(); return; }
+        if (!channelContextCurrent(context)) return;
+        rememberReleaseDates(shows);
+        var map = relevanceHistory(), waiting = 0;
+        var ids = {};
+        shows.forEach(function(show) { if (show && show.myshowsId) ids[show.myshowsId] = true; });
+        function complete() {
+            if (--waiting === 0 && channelContextCurrent(context)) callback();
+        }
+        Object.keys(ids).forEach(function(id) {
+            var entry = map[id] || {};
+            // Revalidate pre-compact-offset caches once, preserving known dates
+            // until a successful response. Errors retain the normal retry window.
+            if (entry.dateParser === 2 && entry.checked && Date.now() - entry.checked < 3600000) return;
+            waiting++;
+            var key = context.generation + ':' + context.profile + ':' + id + ':' + (entry.version || 0);
+            if (_relevancePending[key]) { _relevancePending[key].callbacks.push(complete); return; }
+            var task = {id: parseInt(id, 10), key: key, context: context,
+                version: entry.version || 0, callbacks: [complete]};
+            _relevancePending[key] = task;
+            _relevanceQueue.push(task);
+        });
+        if (!waiting) callback();
+        else pumpRelevanceHistory();
+    }
+
+    function sortByRelevance(a, b) {
+        var map = relevanceHistory();
+        function time(show) {
+            var entry = map[show.myshowsId] || {};
+            var release = entry.release !== undefined ? entry.release : relevanceRelease(show);
+            if (release === null) release = entry.release || 0;
+            var watch = entry.watch > 0 && entry.watch <= Date.now() ? entry.watch : 0;
+            return Math.max(watch, release <= Date.now() ? release : 0);
+        }
+        return time(b) - time(a) || sortByAlphabet(a, b);
+    }
 
     function getNpBaseUrl() {
         return Lampa.Storage.get('base_url_numparser', '');
@@ -280,9 +1283,42 @@
     // profileId — профиль-источник запроса. Если запрос стартовал в профиле A,
     // а пользователь успел переключиться на B, данные всё равно лягут в кэш A.
     // Не передан → текущий профиль (backward-compat).
-    function saveCacheToServer(cacheData, path, callback, profileId) {
+    function saveCacheToServer(cacheData, path, callback, profileId, channelRequest, channelUpdate) {
         var mode = getStorageMode();
         if (profileId === undefined || profileId === null) profileId = getProfileId();
+        // Data publication is independent of cache persistence. Async callers carry
+        // the original generation so profile ABA/logout cannot restore old cards.
+        if (path === 'unwatched_serials' && profileId === getProfileId() && cacheData) {
+            var publication = cacheData.shows;
+            // An episode change updates one show, not the entire list. NP reads
+            // can return only one page; retain unrelated already-published cards.
+            if (channelUpdate && _channelShows && channelContextCurrent(channelRequest)) {
+                publication = _channelShows.slice();
+                var previous = matchShowInArray(publication, channelUpdate.show);
+                var index = previous ? publication.indexOf(previous) : -1;
+                if (channelUpdate.remove) {
+                    if (index >= 0) publication.splice(index, 1);
+                } else {
+                    var updated = {};
+                    var key;
+                    if (previous) {
+                        for (key in previous) {
+                            if (previous.hasOwnProperty(key)) updated[key] = previous[key];
+                        }
+                    }
+                    for (key in channelUpdate.show) {
+                        if (channelUpdate.show.hasOwnProperty(key)) updated[key] = channelUpdate.show[key];
+                    }
+                    if (index >= 0) publication[index] = updated;
+                    else publication.push(updated);
+                }
+            }
+            var listContext = channelRequest || channelContext();
+            publishAndroidChannel(publication, listContext);
+            if (Array.isArray(publication)) prepareRelevance(publication, listContext, function() {
+                reorderCardsInMyShowsSection();
+            });
+        }
         Log.info('Save', 'Cache: ', cacheData, 'Path:', path, 'Mode:', mode, 'Profile:', profileId);
 
         var NP_PATHS = {
@@ -561,9 +1597,17 @@
         // не должен вставлять карточки предыдущего профиля.
         var renderToken = _profileRenderToken;
 
+        var channelRequest = channelContext();
+
         loadCacheFromServer('unwatched_serials', 'shows', function(cachedResult) {
             if (renderToken !== _profileRenderToken) return;
             var cachedShows = cachedResult && cachedResult.shows;
+            if (cachedShows) {
+                publishAndroidChannel(cachedShows, channelRequest);
+                prepareRelevance(cachedShows, channelRequest, function() {
+                    reorderCardsInMyShowsSection();
+                });
+            }
             // Сидим in-memory set непросмотренных серий из кэша СРАЗУ (local/Storage, Lampac/файл,
             // NP/БД — все теперь хранят id серий) — чтобы на холодном старте уже знать серии,
             // не дожидаясь fetchFromMyShowsAPI (он обновит через updateDelay).
@@ -706,6 +1750,8 @@
 
     // Функция для выполнения запросов с автоматическим обновлением токена
     function makeAuthenticatedRequest(options, callback, errorCallback) {
+        var context = options.context;
+        if (context && !channelContextCurrent(context)) return;
         var token = getProfileSetting('myshows_token', '');
 
         if (!token) {
@@ -719,6 +1765,11 @@
         options.headers[AUTHORIZATION] = 'Bearer ' + token;
 
         network.silent(API_URL, function(data) {
+            // Context-bound mutations never refresh credentials/retry in another account.
+            if (context) {
+                if (channelContextCurrent(context) && callback) callback(data);
+                return;
+            }
             // Проверяем JSON-RPC ошибки
             if (data && data.error && data.error.code === 401) {
                 tryAuthFromSettings(function(newToken) {
@@ -741,6 +1792,10 @@
                 if (callback) callback(data);
             }
         }, function(xhr) {
+            if (context) {
+                if (channelContextCurrent(context) && errorCallback) errorCallback(new Error('HTTP ' + xhr.status));
+                return;
+            }
             if (xhr.status === 401) {
                 tryAuthFromSettings(function(newToken) {
                     if (newToken) {
@@ -778,11 +1833,12 @@
         });
     }
 
-    function makeMyShowsJSONRPCRequest(method, params, callback) {
+    function makeMyShowsJSONRPCRequest(method, params, callback, context) {
         makeMyShowsRequest({
             method: 'POST',
             headers: JSON_HEADERS,
-            body: createJSONRPCRequest(method, params)
+            body: createJSONRPCRequest(method, params),
+            context: context
         }, callback);
     }
 
@@ -817,7 +1873,14 @@
 
     function setProfileSetting(key, value, sync) {
         value = storableValue(value);
+        var watchedTokenChanged = key === 'myshows_token' && value !== getProfileSetting(key, '');
+        if (key === 'myshows_token' && value !== getProfileSetting(key, '') && getProfileSetting(key, '')) {
+            // A different account may sign into the same Lampa profile.
+            setProfileSetting('myshows_relevance_history', {}, false);
+            invalidateAndroidChannel(!value);
+        }
         Lampa.Storage.set(getProfileKey(key), value);
+        if (watchedTokenChanged) watchedRefresh();
         if (sync !== false && !_syncApplying && window.__NMSync) window.__NMSync.patch('myshows', getProfileKey(key), value);
     }
 
@@ -829,17 +1892,35 @@
         if (profileKey.indexOf('_profile_') < 0) return;
 
         value = storableValue(value);
+        var base = profileKey.slice(0, profileKey.lastIndexOf('_profile_'));
+        var tokenChanged = base === 'myshows_token' && value !== Lampa.Storage.get(profileKey, '');
+        if (tokenChanged) {
+            var targetProfile = profileKey.slice(profileKey.lastIndexOf('_profile_') + 9);
+            Lampa.Storage.set(profileKeyFor('myshows_relevance_history', targetProfile), {});
+        }
         _syncApplying = true;
         Lampa.Storage.set(profileKey, value);
-        var base = profileKey.slice(0, profileKey.lastIndexOf('_profile_'));
         if (getProfileKey(base) === profileKey) {
             Lampa.Storage.set(base, value, true);
             if (base === 'myshows_badge_style') applyBadgeStyleAttr();
+            if (tokenChanged) {
+                invalidateAndroidChannel(!value);
+                watchedRefresh();
+            }
         }
         _syncApplying = false;
     }
 
     function loadProfileSettings() {
+        if (!hasProfileSetting('myshows_watched_mode')) {
+            setProfileSetting('myshows_watched_mode', watchedMode(), false);
+        }
+        // Native Storage treats an unset boolean false fallback as ''. Persist
+        // explicit local defaults before SettingsApi registers trigger labels.
+        ['myshows_hide_watched', 'myshows_android_tv'].forEach(function(key) {
+            if (!hasProfileSetting(key)) setProfileSetting(key, false, false);
+        });
+
         if (!hasProfileSetting('myshows_view_in_main')) {
             setProfileSetting('myshows_view_in_main', true, false);
         }
@@ -903,6 +1984,9 @@
             setProfileSetting('myshows_badge_style', '1', false);
         }
 
+        // These unscoped values are native settings UI mirrors, not sync keys.
+        Lampa.Storage.set('myshows_watched_mode', watchedMode(), true);
+        Lampa.Storage.set('myshows_android_tv',   storableValue(getProfileSetting('myshows_android_tv', false)), true);
         Lampa.Storage.set('myshows_view_in_main',  storableValue(getProfileSetting('myshows_view_in_main',  true)), true);
         Lampa.Storage.set('myshows_button_view',   storableValue(getProfileSetting('myshows_button_view',   true)), true);
         Lampa.Storage.set('myshows_sort_order',    getProfileSetting('myshows_sort_order',    'progress'), true);
@@ -1035,6 +2119,33 @@
         autoSetupToken();
         var tokenValue = getProfileSetting('myshows_token', '');
 
+        Lampa.SettingsApi.addParam({
+            component: 'myshows',
+            param: {name: 'myshows_watched_mode', type: 'select', default: watchedMode(), values: {
+                show: 'Показывать обычно', mark: 'Приглушать и отмечать ✓', hide: 'Скрывать'}},
+            field: {name: 'Просмотренное в MyShows', description: 'Вид просмотренного в обычных каталогах CUB/TMDB. Поиск и личные списки сохраняются.'},
+            onChange: function(value) {
+                setProfileSetting('myshows_watched_mode', value, false);
+                watchedRefresh();
+            }
+        });
+
+        Lampa.SettingsApi.addParam({
+            component: 'myshows',
+            param: { name: 'myshows_android_tv', type: 'trigger',
+                default: getProfileSetting('myshows_android_tv', false) },
+            field: { name: 'MyShows на главном экране Android TV',
+                description: channelSupported() ?
+                    'Публиковать непросмотренные сериалы отдельным каналом. Обновляется, пока работает Lampa.' :
+                    'Нужна версия Lampa для Android TV с поддержкой каналов плагинов. Текущая версия не поддерживает публикацию.' },
+            onChange: function(value) {
+                setProfileSetting('myshows_android_tv', value, false);
+                if (!channelEnabled()) invalidateAndroidChannel(true);
+                else if (channelSupported()) initMyShowsCaches();
+                else Lampa.Noty.show('Нужна Lampa для Android TV с поддержкой каналов плагинов');
+            }
+        });
+
         if (tokenValue) {
             Lampa.SettingsApi.addParam({
                 component: 'myshows',
@@ -1076,6 +2187,7 @@
                     values: {
                         'alphabet': 'По алфавиту',
                         'progress': 'По прогрессу',
+                        'relevance': 'По актуальности',
                         'unwatched_count': 'По количеству непросмотренных',
                         'air_date': 'По дате последнего эпизода ↓',
                         'air_date_asc': 'По дате последнего эпизода ↑',
@@ -1089,7 +2201,9 @@
                     description: 'Порядок отображения сериалов на главной странице'
                 },
                 onChange: function(value) {
+                    _channelPublication++;
                     setProfileSetting('myshows_sort_order', value);
+                    if (_channelShows) publishAndroidChannel(_channelShows, channelContext());
                     cachedShuffledItems = {};
                     setTimeout(function() {
                         var activity = Lampa.Activity.active();
@@ -1404,6 +2518,7 @@
 
         // Инвалидируем все незавершённые async-рендеры предыдущего профиля
         _profileRenderToken++;
+        invalidateAndroidChannel(true);
 
         Log.info('🔄 Profile changed to:', newProfileId);
 
@@ -1712,16 +2827,27 @@
         });
     }
 
-    // Поиск по оригинальному названию
-    function getMovieIdByOriginalTitle(title, year, callback) {
+    // Поиск по оригинальному названию. searchQuery — что отправить в поиск вместо него;
+    // кандидаты всё равно сверяются с оригинальным title.
+    function getMovieIdByOriginalTitle(title, year, callback, searchQuery) {
         makeMyShowsJSONRPCRequest('movies.GetCatalog', {
                 search: {
-                    "query": title,
+                    "query": searchQuery || title,
                     "year": parseInt(year)
                 }
         }, function(success, data) {
             if (success && data && data.result) {
-                getMovieCandidates(data.result, title, year, function(candidates) {
+                var results = data.result;
+                if (searchQuery) {
+                    // normalizeForComparison сводит любое не-латинское название к '', и японский
+                    // оригинал «совпал» бы с кириллическим titleOriginal чужого фильма из выдачи
+                    // по русскому названию. Поэтому здесь titleOriginal сверяется буквально.
+                    var expected = cleanTitle(title).toLowerCase();
+                    results = results.filter(function(item) {
+                        return item.movie && cleanTitle(item.movie.titleOriginal).toLowerCase() === expected;
+                    });
+                }
+                getMovieCandidates(results, title, year, function(candidates) {
                     if (candidates) {
                         callback(candidates);
                         return;
@@ -1738,8 +2864,7 @@
     // Отметить эпизод на myshows
     function checkEpisodeMyShows(episodeId, callback) {
         makeMyShowsJSONRPCRequest('manage.CheckEpisode', {
-            id: episodeId,
-            rating: 0
+            id: episodeId
         }, function(success, data) {
             callback(success);
         });
@@ -1831,6 +2956,7 @@
 
                     // держим кэш статуса карточки в синхроне (vocab карточки: finished→watching)
                     setCardStatusCache(cardData.id, false, status === 'finished' ? 'watching' : status);
+                    if (watchedEnabled()) watchedRefresh();
                 }
 
                 callback(success);
@@ -1869,8 +2995,10 @@
     }
 
      // Получить непросмотренные серии
-    function fetchFromMyShowsAPI(callback) {
+    function fetchFromMyShowsAPI(callback, originalChannelRequest) {
         var startProfile = getProfileId();
+        var channelRequest = originalChannelRequest || channelContext();
+        if (originalChannelRequest && !channelContextCurrent(originalChannelRequest)) return;
         makeMyShowsJSONRPCRequest('lists.EpisodesUnwatched', {}, function(success, response) {
             if (!response || !response.result) {
                 callback({ error: response ? response.error : 'Empty response' });
@@ -2005,23 +3133,46 @@
                         // долетели до бэкенда — теперь можно снова доверять cachedShows.
                         if (ok) _skipCachedShowsOnce = false;
                         _fireUnwatchedSaved(result.shows);
-                    }, startProfile);
+                    }, startProfile, channelRequest);
 
                     // In-memory карта прогресса — только если профиль не сменился
                     if (sameProfile) _populateProgressMap(result.shows);
                 }
                 // callback (двигает UI) — только для текущего профиля
-                callback(sameProfile ? result : { error: 'profile changed' });
+                if (sameProfile && result && result.shows) {
+                    if (!channelContextCurrent(channelRequest)) return;
+                    sortShows(result.shows, getProfileSetting('myshows_sort_order', 'progress'));
+                    callback(result);
+                    prepareRelevance(result.shows, channelRequest, function() {
+                        reorderCardsInMyShowsSection();
+                    });
+                } else callback({ error: 'profile changed' });
             });
         });
     }
 
     ////// Статус фильмов. (Смотрю, Буду смотреть, Не смотрел) //////
     function setMyShowsMovieStatus(movieData, status, callback) {
+        var context = channelContext();
+        var ratingCard = {id:movieData.id,title:movieData.title,original_title:movieData.original_title};
         var title = movieData.original_title || movieData.title;
         var year = getMovieYear(movieData);
 
         getMovieIdByOriginalTitle(title, year, function(movieId) {
+            if (!channelContextCurrent(context)) return;
+            if (movieId || !movieData.title || movieData.title === title) {
+                setStatus(movieId);
+                return;
+            }
+            // Поиск MyShows находит не все фильмы по японскому оригиналу, хотя titleOriginal
+            // у них ровно он: «劇場版「鬼滅の刃」無限城編 第一章 猗窩座再来» (TMDB 1311031) даёт
+            // пустой результат, а по «Истребитель демонов: Бесконечный замок» находится 694064.
+            Log.info('Movie not found by original title, trying localized:', movieData.title);
+            getMovieIdByOriginalTitle(title, year, setStatus, movieData.title);
+        });
+
+        function setStatus(movieId) {
+            if (!channelContextCurrent(context)) return;
             if (!movieId) {
                 callback(false);
                 return;
@@ -2031,17 +3182,20 @@
                     movieId: movieId,
                     status: status
             }, function(success, data) {
+                if (!channelContextCurrent(context)) return;
 
                 if (success && data && data.result) {
                     // Сбрасываем кеш
                     cachedShuffledItems = {};
 
                     // Обновляем кэш фильмов при успешном изменении статуса
+                    _movieStatusRevision++;
                     fetchStatusMovies(function(data) {})
 
                     // Если фильм отмечен как просмотренный, добавляем в историю
                     if (status === 'finished') {
                         addToHistory(movieData);
+                        enqueueRating('movie', movieId, ratingCard, context);
                     }
 
                     // isNpConnected(): сразу обновляем одну запись в базе
@@ -2050,11 +3204,16 @@
 
                     // держим кэш статуса карточки в синхроне
                     setCardStatusCache(movieData.id, true, status);
+                    if (status === 'remove') {
+                        delete checkedMovies[String(movieData.id)];
+                        delete _ratingSeen['movie:' + movieId];
+                    }
+                    if (watchedEnabled()) watchedRefresh();
                 }
 
                 callback(success);
-            });
-        });
+            }, context);
+        }
     }
 
     function getShowIdByImdbId(id, expectedTitle, expectedYear, alternativeTitles, callback) {
@@ -2563,6 +3722,7 @@
         var hash = data.data.hash;
         var percent = data.data.road.percent;
         var token = getProfileSetting('myshows_token', '');
+        var channelRequest = channelContext();
         var minProgress = parseInt(getProfileSetting('myshows_min_progress', DEFAULT_MIN_PROGRESS));
         var addThreshold = parseInt(getProfileSetting('myshows_add_threshold', DEFAULT_ADD_THRESHOLD));
 
@@ -2626,7 +3786,7 @@
                         var newEntry = newMap[mapKey];
                         var newEpisodeId = newEntry && newEntry.episodeId ? newEntry.episodeId : newEntry;
                         if (newEpisodeId) {
-                            processEpisode(newEpisodeId, hash, percent, card, token, minProgress, addThreshold, newEntry && newEntry.airDate);
+                            processEpisode(newEpisodeId, hash, percent, card, token, minProgress, addThreshold, newEntry && newEntry.airDate, channelRequest);
                         } else {
                             Log.info('Нет newEpisodeId — ищем в EPISODES_CACHE');
                             var episodes_hash = EPISODES_CACHE[tmdbKey] || EPISODES_CACHE[card.original_name || card.original_title || card.title];
@@ -2645,7 +3805,7 @@
                             }
 
                             if (episodeId) {
-                                processEpisode(episodeId, hash, percent, card, token, minProgress, addThreshold, hitAirDate);
+                                processEpisode(episodeId, hash, percent, card, token, minProgress, addThreshold, hitAirDate, channelRequest);
                             } else {
                                 Log.warn('❌ Не найден episodeId даже в EPISODES_CACHE для хеша:', hash);
                             }
@@ -2655,7 +3815,7 @@
                 }
                  Log.info('CheckEpisode episodeId', episodeId);
 
-                processEpisode(episodeId, hash, percent, card, token, minProgress, addThreshold, airDate);
+                processEpisode(episodeId, hash, percent, card, token, minProgress, addThreshold, airDate, channelRequest);
             });
         }
     }
@@ -2676,7 +3836,7 @@
         return d.getTime() >= today.getTime();
     }
 
-    function processEpisode(episodeId, hash, percent, card, token, minProgress, addThreshold, airDate) {
+    function processEpisode(episodeId, hash, percent, card, token, minProgress, addThreshold, airDate, channelRequest) {
 
         var originalName = card.original_name || card.original_title || card.title;
         var firstEpisodeHash = Lampa.Utils.hash('11' + originalName);
@@ -2707,7 +3867,7 @@
                     delete checkedEpisodes[episodeId];
                     _unwatchedEpisodeIds[parseInt(episodeId)] = true; // снова непросмотрена
                     Log.info('[MS-guard] ✅ episodeId ' + episodeId + ' отметка снята');
-                    applyEpisodeMarkLocally(card, episodeId, false);
+                    applyEpisodeMarkLocally(card, episodeId, false, channelRequest);
                 });
             });
             return;
@@ -2738,20 +3898,27 @@
             // Список непросмотренных содержит только сериалы в статусе "Смотрю", поэтому
             // для "Хочу посмотреть"/"Бросил"/без статуса проверять список бессмысленно — отмечаем всегда.
             var markEpisode = function(reason) {
+                if (!channelContextCurrent(channelRequest)) return;
+                var ratingCard = {id:card.id,name:card.name,title:card.title,original_name:card.original_name};
+                var mapping = Lampa.Storage.get(MAP_KEY, {});
+                var episode = mapping[episodeMapKey(String(card.id), hash)];
+                var ratingEpisode = episode && {seasonNumber:episode.seasonNumber,episodeNumber:episode.episodeNumber};
                 Log.info('[MS-guard] Отправляем CheckEpisode для episodeId ' + episodeId + ' (' + reason + ', percent=' + percent + ')');
                 checkEpisodeMyShows(episodeId, function(success) {
+                    if (!channelContextCurrent(channelRequest)) return;
                     if (!success) {
                         Log.warn('[MS-guard] ❌ CheckEpisode для episodeId ' + episodeId + ' не удался — повторим на следующем тике');
                         return;
                     }
                     checkedEpisodes[episodeId] = true;
+                    enqueueRating('episode', episodeId, ratingCard, channelRequest, ratingEpisode);
                     delete _unwatchedEpisodeIds[parseInt(episodeId)]; // сразу убрать из in-memory set
                     Log.info('[MS-guard] ✅ episodeId ' + episodeId + ' отмечен успешно — больше к API не обращаемся');
                     // Сериал не в "Смотрю" (Бросил/Хочу посмотреть/нет статуса) → переводим в "Смотрю".
                     if (!alreadyWatching) {
                         ensureWatchingStatus(card, 'отметка серии при статусе "' + currentStatus + '"', function() {});
                     }
-                    applyEpisodeMarkLocally(card, episodeId, true);
+                    applyEpisodeMarkLocally(card, episodeId, true, channelRequest);
                 });
             };
 
@@ -2833,8 +4000,52 @@
         }
     }
 
-    function getUnwatchedShowsWithDetails(callback, show) {
+    function getUnwatchedShowsWithDetails(callback, show, sourceRequest) {
         Log.info('getUnwatchedShowsWithDetails called');
+        var requestedContext = channelContext();
+        var originalCallback = callback;
+        // Native components are created before Activity.push activates them.
+        // Bind to the request handle, not the previous screen on the stack.
+        var owner = sourceRequest && sourceRequest.activity ? sourceRequest : Lampa.Activity.active();
+        var handle = owner && owner.activity;
+        var request = sourceRequest || owner || {};
+        var source = request.source, url = request.url, page = request.page, query = request.query;
+        callback = function(result) {
+            if (!result || !result.shows) { originalCallback(result); return; }
+            if (requestedContext.generation !== _channelGeneration || requestedContext.profile !== getProfileId() ||
+                requestedContext.token !== getProfileSetting('myshows_token', '')) return;
+            var delivered = false, order;
+            function signature() {
+                return result.shows.map(function(item) { return item.myshowsId || item.id || getCardName(item); }).join('|');
+            }
+            // Cached history and fresh release metadata must participate BEFORE
+            // consumers slice the first page. Async history keeps the fast callback.
+            prepareRelevance(result.shows, requestedContext, function() {
+                if (getProfileSetting('myshows_sort_order', 'progress') !== 'relevance') return;
+                sortShows(result.shows, 'relevance');
+                if (!delivered || signature() === order) return;
+                function current() {
+                    var active = Lampa.Activity.active();
+                    return channelContextCurrent(requestedContext) &&
+                        getProfileSetting('myshows_sort_order', 'progress') === 'relevance' &&
+                        handle && active && active.activity === handle && owner.activity === handle &&
+                        request.source === source && request.url === url && request.page === page && request.query === query &&
+                        /^(main|category|myshows_all|myshows_unwatched)$/.test(active.component || '');
+                }
+                if (!current()) return;
+                // ActivitySlide.refresh queues an unguarded replacement. Own only
+                // this delay and recheck at execution; never touch native timers.
+                setTimeout(function() {
+                    if (!current() || typeof Lampa.Activity.replace !== 'function') return;
+                    if (handle.component && typeof handle.component.beforeRefresh === 'function') handle.component.beforeRefresh();
+                    if (current()) Lampa.Activity.replace();
+                }, 400);
+            });
+            sortShows(result.shows, getProfileSetting('myshows_sort_order', 'progress'));
+            order = signature();
+            originalCallback(result);
+            delivered = true;
+        };
 
         // isNpConfigured(): читаем с NP по настройке, не дожидаясь пинга — иначе на
         // холодном старте страница соберётся раньше IS_NP и уйдёт в медленный
@@ -3081,6 +4292,7 @@
 
     function getShowComparator(order) {
         switch (order) {
+            case 'relevance':                return sortByRelevance;
             case 'progress':                 return sortByProgress;
             case 'unwatched_count':          return sortByUnwatched;
             case 'air_date':                 return sortByAirDate;
@@ -4076,14 +5288,46 @@
     // к серверу (lists.EpisodesUnwatched обновляется не мгновенно и давал прогресс «назад»).
     // Базовые числа берём из кэша (а не из DOM, который мог отстать), пишем результат обратно
     // в кэш и, если открыта та же карточка, обновляем бейджи. watched=true — серия отмечена.
-    function applyEpisodeMarkLocally(card, episodeId, watched) {
+    function applyEpisodeMarkLocally(card, episodeId, watched, channelRequest) {
+        if (!channelContextCurrent(channelRequest)) return;
+        if (watchedEnabled()) watchedRefresh();
+        function recordHistory(id) {
+            if (!id) return;
+            var historyMap = relevanceHistory();
+            var historyEntry = historyMap[id] || {};
+            historyEntry.version = (historyEntry.version || 0) + 1;
+            if (watched) { historyEntry.watch = Date.now(); historyEntry.checked = Date.now(); }
+            else historyEntry.checked = 0;
+            historyMap[id] = historyEntry;
+            setProfileSetting('myshows_relevance_history', historyMap, false);
+        }
+        var historyId = card.myshowsId;
+        if (!historyId && _channelShows) {
+            var knownShow = matchShowInArray(_channelShows, card);
+            if (knownShow) historyId = knownShow.myshowsId;
+        }
+        recordHistory(historyId);
+        if (!watched && historyId) prepareRelevance([{myshowsId: historyId}], channelRequest, function() {
+            if (_channelShows) publishAndroidChannel(_channelShows, channelRequest);
+            reorderCardsInMyShowsSection();
+        });
         episodeId = parseInt(episodeId);
         // _unwatchedEpisodeIds уже обновлён вызывающим → сразу обновляем галочки на сериях.
         scheduleEpisodeBadgeDecorate();
         loadCacheFromServer('unwatched_serials', 'shows', function(result) {
+            if (!channelContextCurrent(channelRequest)) return;
             var arr = result && result.shows;
             if (!arr) return;
             var show = matchShowInArray(arr, card);
+            if (!historyId && show) recordHistory(show.myshowsId);
+            // Completion removes the cached card. Undoing that mark needs the
+            // existing authoritative list once; ordinary marks stay local.
+            if (!show && !watched && (getProfileSetting('myshows_sort_order', 'progress') === 'relevance' ||
+                (channelSupported() && channelEnabled())) &&
+                channelContextCurrent(channelRequest)) {
+                fetchFromMyShowsAPI(function() {}, channelRequest);
+                return;
+            }
             if (!show || !show.progress_marker || show.progress_marker.indexOf('/') === -1) return;
 
             var pp = show.progress_marker.split('/');
@@ -4115,7 +5359,8 @@
             if (watched && show.remaining <= 0) {
                 var idx = arr.indexOf(show);
                 if (idx > -1) arr.splice(idx, 1);
-                saveCacheToServer({ shows: arr }, 'unwatched_serials', function() {}, getProfileId());
+                saveCacheToServer({ shows: arr }, 'unwatched_serials', function() {}, channelRequest.profile, channelRequest,
+                    { show: show, remove: true });
                 if (isSameFullCardOpen(card)) completeFullCardMarkers(card);
                 updateCompletedShowCard(showName, show.myshowsId);
                 return;
@@ -4126,7 +5371,8 @@
             var nextEp = computeNextUnwatchedEpisode(card);
             if (nextEp !== undefined) show.next_episode = nextEp; // undefined = нет метаданных, оставляем как было
 
-            saveCacheToServer({ shows: arr }, 'unwatched_serials', function() {}, getProfileId());
+            saveCacheToServer({ shows: arr }, 'unwatched_serials', function() {}, channelRequest.profile, channelRequest,
+                { show: show, remove: false });
 
             if (isSameFullCardOpen(card)) updateFullCardMarkers(show);
             // Карточка в секции "Непросмотренные" (если открыта главная) — синхронно
@@ -5616,7 +6862,7 @@
         }, 150);
     }
 
-    function addMyShowsData(data, oncomplite) {
+    function addMyShowsData(data, oncomplite, sourceRequest) {
         if (getProfileSetting('myshows_view_in_main', true)) {
             var token = getProfileSetting('myshows_token', '');
 
@@ -5639,7 +6885,7 @@
                         data.unshift(myshowsCategory);
                     }
                     oncomplite(data);
-                });
+                }, null, sourceRequest);
                 return true;
             }
         }
@@ -5675,7 +6921,7 @@
 
         Lampa.Api.sources.tmdb.main = function(params, oncomplite, onerror) {
             return originalTMDBMain.call(this, params, function(data) {
-                addMyShowsData(data, oncomplite);
+                addMyShowsData(data, oncomplite, params);
             }, onerror);
         };
     }
@@ -5689,7 +6935,7 @@
 
         Lampa.Api.sources.cub.main = function(params, oncomplite, onerror) {
             var originalLoadPart = originalCUBMain.call(this, params, function(data) {
-                addMyShowsData(data, oncomplite);
+                addMyShowsData(data, oncomplite, params);
             }, onerror);
 
             return originalLoadPart;
@@ -5771,11 +7017,12 @@
                 '</div>');
 
             btn.on('hover:enter', function() {
-                // Если карточка уже в этом статусе — повторный запрос в MyShows бесполезен.
                 // Текущий статус берём из cardStatusCache (синхронизируется при открытии и сменах).
                 // null трактуем как 'remove' (не отслеживается), чтобы повтор "Не смотрю" тоже был no-op.
                 var activeStatus = getCardStatusCache(e.data.movie.id, isMovie) || 'remove';
-                if (activeStatus === buttonData.status) {
+                var nextStatus = isMovie && buttonData.status === 'finished' && activeStatus === 'finished' ?
+                    'remove' : buttonData.status;
+                if (activeStatus === nextStatus) {
                     Log.info('[MS-guard] кнопка "' + buttonData.title + '" — карточка уже в статусе "' + activeStatus + '", запрос не шлём');
                     updateButtonStates(buttonData.status, isMovie, false); // только подсветим активную
                     return;
@@ -5786,10 +7033,11 @@
 
                 var setStatusFunction = isMovie ? setMyShowsMovieStatus : setMyShowsStatus;
 
-                setStatusFunction(e.data.movie, buttonData.status, function(success) {
+                setStatusFunction(e.data.movie, nextStatus, function(success) {
                     if (success) {
-                        Lampa.Noty.show('Статус "' + buttonData.title + '" установлен на MyShows');
-                        updateButtonStates(buttonData.status, isMovie, false);
+                        var statusTitle = isMovie && nextStatus === 'remove' ? 'Не смотрел' : buttonData.title;
+                        Lampa.Noty.show('Статус "' + statusTitle + '" установлен на MyShows');
+                        updateButtonStates(nextStatus, isMovie, false);
                         // Сериал ушёл со "Смотрю" на любой другой статус → сразу убрать метки
                         // и карточку из "Непросмотренные" (не дожидаясь перезагрузки страницы).
                         if (!isMovie && activeStatus === 'watching' && buttonData.status !== 'watching') {
@@ -5802,7 +7050,7 @@
                         }
                     } else {
                         Lampa.Noty.show('Ошибка установки статуса');
-                        updateButtonStates(currentStatus, isMovie, false);
+                        updateButtonStates(isMovie ? activeStatus : currentStatus, isMovie, false);
                     }
                 });
             });
@@ -5815,6 +7063,13 @@
 
             e.object.activity.render().find('.full-start-new__buttons').append(btn);
         });
+
+        if (isMovie) {
+            var ratingButton = $('<div class="full-start__button selector myshows-btn myshows-rate">' +
+                rating_icon + '<span>Оценить в MyShows</span></div>');
+            ratingButton.on('hover:enter', function() { rateMovieFromCard(e.data.movie); });
+            container.append(ratingButton);
+        }
 
         // Общая логика инициализации контроллера
         if (window.Lampa && window.Lampa.Controller) {
@@ -5980,13 +7235,23 @@
         })
     }
 
-    function fetchStatusMovies(callback) {
-        var startProfile = getProfileId();
+    function fetchStatusMovies(callback, confirmedMovie, context) {
+        context = context || channelContext();
+        var revision = _movieStatusRevision;
+        function current() { return channelContextCurrent(context) && revision === _movieStatusRevision; }
         getWatchedMovies(function(watchedData) {
+            if (!current()) return;
             getUnwatchedMovies(function(unwatchedData) {
+                if (!current()) return;
+                if (!watchedData || !Array.isArray(watchedData.result) ||
+                    !unwatchedData || !Array.isArray(unwatchedData.result)) { callback(null); return; }
                 var movies = [];
                 processMovieData(watchedData, 'finished', movies);
                 processMovieData(unwatchedData, 'later', movies);
+                if (confirmedMovie) {
+                    movies = movies.filter(function(item) { return String(item.id) !== String(confirmedMovie.id); });
+                    movies.push(confirmedMovie);
+                }
 
                 var statusData = {
                     movies: movies,
@@ -5995,8 +7260,8 @@
 
                 // Кэш — в профиль-источник; callback с результатом только если профиль тот же
                 saveCacheToServer(statusData, 'movie_status', function(result) {
-                    callback(getProfileId() === startProfile ? result : null);
-                }, startProfile)
+                    if (current()) callback(result);
+                }, context.profile)
             });
         });
     }
@@ -7198,7 +8463,7 @@
             var currentPage = object.page || 1;
             var cacheKey = 'unwatched_raw';
 
-            if (useNpServer()) {
+            if (useNpServer() && getProfileSetting('myshows_sort_order', 'progress') !== 'relevance') {
                 // Сервер отдаёт все карточки сразу — пагинируем на клиенте
                 loadCacheFromServer('unwatched_serials', 'shows', function(response) {
                     if (response && response.results) {
@@ -7229,7 +8494,7 @@
                     if (onerror) onerror();
                     return;
                 }
-                if (!cachedShuffledItems[cacheKey]) {
+                if (!cachedShuffledItems[cacheKey] || getProfileSetting('myshows_sort_order', 'progress') === 'relevance') {
                     cachedShuffledItems[cacheKey] = result.shows.slice();
                 }
                 var cached = cachedShuffledItems[cacheKey];
@@ -7241,7 +8506,7 @@
                     total_pages: totalPages,
                     total_results: cached.length
                 });
-            });
+            }, null, object);
         }
 
         Log.info('=== ApiMyShows Factory END ===');
@@ -7296,7 +8561,7 @@
                     getUnwatchedShowsWithDetails(function(result) {
                         allData.unwatched = result;
                         checkComplete('unwatched');
-                    });
+                    }, null, object);
 
                     Api.myshowsWatchlist({ page: 1 }, function(result) {
                         allData.watchlist = result;
@@ -7718,15 +8983,6 @@
                 // Запоминаем инстанс линии — через него вставляем новые карточки штатно
                 // (createAndAppend → попадают в this.items, навигация их видит).
                 _myShowsLine = event.line || null;
-
-                // Принудительно создаем все карточки после создания Line
-                if (event.data && event.data.results && event.line) {
-                    event.data.results.forEach(function(show) {
-                        if (!show.ready && event.line.append) {
-                            event.line.append(show);
-                        }
-                    });
-                }
 
                 // На медленных платформах (WebOS, старый Android) visible стреляет
                 // раньше, чем Lampa записывает card_data на DOM-элемент.
@@ -8369,6 +9625,7 @@
             return;
         }
 
+        watchedStyles();
         // ✅ Глобальный обработчик для ВСЕХ карточек (включая те, что ещё не отрендерены)
         document.addEventListener('visible', function(e) {
             var cardElement = e.target;
@@ -8376,6 +9633,7 @@
             // Проверяем, что это карточка из секции MyShows
             if (cardElement && cardElement.classList.contains('card')) {
                 var cardData = cardElement.card_data;
+                drawWatchedMark(cardElement, cardData);
 
                 // Проверяем наличие кастомных данных MyShows
                 _applyProgressFromMap(cardData);
@@ -8518,6 +9776,8 @@
         addMyShowsToTMDB();
         addMyShowsToCUB();
         patchActivityForMyShows();
+        patchWatchedRecommendations();
+        patchWatchedDiscovery();
 
         // Определяем среду через window.lampac_plugin (синхронно)
         checkLampacEnvironment(function(isLampac) {
@@ -8525,6 +9785,7 @@
             if (IS_LAMPAC) Log.info('✅ Среда: Lampac');
             // initCurrentProfile синхронно — не зависит от пинга
             initCurrentProfile();
+            if (!channelEnabled() || !getProfileSetting('myshows_token', '')) clearAndroidChannel(false);
             // Вариант меток применяем сразу, не дожидаясь initSettings (он через
             // 2с после пинга) — иначе при старте мигает первый вариант
             applyBadgeStyleAttr();

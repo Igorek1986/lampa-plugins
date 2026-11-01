@@ -1,0 +1,15 @@
+{
+  "name": "lampa-plugins-myshows-tools",
+  "private": true,
+  "scripts": {
+    "build:myshows": "node scripts/build-myshows.cjs",
+    "check:myshows": "node scripts/build-myshows.cjs --check",
+    "test": "node scripts/test-myshows.cjs"
+  },
+  "devDependencies": {
+    "terser": "5.44.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
