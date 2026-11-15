@@ -39,12 +39,57 @@ Automatic sync of watched series and movies with MyShows.me
 - Variant 1 — classic.  
 - Variant 2 — next episode bottom-left, progress bottom-right, episodes left top-right, with rounded corners like the card.  
 - **"Next episode" badge** — now also visible in the "Torrents" / "Online" windows, updates after the player is closed.  
-- **Series sorting** — 7 options: alphabetical, by progress, by unwatched count, by last episode date (↑/↓), by first unwatched date (↑/↓).  
+- **Series sorting** — 8 options: alphabetical, by relevance, by progress, by unwatched count, by last episode date (↑/↓), by first unwatched date (↑/↓).
 - **MyShows Calendar** — episode release dates from MyShows right in the "Calendar" section.  
 - **"Unwatched series" on Home** — a separate toggle for showing the section on the CUB/TMDB home screen.  
 - **NP-server storage mode** — the "Use NP server" setting: unwatched series data is stored on the server for fast loading across all devices.  
 - **Cross-device settings sync (NMSync)** — badges, sorting and other settings apply across all your devices automatically.  
 - **Manual sync with Lampac** — a "Sync" button for a one-time full reconciliation of watched content.  
+
+### Relevance sorting
+
+Choose **По актуальности** (By relevance) in series sorting. Shows rank by the
+newer of their last episode viewing date and latest released unwatched episode
+date, descending. Ties use alphabetical order. Progress remains the default.
+The list appears immediately using known dates. If loaded history changes the
+order, the current page refreshes through Lampa: a recent show enters the first
+20 cards, and More uses the complete updated order.
+
+Only this mode requests MyShows viewing history. Dates are stored locally per
+profile and retained after completing a show; NP cards without dates use known
+local dates. Successful episode marks update the viewing date; undoing a mark
+reloads history. Request failures retain known dates and cards, while successful
+empty history clears the viewing date. Missing, ambiguous, invalid and future
+dates do not raise priority. The Lampa list and Android TV channel share the
+ordering; private viewing dates are not sent to Android.
+
+### Android TV home channel (optional)
+
+In MyShows settings, enable **MyShows на главном экране Android TV** to publish
+unwatched shows as a separate **MyShows** channel. This requires an Android TV
+Lampa build exposing `AndroidJS.publishPluginChannel` and
+`AndroidJS.clearPluginChannel`, plus a launcher that displays application channels
+(for example, Projectivy). Older APKs and browsers keep working and explain the
+unsupported capability in the setting.
+
+The switch defaults to off and is saved per profile on this device; it is not
+synced to other devices. The channel follows the selected MyShows sort order.
+Cards open the existing Lampa show page. Their description includes the next
+episode and unwatched count when available; stream availability and automatic
+episode playback are not implied.
+
+The existing cache appears first, then the successful fresh list replaces it.
+Publication updates while Lampa runs, after list refreshes and episode/status
+changes. When Lampa is closed, cards remain but new episodes wait for the next
+Lampa startup/refresh. A request error preserves the current profile's last
+successful list; a successful empty list clears it. Switching profiles, logging
+out, or disabling the switch immediately requests clearing the previous cards.
+If the native bridge rejects clearing, the plugin reports that failure instead
+of claiming the old cards were removed. Launcher channel visibility and row
+order are configured in the launcher. Favorites and Watch Next are separate.
+
+For reproducible release generation and regression tests, see
+[MyShows development](myshows-development.md).
 
 ⚙️ Plugin settings  
 - 🔐 Authentication via a proxy server (login/password are not stored in plain text) [myshows_proxy](https://github.com/Igorek1986/myshows_proxy)  
