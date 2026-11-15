@@ -9,7 +9,7 @@
 
 	window.plugin_interface_ready_v3 = true;
 
-	var VERSION = "1.0.2";
+	var VERSION = "1.0.3";
 	var DEBUG = true;
 	function log(message) {
 		if (DEBUG) console.log("[Int] " + message);
@@ -17,6 +17,41 @@
 
 	var globalInfoCache = {};
 	var globalReactionsCache = {};
+	function applyCUBRating(element, data, callback) {
+		if (!element || !data || !data.id) return;
+		var calc = window.CUBRating;
+		if (!calc) return;
+		var originalVote = element.querySelector(".card__vote");
+		if (originalVote) originalVote.style.visibility = "hidden";
+		var done = function (rating) {
+			if (callback) callback(rating);
+			if (!element.parentNode) return;
+			if (!rating || rating.rating === null) {
+				if (originalVote) { applyColorByRating(originalVote); originalVote.style.visibility = ""; }
+				return;
+			}
+			var vote = element.querySelector(".card__vote");
+			if (!vote) {
+				var view = element.querySelector(".card__view");
+				if (!view) return;
+				vote = document.createElement("div");
+				vote.className = "card__vote";
+				view.appendChild(vote);
+			}
+			vote.textContent = rating.rating.toFixed(1) + " ";
+			if (rating.emoji) {
+				var icon = document.createElement("img");
+				icon.src = Lampa.Utils.protocol() + Lampa.Manifest.cub_domain + "/img/reactions/" + rating.emoji + ".svg";
+				icon.alt = rating.emoji;
+				icon.style.cssText = "width:1em;height:1em;vertical-align:middle;object-fit:contain";
+				vote.appendChild(icon);
+			}
+			vote.setAttribute("data-cub-rating", "true");
+			applyColorByRating(vote);
+			vote.style.visibility = "";
+		};
+		if (calc) return calc.get(data, done);
+	}
 	var backdropPreloadCache = {};
 	var logoPreloadCache = {};
 	// Кэши картинок ничем не ограничены по размеру — на долгом скролле
@@ -1012,7 +1047,11 @@
 
 			log("preload reactions: " + cacheKey);
 			Lampa.Api.sources.cub.reactionsGet({ method: type, id: data.id }, function (result) {
-					globalReactionsCache[cacheKey] = (result && result.result) || [];
+				globalReactionsCache[cacheKey] = (result && result.result) || [];
+				var cards = document.querySelectorAll('.card');
+				for (var i = 0; i < cards.length; i++) {
+					if (cards[i].card_data && String(cards[i].card_data.id) === String(data.id)) applyCUBRating(cards[i], data);
+				}
 			});
 	}
 
@@ -1090,6 +1129,7 @@
 		function onCardVisible(instance) {
 			var data = instance.data;
 			if (!data) return;
+			applyCUBRating(cardElement(instance.html), data);
 
 			if (Lampa.Storage.get("async_load", true)) {
 				var priority = preloadPriority(cardElement(instance.html));
@@ -1106,6 +1146,11 @@
 
 		function onCardColor(instance) {
 			var el = cardElement(instance.html);
+			// Совместимость со сторонними оверлеями: если карточка помечена
+			// как оформленная внешним плагином, пропускаем её раскраску здесь.
+			var card = el;
+			while (card && card !== document && !(card.classList && card.classList.contains("card"))) card = card.parentNode;
+			if (card && card.classList.contains("card-overlay-has-overlays")) return;
 			var voteEl = el && el.querySelector && el.querySelector(".card__vote");
 			if (voteEl) applyColorByRating(voteEl);
 		}

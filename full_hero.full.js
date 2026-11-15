@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    var VERSION = '1.0.2';
+    var VERSION = '1.0.3';
 
     window.full_hero_plugin = true;
 
@@ -517,7 +517,36 @@
         moveRateLineToHead();
         decorateDescr(0);
         onFullCardReady(event.data.movie);
+        loadCUBRating(event.data.movie);
     });
+
+    function loadCUBRating(movie) {
+        if (!movie || !movie.id || !Lampa.Api || !Lampa.Api.sources || !Lampa.Api.sources.cub) return;
+        var type = movie.media_type === 'tv' || movie.name || movie.original_name ? 'tv' : 'movie';
+        Lampa.Api.sources.cub.reactionsGet({ method: type, id: movie.id }, function (result) {
+            if (!window.CUBRating || !isSameFullCardOpen(movie)) return;
+            var score = window.CUBRating.score(result && result.result, type);
+            if (!score || score.rating === null) return;
+            var line = document.querySelector('.full-start-new__rate-line');
+            if (!line) return;
+            var badge = line.querySelector('.fh-cub-rating');
+            if (!badge) {
+                badge = document.createElement('div');
+                badge.className = 'full-start__rate fh-cub-rating';
+            }
+            var value = score.rating;
+            var color = value <= 3 ? 'red' : value < 6 ? 'orange' : value < 7 ? 'cornflowerblue' : value < 8 ? 'darkmagenta' : 'lawngreen';
+            badge.style.setProperty('color', Lampa.Storage.get('colored_ratings', true) ? color : 'inherit', 'important');
+            badge.style.setProperty('display', 'inline-flex', 'important');
+            badge.style.alignItems = 'center';
+            badge.style.whiteSpace = 'nowrap';
+            badge.style.setProperty('transition', 'none', 'important');
+            badge.innerHTML = '<div>' + value.toFixed(1) + '</div><img alt="' + score.emoji + '" style="width:1em;height:1em;object-fit:contain;margin:0 .25em" src="' + Lampa.Utils.protocol() + Lampa.Manifest.cub_domain + '/img/reactions/' + score.emoji + '.svg"><div class="source--name">CUB</div>';
+            var tmdb = line.querySelector('.rate--tmdb');
+            if (tmdb) tmdb.parentNode.insertBefore(badge, tmdb.nextSibling);
+            else line.insertBefore(badge, line.firstChild);
+        });
+    }
 
     log('started', VERSION);
 })();
