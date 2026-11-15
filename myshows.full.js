@@ -1712,16 +1712,27 @@
         });
     }
 
-    // Поиск по оригинальному названию
-    function getMovieIdByOriginalTitle(title, year, callback) {
+    // Поиск по оригинальному названию. searchQuery — что отправить в поиск вместо него;
+    // кандидаты всё равно сверяются с оригинальным title.
+    function getMovieIdByOriginalTitle(title, year, callback, searchQuery) {
         makeMyShowsJSONRPCRequest('movies.GetCatalog', {
                 search: {
-                    "query": title,
+                    "query": searchQuery || title,
                     "year": parseInt(year)
                 }
         }, function(success, data) {
             if (success && data && data.result) {
-                getMovieCandidates(data.result, title, year, function(candidates) {
+                var results = data.result;
+                if (searchQuery) {
+                    // normalizeForComparison сводит любое не-латинское название к '', и японский
+                    // оригинал «совпал» бы с кириллическим titleOriginal чужого фильма из выдачи
+                    // по русскому названию. Поэтому здесь titleOriginal сверяется буквально.
+                    var expected = cleanTitle(title).toLowerCase();
+                    results = results.filter(function(item) {
+                        return item.movie && cleanTitle(item.movie.titleOriginal).toLowerCase() === expected;
+                    });
+                }
+                getMovieCandidates(results, title, year, function(candidates) {
                     if (candidates) {
                         callback(candidates);
                         return;
@@ -2022,6 +2033,18 @@
         var year = getMovieYear(movieData);
 
         getMovieIdByOriginalTitle(title, year, function(movieId) {
+            if (movieId || !movieData.title || movieData.title === title) {
+                setStatus(movieId);
+                return;
+            }
+            // Поиск MyShows находит не все фильмы по японскому оригиналу, хотя titleOriginal
+            // у них ровно он: «劇場版「鬼滅の刃」無限城編 第一章 猗窩座再来» (TMDB 1311031) даёт
+            // пустой результат, а по «Истребитель демонов: Бесконечный замок» находится 694064.
+            Log.info('Movie not found by original title, trying localized:', movieData.title);
+            getMovieIdByOriginalTitle(title, year, setStatus, movieData.title);
+        });
+
+        function setStatus(movieId) {
             if (!movieId) {
                 callback(false);
                 return;
@@ -2054,7 +2077,7 @@
 
                 callback(success);
             });
-        });
+        }
     }
 
     function getShowIdByImdbId(id, expectedTitle, expectedYear, alternativeTitles, callback) {
