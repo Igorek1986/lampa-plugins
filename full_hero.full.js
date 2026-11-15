@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    var VERSION = '1.0.3';
+    var VERSION = '1.0.4';
 
     window.full_hero_plugin = true;
 
@@ -517,15 +517,14 @@
         moveRateLineToHead();
         decorateDescr(0);
         onFullCardReady(event.data.movie);
-        loadCUBRating(event.data.movie);
+        loadCUBRating(event.data.movie, event.data.reactions);
     });
 
-    function loadCUBRating(movie) {
-        if (!movie || !movie.id || !Lampa.Api || !Lampa.Api.sources || !Lampa.Api.sources.cub) return;
-        var type = movie.media_type === 'tv' || movie.name || movie.original_name ? 'tv' : 'movie';
-        Lampa.Api.sources.cub.reactionsGet({ method: type, id: movie.id }, function (result) {
-            if (!window.CUBRating || !isSameFullCardOpen(movie)) return;
-            var score = window.CUBRating.score(result && result.result, type);
+    function loadCUBRating(movie, reactions) {
+        var calculator = window.CUBRating;
+        if (!movie || !movie.id || !calculator) return;
+        function draw(score) {
+            if (!isSameFullCardOpen(movie)) return;
             if (!score || score.rating === null) return;
             var line = document.querySelector('.full-start-new__rate-line');
             if (!line) return;
@@ -545,7 +544,14 @@
             var tmdb = line.querySelector('.rate--tmdb');
             if (tmdb) tmdb.parentNode.insertBefore(badge, tmdb.nextSibling);
             else line.insertBefore(badge, line.firstChild);
-        });
+        }
+        // Событие complite уже содержит реакции, загруженные самой Lampa.
+        // При их отсутствии get синхронно использует общий кэш главной страницы.
+        if (reactions && Array.isArray(reactions.result)) {
+            draw(calculator.score(reactions.result, calculator.mediaType(movie)));
+        } else {
+            calculator.get(movie, draw);
+        }
     }
 
     log('started', VERSION);
