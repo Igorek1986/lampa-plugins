@@ -1,6 +1,6 @@
 (function() {
     "use strict";
-    var VERSION = "1.0.21";
+    var VERSION = "1.0.22";
     var DEFAULT_SOURCE_NAME = "NUMParser";
     var SOURCE_NAME = Lampa.Storage.get("numparser_source_name", DEFAULT_SOURCE_NAME);
     var newName = SOURCE_NAME;
@@ -116,6 +116,9 @@
         }, {
             key: "np_popular",
             title: "Популярно в NP"
+        }, {
+            key: "cub_top",
+            title: "Топ CUB"
         }, {
             key: "movies_ru_new",
             title: "Новые русские фильмы"

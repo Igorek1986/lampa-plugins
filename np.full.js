@@ -1,7 +1,7 @@
  (function () {
     'use strict';
 
-    var VERSION = '1.0.21';
+    var VERSION = '1.0.22';
 
     var DEFAULT_SOURCE_NAME = 'NUMParser';
     var SOURCE_NAME = Lampa.Storage.get('numparser_source_name', DEFAULT_SOURCE_NAME);
@@ -89,6 +89,7 @@
             { key: 'unwatched',              title: 'Непросмотренные' },
             { key: 'myshows_unwatched',      title: 'Непросмотренные (MyShows)' },
             { key: 'np_popular',             title: 'Популярно в NP' },
+            { key: 'cub_top',                title: 'Топ CUB' },
             { key: 'movies_ru_new',          title: 'Новые русские фильмы' },
             { key: 'movies_new',             title: 'Новые фильмы' },
             { key: 'tv_shows_ru',            title: 'Русские сериалы' },
